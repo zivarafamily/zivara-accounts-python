@@ -86,6 +86,42 @@ def test_llp_scoped_create_succeeds_with_allowed_llp(client, auth_headers):
     assert res.status_code == 200
 
 
+def test_admin_can_create_user_and_assign_llp_access(client, auth_headers):
+    created = client.post(
+        "/users",
+        headers=auth_headers,
+        json={
+            "Name": "Test User",
+            "Username": "testuser@zivara.local",
+            "Email": "testuser@zivara.local",
+            "Password": "ChangeMe123!",
+            "Role": "viewer",
+            "AllowedModules": "dashboard,expenses",
+            "Status": "Active",
+        },
+    )
+    assert created.status_code == 200
+
+    assigned = client.post(
+        "/llp-partners",
+        headers=auth_headers,
+        json={
+            "LLPID": "LLP001",
+            "Username": "testuser@zivara.local",
+            "Role": "viewer",
+            "AllowedModules": "dashboard,expenses",
+            "Status": "Active",
+        },
+    )
+    assert assigned.status_code == 200
+
+    login = client.post("/auth/login", json={"username": "testuser@zivara.local", "password": "ChangeMe123!"})
+    assert login.status_code == 200
+    body = login.json()
+    assert body["role"] == "viewer"
+    assert body["llps"][0]["llpId"] == "LLP001"
+
+
 def test_bill_upload_requires_auth(client):
     res = client.post(
         "/uploads/bills",

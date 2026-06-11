@@ -14,6 +14,7 @@ import VendorLedger from "./pages/VendorLedger";
 import Imports from "./pages/Imports";
 import LLPs from "./pages/LLPs";
 import Partners from "./pages/Partners";
+import Users from "./pages/Users";
 import { LLPProvider, useLLP } from "./context/LLPContext";
 import Login from "./pages/Login";
 
@@ -31,6 +32,7 @@ const NAV_ALL = [
   { key:"bankaccounts",   to:"/bankaccounts",     icon:"🏦", label:"Bank A/C",        group:"Treasury", baselineRoles:["admin","managing_partner"] },
   { key:"cashbook",       to:"/cashbook",         icon:"💵", label:"Cash Book",       group:"Treasury", baselineRoles:["admin","managing_partner"] },
   { key:"imports",        to:"/imports",          icon:"⬆️", label:"Import Excel",    group:"Treasury", baselineRoles:["admin","managing_partner"] },
+  { key:"users",          to:"/users",            icon:"👤", label:"Users",           group:"Setup",    baselineRoles:["admin","managing_partner"] },
   { key:"llps",           to:"/llps",             icon:"🏢", label:"LLPs",            group:"Setup",    baselineRoles:["admin","managing_partner"] },
   { key:"partners",       to:"/partners",         icon:"🤝", label:"Partners",        group:"Setup",    baselineRoles:["admin","managing_partner"] },
 ];
@@ -195,6 +197,7 @@ function AppLayout({ user, role, fullName, employeeRef, designation, allowedModu
             <Route path="/reconciliation" element={can("reconciliation") ? <Reconciliation /> : <Navigate to={defaultPath} replace />} />
             <Route path="/vendor-ledger" element={can("vendorledger") ? <VendorLedger /> : <Navigate to={defaultPath} replace />} />
             <Route path="/ca-tds-report" element={can("catdsreport") ? <CATDSReport /> : <Navigate to={defaultPath} replace />} />
+            <Route path="/users" element={can("users") ? <Users /> : <Navigate to={defaultPath} replace />} />
             <Route path="/llps" element={can("llps") ? <LLPs /> : <Navigate to={defaultPath} replace />} />
             <Route path="/partners" element={can("partners") ? <Partners /> : <Navigate to={defaultPath} replace />} />
           </Routes>

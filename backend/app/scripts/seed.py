@@ -47,7 +47,7 @@ def seed():
                 allowed_modules=json.dumps([
                     "dashboard", "paymenttracker", "vendors", "expenses", "receipts",
                     "reimbursements", "reconciliation", "vendorledger", "catdsreport",
-                    "bankaccounts", "cashbook", "llps", "partners",
+                    "bankaccounts", "cashbook", "imports", "users", "llps", "partners",
                 ]),
                 status="Active",
             )
