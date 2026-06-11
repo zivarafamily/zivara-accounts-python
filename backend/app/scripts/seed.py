@@ -1,6 +1,9 @@
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import LLP, LLPPartner, Setting, User
@@ -8,7 +11,14 @@ from app.security import hash_password
 from app.services.common import make_id
 
 
+def run_migrations():
+    backend_dir = Path(__file__).resolve().parents[2]
+    alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+    command.upgrade(alembic_cfg, "head")
+
+
 def seed():
+    run_migrations()
     settings = get_settings()
     db = SessionLocal()
     try:
