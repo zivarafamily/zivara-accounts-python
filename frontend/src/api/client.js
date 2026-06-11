@@ -170,3 +170,14 @@ export async function uploadBill(file, metadata = {}) {
     body: formData,
   });
 }
+
+export async function importAccountsWorkbook(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  return request("/imports/accounts-workbook", {
+    method: "POST",
+    headers: {},
+    body: formData,
+  });
+}

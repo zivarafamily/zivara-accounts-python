@@ -11,6 +11,7 @@ import CashBook from "./pages/CashBook";
 import Reconciliation from "./pages/Reconciliation";
 import CATDSReport from "./pages/CATDSReport";
 import VendorLedger from "./pages/VendorLedger";
+import Imports from "./pages/Imports";
 import LLPs from "./pages/LLPs";
 import Partners from "./pages/Partners";
 import { LLPProvider, useLLP } from "./context/LLPContext";
@@ -29,6 +30,7 @@ const NAV_ALL = [
   { key:"catdsreport",    to:"/ca-tds-report",    icon:"📑", label:"CA TDS Report",   group:"Reports",  baselineRoles:["admin","managing_partner"] },
   { key:"bankaccounts",   to:"/bankaccounts",     icon:"🏦", label:"Bank A/C",        group:"Treasury", baselineRoles:["admin","managing_partner"] },
   { key:"cashbook",       to:"/cashbook",         icon:"💵", label:"Cash Book",       group:"Treasury", baselineRoles:["admin","managing_partner"] },
+  { key:"imports",        to:"/imports",          icon:"⬆️", label:"Import Excel",    group:"Treasury", baselineRoles:["admin","managing_partner"] },
   { key:"llps",           to:"/llps",             icon:"🏢", label:"LLPs",            group:"Setup",    baselineRoles:["admin","managing_partner"] },
   { key:"partners",       to:"/partners",         icon:"🤝", label:"Partners",        group:"Setup",    baselineRoles:["admin","managing_partner"] },
 ];
@@ -189,6 +191,7 @@ function AppLayout({ user, role, fullName, employeeRef, designation, allowedModu
             <Route path="/reimbursements" element={can("reimbursements") ? <Reimbursements role={role} employeeRef={employeeRef} /> : <Navigate to={defaultPath} replace />} />
             <Route path="/bankaccounts" element={can("bankaccounts") ? <BankAccounts /> : <Navigate to={defaultPath} replace />} />
             <Route path="/cashbook" element={can("cashbook") ? <CashBook /> : <Navigate to={defaultPath} replace />} />
+            <Route path="/imports" element={can("imports") ? <Imports /> : <Navigate to={defaultPath} replace />} />
             <Route path="/reconciliation" element={can("reconciliation") ? <Reconciliation /> : <Navigate to={defaultPath} replace />} />
             <Route path="/vendor-ledger" element={can("vendorledger") ? <VendorLedger /> : <Navigate to={defaultPath} replace />} />
             <Route path="/ca-tds-report" element={can("catdsreport") ? <CATDSReport /> : <Navigate to={defaultPath} replace />} />

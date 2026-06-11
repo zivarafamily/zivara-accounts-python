@@ -77,6 +77,14 @@ def _rows(workbook, sheet_name):
     return rows
 
 
+def _rows_any(workbook, *sheet_names):
+    for sheet_name in sheet_names:
+        rows = _rows(workbook, sheet_name)
+        if rows:
+            return rows
+    return []
+
+
 def _summary():
     return {"imported": 0, "skipped": 0, "errors": []}
 
@@ -172,6 +180,7 @@ async def import_accounts_workbook(
         "Expenses",
         "Receipts",
         "CashBook",
+        "BankStatement",
     ]}
 
     for index, row in enumerate(_rows(workbook, "Settings"), start=2):
@@ -278,7 +287,7 @@ async def import_accounts_workbook(
         db.add(item)
         _commit(db, result["BankAccounts"], "bankaccounts", item.id, user.email)
 
-    for index, row in enumerate(_rows(workbook, "LLPPayables"), start=2):
+    for index, row in enumerate(_rows_any(workbook, "LLPPayables", "Payables"), start=2):
         llp_id = _llp_id(db, row)
         if not llp_id:
             _skip(result["LLPPayables"], index, "Missing matching LLP")
@@ -395,5 +404,36 @@ async def import_accounts_workbook(
         item.paid_by = _text(row.get("PaidBy"))
         db.add(item)
         _commit(db, result["CashBook"], "cashbook", item.id, user.email)
+
+    for index, row in enumerate(_rows_any(workbook, "BankStatement", "BankStatements"), start=2):
+        llp_id = _llp_id(db, row)
+        if not llp_id:
+            _skip(result["BankStatement"], index, "Missing matching LLP")
+            continue
+        debit = _money(_value(row, "Debit", "Withdrawal", "AmountOut"))
+        credit = _money(_value(row, "Credit", "Deposit", "AmountIn"))
+        amount = _money(_value(row, "Amount"))
+        if amount > 0 and not credit:
+            credit = amount
+        elif amount < 0 and not debit:
+            debit = abs(amount)
+        entry_type = _text(_value(row, "Type")) or ("Receipt" if credit > 0 else "Payment")
+        opening = _money(_value(row, "OpeningBalance", "Opening Balance"))
+        closing = _money(_value(row, "ClosingBalance", "Closing Balance", "Balance"))
+        item = db.get(CashBookEntry, _text(_value(row, "EntryID", "TransactionID", "TxnID"))) if _text(_value(row, "EntryID", "TransactionID", "TxnID")) else None
+        item = item or CashBookEntry(id=_text(_value(row, "EntryID", "TransactionID", "TxnID")) or make_id("CASH"), llp_id=llp_id)
+        item.llp_id = llp_id
+        item.entry_date = parse_date(_value(row, "Date", "TxnDate", "TransactionDate", "ValueDate"))
+        item.entry_type = entry_type
+        item.opening_balance = opening
+        item.amount_in = credit
+        item.amount_out = debit
+        item.closing_balance = closing or (opening + credit - debit)
+        item.reference_type = _text(_value(row, "ReferenceType", "RefType")) or "BankStatement"
+        item.reference_id = _text(_value(row, "ReferenceID", "ReferenceNo", "UTR", "ChequeNo", "Narration"))
+        item.description = _text(_value(row, "Description", "Narration", "Particulars", "Remarks"))
+        item.paid_by = _text(_value(row, "PaidBy", "Payee", "Payer"))
+        db.add(item)
+        _commit(db, result["BankStatement"], "bankstatement", item.id, user.email)
 
     return {"ok": True, "message": "Workbook import complete", "summary": result}

@@ -1,7 +1,9 @@
 from decimal import Decimal
+from io import BytesIO
 
+from openpyxl import Workbook
 from app.database import SessionLocal
-from app.models import Expense, UploadedBill
+from app.models import CashBookEntry, Expense, LLPPayable, UploadedBill
 from app.services.payables import calculate_amounts
 
 
@@ -132,5 +134,44 @@ def test_bill_upload_saves_metadata_and_updates_expense(client, auth_headers):
         assert upload.original_filename == "bill.pdf"
         assert expense.bill_available is True
         assert expense.bill_link
+    finally:
+        db.close()
+
+
+def test_accounts_workbook_imports_expenses_payables_and_bank_statement(client, auth_headers):
+    wb = Workbook()
+    expenses = wb.active
+    expenses.title = "Expenses"
+    expenses.append(["LLPID", "Date", "ExpenseType", "Amount", "PaidBy", "Description"])
+    expenses.append(["LLP001", "2026-06-10", "Travel", 500, "Dinu", "Cab"])
+
+    payables = wb.create_sheet("Payables")
+    payables.append(["LLPID", "VendorName", "BillNo", "BillDate", "TaxableAmount", "GSTAmount", "TDSRate"])
+    payables.append(["LLP001", "ABC Co", "INV-100", "2026-06-10", 1000, 180, 10])
+
+    bank = wb.create_sheet("BankStatement")
+    bank.append(["LLPID", "Date", "Narration", "Debit", "Credit", "Balance", "ReferenceNo"])
+    bank.append(["LLP001", "2026-06-11", "Vendor payment", 750, "", 9250, "UTR1"])
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    res = client.post(
+        "/imports/accounts-workbook",
+        headers=auth_headers,
+        files={"file": ("accounts.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    summary = res.json()["summary"]
+    assert summary["Expenses"]["imported"] == 1
+    assert summary["LLPPayables"]["imported"] == 1
+    assert summary["BankStatement"]["imported"] == 1
+
+    db = SessionLocal()
+    try:
+        assert db.query(Expense).count() == 1
+        assert db.query(LLPPayable).count() == 1
+        assert db.query(CashBookEntry).count() == 1
     finally:
         db.close()
