@@ -12,6 +12,8 @@ def test_auth(client):
     assert res.status_code == 200
     assert res.json()["access_token"]
     assert res.json()["llps"][0]["llpId"] == "LLP001"
+    assert "pan" in res.json()["llps"][0]
+    assert "address" in res.json()["llps"][0]
 
 
 def test_auth_me_works_with_token(client):

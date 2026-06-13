@@ -436,6 +436,13 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
   }, [currentLLP, llps]);
   const llpDefaults = useMemo(() => getLLPSellerDefaults(effectiveCurrentLLP), [effectiveCurrentLLP]);
 
+  function currentSellerContext() {
+    if (!effectiveCurrentLLP || effectiveCurrentLLP.global) return effectiveCurrentLLP;
+    const currentId = String(effectiveCurrentLLP.llpId || effectiveCurrentLLP.LLPID || "");
+    const full = (llps || []).find(l => String(l.LLPID || l.llpId || "") === currentId);
+    return full ? { ...effectiveCurrentLLP, ...llpRowToContext(full) } : effectiveCurrentLLP;
+  }
+
   const sellerLLPs = useMemo(() => {
     if (canPickSeller) {
       return (llps || [])
@@ -551,7 +558,8 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
     const signerLabel = isPartner ? (employeeRef || signers[0].label) : signers[0].label;
     const signer = signers.find(s => s.label === signerLabel) || signers[0];
     const prefix = getPrefix(signer.label, signers, initial.IsProforma === "Yes");
-    const { signer: _entitySigner, ...sellerDefaults } = llpDefaults;
+    const sellerContext = currentSellerContext();
+    const { signer: _entitySigner, ...sellerDefaults } = getLLPSellerDefaults(sellerContext);
     const base = {
       ...initial,
       ...sellerDefaults,
@@ -559,7 +567,7 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
       InvoiceNo: nextInvoiceNo(invoices, prefix),
       AuthorisedSignatory: signer.signatory,
     };
-    const b = getDefaultBankAccount(bankAccounts, effectiveCurrentLLP);
+    const b = getDefaultBankAccount(bankAccounts, sellerContext);
     if (b) {
       base.BankName   = b.BankName     || "";
       base.AccountNo  = getAccountNumber(b);

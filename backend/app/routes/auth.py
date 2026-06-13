@@ -26,6 +26,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         "llpName": l.llp.llp_name,
         "shortCode": l.llp.short_code,
         "gstin": l.llp.gstin,
+        "pan": l.llp.pan,
+        "address": l.llp.address,
         "role": l.role,
         "allowedModules": _modules(l.allowed_modules),
     } for l in links]
@@ -58,6 +60,8 @@ def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
             "llpName": l.llp.llp_name,
             "shortCode": l.llp.short_code,
             "gstin": l.llp.gstin,
+            "pan": l.llp.pan,
+            "address": l.llp.address,
             "role": l.role,
             "allowedModules": _modules(l.allowed_modules),
         } for l in links],
