@@ -12,6 +12,7 @@ from app.services.common import audit, make_id
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 SAFE_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".xlsx", ".xls", ".csv"}
+SIGNATURE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 @router.post("/bills")
@@ -60,4 +61,47 @@ async def upload_bill(
         "sourceType": item.source_type,
         "sourceId": item.source_id,
         "message": "Bill uploaded",
+    }
+
+
+@router.post("/signatures")
+async def upload_signature(
+    file: UploadFile = File(...),
+    signer_name: str = Form(""),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in SIGNATURE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Signature must be a PNG, JPG, JPEG, or WEBP image")
+
+    signer = (signer_name or user.name or user.username).strip()
+    target = user
+    if user.role.lower() in {"admin", "managing_partner", "super_admin"} and signer:
+        normalized = signer.lower()
+        target = (
+            db.query(User)
+            .filter((User.name.ilike(normalized)) | (User.username.ilike(normalized)))
+            .first()
+            or user
+        )
+    elif signer and signer.lower() not in {user.name.lower(), user.username.lower()}:
+        raise HTTPException(status_code=403, detail="Partners can upload only their own signature")
+
+    settings = get_settings()
+    signature_dir = Path(settings.upload_dir) / "signatures"
+    signature_dir.mkdir(parents=True, exist_ok=True)
+    stored = f"{make_id('SIG')}{suffix}"
+    path = signature_dir / stored
+    path.write_bytes(await file.read())
+
+    url = f"/uploads/signatures/{stored}"
+    target.signature_url = url
+    audit(db, user.email, "uploads", "signature", target.id)
+    db.commit()
+    return {
+        "ok": True,
+        "url": url,
+        "signer": target.name,
+        "message": "Signature uploaded",
     }

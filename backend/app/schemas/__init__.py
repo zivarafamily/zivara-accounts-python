@@ -17,6 +17,7 @@ class TokenResponse(BaseModel):
     role: str
     employeeRef: str = ""
     designation: str = ""
+    signatureURL: str = ""
     allowedModules: list[str] = []
     llps: list[dict] = []
 

@@ -34,11 +34,13 @@ export default function Login({ onLogin }) {
       localStorage.setItem("zivara_auth", JSON.stringify({
         user: res.user, role: res.role || "viewer", fullName: res.fullName || res.user,
         employeeRef: res.employeeRef || "", designation: res.designation || "",
+        signatureURL: res.signatureURL || "",
         allowedModules: res.allowedModules || [], llps: res.llps || [], accessToken: res.access_token, ts: Date.now()
       }));
       onLogin({
         user: res.user, role: res.role || "viewer", fullName: res.fullName || res.user,
         employeeRef: res.employeeRef || "", designation: res.designation || "",
+        signatureURL: res.signatureURL || "",
         allowedModules: res.allowedModules || [], llps: res.llps || [], accessToken: res.access_token, ts: Date.now()
       });
     } catch (err) {

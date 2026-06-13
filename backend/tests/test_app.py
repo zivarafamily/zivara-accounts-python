@@ -66,6 +66,38 @@ def test_dashboard_and_reports(client, auth_headers):
     assert client.get("/reports/ca-tds", headers=auth_headers).status_code == 200
 
 
+def test_neo_invoice_create_list_update(client, auth_headers):
+    payload = {
+        "InvoiceNo": "ZivNeo001",
+        "InvoiceDate": "2026-06-13",
+        "BillingMonth": "Jun-2026",
+        "InvoiceType": "Professional Fees",
+        "GSTMode": "With GST",
+        "IsProforma": "No",
+        "Particulars": "Professional Fees",
+        "TaxableAmount": "1000",
+        "GSTRate": "18",
+        "GSTAmount": "180",
+        "Amount": "1180",
+        "TDSRate": "10",
+        "TDSAmount": "100",
+        "NetPayable": "1080",
+    }
+    created = client.post("/neo-invoices", headers=auth_headers, json=payload)
+    assert created.status_code == 200
+    body = created.json()["data"]
+    assert body["InvoiceTitle"] == "Tax Invoice"
+    assert body["Amount"] == 1180.0
+
+    rows = client.get("/neo-invoices", headers=auth_headers).json()["data"]
+    assert len(rows) == 1
+    invoice_id = rows[0]["NeoInvoiceID"]
+
+    updated = client.put(f"/neo-invoices/{invoice_id}", headers=auth_headers, json={"Status": "Sent"})
+    assert updated.status_code == 200
+    assert updated.json()["data"]["Status"] == "Sent"
+
+
 def test_llp_scoped_create_requires_x_llp_id(client):
     login = client.post("/auth/login", json={"username": "admin", "password": "ChangeMe123!"})
     token = login.json()["access_token"]

@@ -37,6 +37,7 @@ class User(Base, TimestampMixin):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(40), default="viewer", index=True, nullable=False)
     allowed_modules: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    signature_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="Active", index=True, nullable=False)
     llp_links: Mapped[list["LLPPartner"]] = relationship(back_populates="user")
 
@@ -182,6 +183,53 @@ class Receipt(Base):
     bank_account: Mapped[str] = mapped_column(String(160), default="", nullable=False)
     notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class NeoInvoice(Base, TimestampMixin):
+    __tablename__ = "neo_invoices"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    llp_id: Mapped[str | None] = mapped_column(ForeignKey("llps.id"), nullable=True, index=True)
+    raised_by: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    invoice_type: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    gst_mode: Mapped[str] = mapped_column(String(40), default="Without GST", nullable=False)
+    is_proforma: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    invoice_title: Mapped[str] = mapped_column(String(80), default="Invoice", nullable=False)
+    invoice_no: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    invoice_date: Mapped[Date | None] = mapped_column(Date, nullable=True)
+    billing_month: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    seller_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    seller_address: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    seller_gstin: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    seller_pan: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    seller_state: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    buyer_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    buyer_address: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    buyer_gstin: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    buyer_state: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    particulars: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    sac_code: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    taxable_amount: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    gst_rate: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    gst_type: Mapped[str] = mapped_column(String(40), default="IGST", nullable=False)
+    gst_amount: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    tax_amount_in_words: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    amount: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    amount_in_words: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    narration: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    tds_rate: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    tds_amount: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    net_payable: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    bank_name: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    account_no: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    branch_ifsc: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    authorised_signatory: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="Draft", index=True, nullable=False)
+    pdf_link: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    __table_args__ = (
+        UniqueConstraint("llp_id", "invoice_no", name="uq_neo_invoices_llp_invoice_no"),
+        Index("ix_neo_invoices_llp_month", "llp_id", "billing_month"),
+    )
 
 
 class BankAccount(Base, TimestampMixin):

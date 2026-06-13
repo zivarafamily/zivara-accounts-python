@@ -38,6 +38,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         fullName=user.name,
         role=user.role,
         employeeRef=user.name,
+        signatureURL=user.signature_url,
         allowedModules=modules,
         llps=llps,
     )

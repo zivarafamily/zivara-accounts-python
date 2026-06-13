@@ -14,6 +14,7 @@ from app.models import (
     LLP,
     LLPPartner,
     LLPPayable,
+    NeoInvoice,
     Partner,
     Receipt,
     User,
@@ -22,6 +23,7 @@ from app.models import (
 from app.security import hash_password
 from app.services.common import audit, dec, export_rows, iso, llp_name, make_id, money, normalize_key, parse_date, yes_no
 from app.services.expenses import create_expense, latest_cash_balance, reimburse_expense, serialize_expense
+from app.services.neo_invoices import apply_neo_invoice_payload, create_neo_invoice, serialize_neo_invoice
 from app.services.payables import calculate_amounts, create_payable, payable_status, serialize_payable
 
 router = APIRouter(tags=["core"])
@@ -56,6 +58,7 @@ def list_users(db: Session = Depends(get_db), _: User = Depends(require_roles("s
     return {"ok": True, "data": [{
         "UserID": u.id, "Name": u.name, "Username": u.username, "Email": u.email,
         "Role": u.role, "AllowedModules": u.allowed_modules, "Status": u.status,
+        "SignatureURL": u.signature_url,
         "CreatedAt": iso(u.created_at), "UpdatedAt": iso(u.updated_at)
     } for u in db.query(User).all()]}
 
@@ -71,6 +74,7 @@ def create_user(payload: dict, db: Session = Depends(get_db), user: User = Depen
         password_hash=hash_password(p.get("Password") or p.get("password") or "ChangeMe123!"),
         role=p.get("Role") or p.get("role") or "viewer",
         allowed_modules=_modules(p.get("AllowedModules") or p.get("allowed_modules")),
+        signature_url=p.get("SignatureURL") or "",
         status=p.get("Status") or "Active",
     )
     db.add(item)
@@ -88,6 +92,8 @@ def update_user(id: str, payload: dict, db: Session = Depends(get_db), user: Use
         for key in keys:
             if key in payload:
                 setattr(item, attr, payload[key])
+    if "SignatureURL" in payload:
+        item.signature_url = payload["SignatureURL"] or ""
     if "AllowedModules" in payload:
         item.allowed_modules = _modules(payload["AllowedModules"])
     if payload.get("Password"):
@@ -388,6 +394,44 @@ def add_receipt(payload: dict, db: Session = Depends(get_db), llp_id: str = Depe
     audit(db, user.email, "receipts", "create", item.id)
     db.commit()
     return {"ok": True, "message": "Receipt saved", "data": {"ReceiptID": item.id}}
+
+
+@router.get("/neo-invoices")
+def neo_invoices(db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), _: User = Depends(current_user)):
+    q = db.query(NeoInvoice)
+    if llp_id:
+        q = q.filter(NeoInvoice.llp_id == llp_id)
+    return {"ok": True, "data": [serialize_neo_invoice(r) for r in q.order_by(NeoInvoice.invoice_date.desc(), NeoInvoice.created_at.desc()).all()]}
+
+
+@router.post("/neo-invoices")
+def add_neo_invoice(payload: dict, db: Session = Depends(get_db), llp_id: str = Depends(require_llp_id), user: User = Depends(current_user)):
+    if not payload.get("InvoiceNo"):
+        raise HTTPException(status_code=400, detail="InvoiceNo is required")
+    if not payload.get("BillingMonth"):
+        raise HTTPException(status_code=400, detail="BillingMonth is required")
+    existing = db.query(NeoInvoice).filter(NeoInvoice.llp_id == llp_id, NeoInvoice.invoice_no == payload["InvoiceNo"]).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Invoice number already exists")
+    item = create_neo_invoice(db, payload, llp_id)
+    audit(db, user.email, "neoinvoices", "create", item.id)
+    db.commit()
+    return {"ok": True, "message": "NeoInvoice saved", "data": serialize_neo_invoice(item)}
+
+
+@router.put("/neo-invoices/{id}")
+def update_neo_invoice(id: str, payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    item = db.get(NeoInvoice, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="NeoInvoice not found")
+    if payload.get("InvoiceNo") and payload["InvoiceNo"] != item.invoice_no:
+        duplicate = db.query(NeoInvoice).filter(NeoInvoice.llp_id == item.llp_id, NeoInvoice.invoice_no == payload["InvoiceNo"], NeoInvoice.id != id).first()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Invoice number already exists")
+    apply_neo_invoice_payload(db, item, payload, item.llp_id)
+    audit(db, user.email, "neoinvoices", "update", id)
+    db.commit()
+    return {"ok": True, "message": "NeoInvoice updated", "data": serialize_neo_invoice(item)}
 
 
 @router.put("/receipts/{id}")

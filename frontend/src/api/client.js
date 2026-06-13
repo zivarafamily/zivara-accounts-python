@@ -65,6 +65,7 @@ async function request(path, options = {}) {
 const getRoutes = {
   ping: "/health",
   getUsers: "/users",
+  getEmployees: "/users",
   getLLPs: "/llps",
   getLLPsForUser: "/llps/for-user",
   getLLPPartners: "/llp-partners",
@@ -74,6 +75,7 @@ const getRoutes = {
   getPayables: "/payables",
   getExpenses: "/expenses",
   getReceipts: "/receipts",
+  getNeoInvoices: "/neo-invoices",
   getBankAccounts: "/bank-accounts",
   getCashBook: "/cash-book",
   getAccountsDashboard: "/reports/dashboard",
@@ -111,6 +113,8 @@ const postRoutes = {
   saveReceipt: ["POST", "/receipts"],
   updateReceipt: ["PUT", p => `/receipts/${p.ReceiptID}`],
   deleteReceipt: ["DELETE", p => `/receipts/${p.ReceiptID}`],
+  saveNeoInvoice: ["POST", "/neo-invoices"],
+  updateNeoInvoice: ["PUT", p => `/neo-invoices/${p.NeoInvoiceID}`],
   saveBankAccount: ["POST", "/bank-accounts"],
   updateBankAccount: ["PUT", p => `/bank-accounts/${p.AccountID}`],
   saveCashEntry: ["POST", "/cash-book"],
@@ -169,6 +173,22 @@ export async function uploadBill(file, metadata = {}) {
     headers: {},
     body: formData,
   });
+}
+
+export async function uploadSignature(file, signerName = "") {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (signerName) formData.append("signer_name", signerName);
+
+  const result = await request("/uploads/signatures", {
+    method: "POST",
+    headers: {},
+    body: formData,
+  });
+  if (result.url && result.url.startsWith("/")) {
+    result.url = `${BASE_URL}${result.url}`;
+  }
+  return result;
 }
 
 export async function importAccountsWorkbook(file) {
