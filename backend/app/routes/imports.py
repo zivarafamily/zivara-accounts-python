@@ -1,6 +1,7 @@
+import csv
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from io import BytesIO
+from io import BytesIO, StringIO
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from openpyxl import load_workbook
@@ -16,6 +17,7 @@ from app.models import (
     LLP,
     LLPPartner,
     LLPPayable,
+    NeoInvoice,
     Partner,
     Receipt,
     Setting,
@@ -24,6 +26,7 @@ from app.models import (
 )
 from app.security import hash_password
 from app.services.common import audit, make_id, normalize_key, parse_date
+from app.services.neo_invoices import apply_neo_invoice_payload, create_neo_invoice
 from app.services.payables import calculate_amounts, payable_status
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -154,6 +157,46 @@ def _commit(db, summary, module, ref_id, user_email):
         db.rollback()
         summary["skipped"] += 1
         summary["errors"].append({"row": ref_id, "message": str(exc.orig)})
+
+
+def _clean_csv_row(row):
+    return {str(key or "").strip(): value for key, value in row.items() if str(key or "").strip()}
+
+
+@router.post("/neo-invoices-csv")
+async def import_neo_invoices_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Upload a NeoInvoices .csv file")
+
+    content = (await file.read()).decode("utf-8-sig")
+    reader = csv.DictReader(StringIO(content))
+    summary = _summary()
+    for index, raw in enumerate(reader, start=2):
+        row = _clean_csv_row(raw)
+        invoice_id = _text(row.get("NeoInvoiceID"))
+        invoice_no = _text(row.get("InvoiceNo"))
+        billing_month = _text(row.get("BillingMonth"))
+        llp_id = _llp_id(db, row) or _text(row.get("SellerLLPID")) or None
+        if not invoice_no or not billing_month:
+            _skip(summary, index, "Missing InvoiceNo or BillingMonth")
+            continue
+        item = db.get(NeoInvoice, invoice_id) if invoice_id else None
+        if not item:
+            item = db.query(NeoInvoice).filter(NeoInvoice.llp_id == llp_id, NeoInvoice.invoice_no == invoice_no).first()
+        if item:
+            apply_neo_invoice_payload(db, item, row, llp_id or item.llp_id)
+            ref_id = item.id
+        else:
+            item = create_neo_invoice(db, row, llp_id)
+            ref_id = item.id
+        _commit(db, summary, "neoinvoices", ref_id, user.email)
+
+    return {"ok": True, "message": "NeoInvoices import complete", "summary": {"NeoInvoices": summary}}
 
 
 @router.post("/accounts-workbook")

@@ -243,3 +243,23 @@ def test_accounts_workbook_imports_expenses_payables_and_bank_statement(client, 
         assert db.query(CashBookEntry).count() == 1
     finally:
         db.close()
+
+
+def test_neo_invoices_csv_import(client, auth_headers):
+    csv_data = (
+        "NeoInvoiceID,RaisedBy,InvoiceType,GSTMode,IsProforma,InvoiceTitle,InvoiceNo,InvoiceDate,BillingMonth,"
+        "SellerLLPID,SellerName,SellerGSTIN,BuyerName,BuyerGSTIN,Particulars,Amount,TDSRate,TDSAmount,NetPayable,Status,CreatedAt\n"
+        "NINV_TEST,Manugopal,Professional Fees,With GST,No,Tax Invoice,MAK999,2026-06-13,Jun-2026,"
+        "LLP001,Zivara Family Office LLP,29AAEFZ3224B1ZD,Neo Wealth Management Private Limited,27AAHCN8058K1ZV,Fees,1180,10,100,1080,Sent,2026-06-13T00:00:00Z\n"
+    )
+    res = client.post(
+        "/imports/neo-invoices-csv",
+        headers=auth_headers,
+        files={"file": ("NeoInvoices.csv", csv_data.encode("utf-8"), "text/csv")},
+    )
+    assert res.status_code == 200
+    assert res.json()["summary"]["NeoInvoices"]["imported"] == 1
+
+    rows = client.get("/neo-invoices", headers=auth_headers).json()["data"]
+    assert rows[0]["NeoInvoiceID"] == "NINV_TEST"
+    assert rows[0]["InvoiceNo"] == "MAK999"

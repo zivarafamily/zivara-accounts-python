@@ -201,3 +201,14 @@ export async function importAccountsWorkbook(file) {
     body: formData,
   });
 }
+
+export async function importNeoInvoicesCsv(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  return request("/imports/neo-invoices-csv", {
+    method: "POST",
+    headers: {},
+    body: formData,
+  });
+}

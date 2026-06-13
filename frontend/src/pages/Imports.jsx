@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { importAccountsWorkbook } from "../api/client";
+import { importAccountsWorkbook, importNeoInvoicesCsv } from "../api/client";
 
 const card = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
 const label = { display:"block", fontSize:".75rem", color:"var(--muted)", marginBottom:".35rem", fontWeight:500 };
@@ -58,6 +58,8 @@ function SummaryCard({ title, summary }) {
 export default function Imports() {
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [neoFile, setNeoFile] = useState(null);
+  const [neoBusy, setNeoBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
 
@@ -76,6 +78,24 @@ export default function Imports() {
       setError(err.message || "Unable to import workbook");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function submitNeoInvoices(e) {
+    e.preventDefault();
+    if (!neoFile) return;
+    setNeoBusy(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await importNeoInvoicesCsv(neoFile);
+      setResult(res.summary || {});
+      setNeoFile(null);
+      e.currentTarget.reset();
+    } catch (err) {
+      setError(err.message || "Unable to import NeoInvoices CSV");
+    } finally {
+      setNeoBusy(false);
     }
   }
 
@@ -105,6 +125,22 @@ export default function Imports() {
         {error && <div style={{ color:"var(--danger)", fontSize:".8rem", marginTop:".75rem" }}>{error}</div>}
       </div>
 
+      <div style={card}>
+        <form onSubmit={submitNeoInvoices} style={{ display:"flex", gap:"1rem", alignItems:"end", flexWrap:"wrap" }}>
+          <div style={{ flex:"1 1 280px" }}>
+            <label style={label}>NeoInvoices CSV (.csv)</label>
+            <input
+              type="file"
+              accept=".csv"
+              onChange={e => setNeoFile(e.target.files?.[0] || null)}
+              required
+            />
+          </div>
+          <button type="submit" style={btn()} disabled={!neoFile || neoBusy}>{neoBusy ? "Importing..." : "Import Neo Invoices"}</button>
+          {neoFile && <button type="button" style={btn("ghost")} onClick={() => { setNeoFile(null); setResult(null); }}>Clear</button>}
+        </form>
+      </div>
+
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))", gap:"1rem" }}>
         {IMPORTS.map(item => (
           <div key={item.key} style={{ ...card, padding:"1rem" }}>
@@ -119,6 +155,7 @@ export default function Imports() {
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))", gap:"1rem" }}>
           <SummaryCard title="Expenses" summary={result.Expenses} />
           <SummaryCard title="Payables" summary={result.LLPPayables} />
+          <SummaryCard title="Neo Invoices" summary={result.NeoInvoices} />
           <SummaryCard title="Bank Statement" summary={result.BankStatement} />
         </div>
       )}
