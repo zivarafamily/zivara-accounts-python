@@ -100,6 +100,31 @@ def test_neo_invoice_create_list_update(client, auth_headers):
     assert updated.json()["data"]["Status"] == "Sent"
 
 
+def test_partner_llp_name_resolves_to_llp_id(client, auth_headers):
+    created = client.post(
+        "/partners",
+        headers=auth_headers,
+        json={"PartnerName": "Partner LLP Test", "LLPName": "Zivara Family Office LLP"},
+    )
+    assert created.status_code == 200
+
+    rows = client.get("/partners", headers=auth_headers).json()["data"]
+    row = next(r for r in rows if r["PartnerName"] == "Partner LLP Test")
+    assert row["LLPID"] == "LLP001"
+    assert row["LLPName"] == "Zivara Family Office LLP"
+
+    updated = client.put(
+        f"/partners/{row['PartnerID']}",
+        headers=auth_headers,
+        json={"LLPName": ""},
+    )
+    assert updated.status_code == 200
+    rows = client.get("/partners", headers=auth_headers).json()["data"]
+    row = next(r for r in rows if r["PartnerName"] == "Partner LLP Test")
+    assert row["LLPID"] == ""
+    assert row["LLPName"] == ""
+
+
 def test_clients_enrich_neo_revenue_report(client, auth_headers):
     client_payload = {
         "ClientName": "Client A",

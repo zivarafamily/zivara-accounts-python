@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { gasGet, gasPost } from "../api/client";
 
-const initial = { PartnerName: "", LLPName: "", Email: "", Mobile: "", Status: "Active" };
+const initial = { PartnerName: "", LLPID: "", LLPName: "", Email: "", Mobile: "", Status: "Active" };
 
 const card  = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "1.25rem" };
 const label = { display: "block", fontSize: ".75rem", color: "var(--muted)", marginBottom: ".35rem", fontWeight: 500 };
@@ -39,6 +39,7 @@ export default function Partners() {
   function openEdit(row) {
     setForm({
       PartnerName: row.PartnerName || "",
+      LLPID:       row.LLPID     || "",
       LLPName:     row.LLPName    || "",
       Email:       row.Email      || "",
       Mobile:      row.Mobile     || "",
@@ -91,11 +92,17 @@ export default function Partners() {
               </div>
               <div>
                 <label style={label}>LLP Name</label>
-                <input style={inp} value={form.LLPName} onChange={e => set("LLPName", e.target.value)}
-                  list="partner-llp-list" autoComplete="off" />
-                <datalist id="partner-llp-list">
-                  {llps.map(l => <option key={l.LLPID} value={l.LLPName} />)}
-                </datalist>
+                <select
+                  style={inp}
+                  value={form.LLPID}
+                  onChange={e => {
+                    const selected = llps.find(l => l.LLPID === e.target.value);
+                    setForm(p => ({ ...p, LLPID: e.target.value, LLPName: selected?.LLPName || "" }));
+                  }}
+                >
+                  <option value="">Select LLP</option>
+                  {llps.map(l => <option key={l.LLPID} value={l.LLPID}>{l.LLPName}</option>)}
+                </select>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".75rem" }}>
                 <div>

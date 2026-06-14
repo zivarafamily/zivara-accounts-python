@@ -54,6 +54,24 @@ def _llp_or_default(db: Session, llp_id: str | None):
     return first.id
 
 
+def _llp_id_from_payload(db: Session, payload: dict):
+    direct = payload.get("LLPID") or payload.get("llpId")
+    if direct:
+        return direct
+    name = normalize_key(payload.get("LLPName") or payload.get("llpName"))
+    if not name:
+        return None
+    item = next(
+        (
+            row
+            for row in db.query(LLP).all()
+            if normalize_key(row.llp_name) == name or normalize_key(row.short_code) == name
+        ),
+        None,
+    )
+    return item.id if item else None
+
+
 def _modules(value):
     if isinstance(value, list):
         return ",".join(value)
@@ -183,7 +201,7 @@ def create_partner(payload: dict, db: Session = Depends(get_db), user: User = De
     item = Partner(
         id=payload.get("PartnerID") or make_id("PTR"),
         partner_name=payload.get("PartnerName") or "",
-        llp_id=payload.get("LLPID") or None,
+        llp_id=_llp_id_from_payload(db, payload),
         email=payload.get("Email") or "",
         mobile=payload.get("Mobile") or "",
         status=payload.get("Status") or "Active",
@@ -199,10 +217,12 @@ def update_partner(id: str, payload: dict, db: Session = Depends(get_db), user: 
     item = db.get(Partner, id)
     if not item:
         raise HTTPException(status_code=404, detail="Partner not found")
-    mapping = {"PartnerName": "partner_name", "LLPID": "llp_id", "Email": "email", "Mobile": "mobile", "Status": "status"}
+    mapping = {"PartnerName": "partner_name", "Email": "email", "Mobile": "mobile", "Status": "status"}
     for key, attr in mapping.items():
         if key in payload:
-            setattr(item, attr, payload[key] or None if attr == "llp_id" else payload[key])
+            setattr(item, attr, payload[key])
+    if any(key in payload for key in ("LLPID", "llpId", "LLPName", "llpName")):
+        item.llp_id = _llp_id_from_payload(db, payload)
     audit(db, user.email, "partners", "update", id)
     db.commit()
     return {"ok": True}
