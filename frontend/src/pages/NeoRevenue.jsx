@@ -29,7 +29,7 @@ const grid3 = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(16
 const fmt   = n => (n != null && n !== "" && Number(n) !== 0) ? "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "—";
 const revenueTypeLabel = v => String(v || "").trim().toUpperCase() === "ARR" ? "ARR" : "TRB";
 const secTitle = { fontWeight: 600, marginBottom: ".75rem", fontSize: ".78rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em" };
-const IMPORT_CHUNK_SIZE = 100;
+const IMPORT_CHUNK_SIZE = 20;
 
 export default function NeoRevenue({ role = "admin", employeeRef = "", fullName = "", user = "" }) {
   const [rows,     setRows]     = useState([]);
