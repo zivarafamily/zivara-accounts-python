@@ -1,4 +1,5 @@
 import csv
+import re
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from io import BytesIO, StringIO
@@ -89,6 +90,91 @@ def _rows_any(workbook, *sheet_names):
         if rows:
             return rows
     return []
+
+
+def _compact_key(value):
+    return re.sub(r"[^a-z0-9]", "", str(value or "").strip().lower())
+
+
+def _row_value(row, *keys):
+    wanted = {_compact_key(key) for key in keys}
+    for key, value in row.items():
+        if _compact_key(key) in wanted:
+            return value
+    return None
+
+
+MONTH_ALIASES = {
+    "jan": "Jan", "january": "Jan",
+    "feb": "Feb", "february": "Feb",
+    "mar": "Mar", "march": "Mar",
+    "apr": "Apr", "april": "Apr",
+    "may": "May",
+    "jun": "Jun", "june": "Jun",
+    "jul": "Jul", "july": "Jul",
+    "aug": "Aug", "august": "Aug",
+    "sep": "Sep", "sept": "Sep", "september": "Sep",
+    "oct": "Oct", "october": "Oct",
+    "nov": "Nov", "november": "Nov",
+    "dec": "Dec", "december": "Dec",
+}
+
+
+def _revenue_month_from_header(header):
+    text = str(header or "")
+    month_match = re.search(
+        r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if not month_match:
+        return ""
+    year_match = re.search(r"(?:'|\b)(\d{2,4})\b", text[month_match.end():])
+    if not year_match:
+        return ""
+    year = int(year_match.group(1))
+    if year < 100:
+        year += 2000
+    month = MONTH_ALIASES[month_match.group(1).lower()]
+    return f"{month}-{year}"
+
+
+def _neo_revenue_import_rows(workbook):
+    explicit = _rows(workbook, "NeoRevenue")
+    if explicit:
+        for index, row in enumerate(explicit, start=2):
+            yield index, row
+        return
+
+    for sheet in workbook.worksheets:
+        headers = [_text(cell.value) for cell in sheet[1]]
+        gross_headers = [header for header in headers if "gross" in _compact_key(header) and "revenue" in _compact_key(header)]
+        for gross_header in gross_headers:
+            revenue_month = _revenue_month_from_header(gross_header)
+            if not revenue_month:
+                continue
+            for index, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+                source = {header: value for header, value in zip(headers, values) if header}
+                if not any(_text(v) for v in source.values()):
+                    continue
+                row = {
+                    "PAN": _row_value(source, "PAN"),
+                    "ClientName": _row_value(source, "ClientName", "Client Name"),
+                    "RMName": _row_value(source, "RMName", "RM Name", "Partner"),
+                    "PartnerName": _row_value(source, "PartnerName", "Partner Name", "Partner"),
+                    "TransactionDate": _row_value(source, "TransactionDate", "Transaction Date", "Date"),
+                    "Product": _row_value(source, "Product"),
+                    "TransactionType": _row_value(source, "TransactionType", "Transaction Type", "Tnx Type", "Txn Type", "Trn Type"),
+                    "SchemeName": _row_value(source, "SchemeName", "Scheme Name"),
+                    "InvestmentAmount": _row_value(source, "InvestmentAmount", "Investment Amount", "Amount"),
+                    "CommissionPercent": _row_value(source, "CommissionPercent", "Commission %", "Commission"),
+                    "Notes": _row_value(source, "Notes", "Remarks"),
+                    "IncomeType": _row_value(source, "IncomeType", "Income Type"),
+                    "RevenueMonth": revenue_month,
+                    "RevenueAmount": source.get(gross_header),
+                    "StatementRef": sheet.title,
+                }
+                yield index, row
 
 
 def _summary():
@@ -296,7 +382,7 @@ async def import_accounts_workbook(
         _commit(db, result["Clients"], "clients", item.id, user.email)
 
     existing_revenue_keys = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
-    for index, row in enumerate(_rows(workbook, "NeoRevenue"), start=2):
+    for index, row in _neo_revenue_import_rows(workbook):
         if not _text(row.get("ClientName")) or not _text(row.get("RevenueMonth")):
             _skip(result["NeoRevenue"], index, "Missing ClientName or RevenueMonth")
             continue

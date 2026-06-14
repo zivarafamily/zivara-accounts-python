@@ -3,7 +3,7 @@ from io import BytesIO
 
 from openpyxl import Workbook
 from app.database import SessionLocal
-from app.models import CashBookEntry, Expense, LLPPayable, UploadedBill
+from app.models import CashBookEntry, Expense, LLPPayable, NeoRevenue, UploadedBill
 from app.services.payables import calculate_amounts
 
 
@@ -300,6 +300,66 @@ def test_accounts_workbook_imports_expenses_payables_and_bank_statement(client, 
         assert db.query(Expense).count() == 1
         assert db.query(LLPPayable).count() == 1
         assert db.query(CashBookEntry).count() == 1
+    finally:
+        db.close()
+
+
+def test_accounts_workbook_imports_neo_gross_revenue_statement(client, auth_headers):
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Sheet1"
+    sheet.append([
+        "PAN",
+        "Client Name",
+        "Partner",
+        "Date",
+        "Product",
+        "Tnx Type",
+        "Scheme Name",
+        "Amount",
+        "Commission %",
+        "Remarks",
+        "Gross Revenue April'26",
+        "Income Type",
+    ])
+    sheet.append([
+        "AACPH9029C",
+        "SUNIL HARIDASS",
+        "Manugopal A K",
+        "2026-04-30",
+        "PMS",
+        "Purchase",
+        "Neo Multi-Asset Moderate Strategy",
+        100000,
+        0.9,
+        "",
+        430978.662,
+        "ARR",
+    ])
+    sheet.append([None, None, None, None, None, "Total", None, None, None, None, 430978.662, None])
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    res = client.post(
+        "/imports/accounts-workbook",
+        headers=auth_headers,
+        files={"file": ("neo-gross.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    summary = res.json()["summary"]
+    assert summary["NeoRevenue"]["imported"] == 1
+    assert summary["NeoRevenue"]["skipped"] == 1
+
+    db = SessionLocal()
+    try:
+        row = db.query(NeoRevenue).one()
+        assert row.client_name == "SUNIL HARIDASS"
+        assert row.partner_name == "Manugopal A K"
+        assert row.revenue_month == "Apr-2026"
+        assert row.revenue_amount == Decimal("430978.66")
+        assert row.income_type == "ARR"
     finally:
         db.close()
 
