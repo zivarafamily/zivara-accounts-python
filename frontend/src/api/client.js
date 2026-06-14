@@ -120,7 +120,6 @@ const postRoutes = {
   saveClient: ["POST", "/clients"],
   updateClient: ["PUT", p => `/clients/${p.ClientID}`],
   saveNeoRevenue: ["POST", "/neo-revenue"],
-  saveNeoRevenueBatch: ["POST", "/neo-revenue/batch"],
   updateNeoRevenue: ["PUT", p => `/neo-revenue/${p.RevenueID}`],
   deleteNeoRevenue: ["DELETE", p => `/neo-revenue/${p.RevenueID}`],
   saveVendor: ["POST", "/vendors"],

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useMemo } from "react";
 import { gasGet, gasPost } from "../api/client";
-import { formatDate, billingMonthOptions } from "../utils/format";
+import { billingMonthOptions } from "../utils/format";
 import { useLLP } from "../context/LLPContext";
 
 const initial = {
@@ -17,14 +17,12 @@ const card  = { background: "var(--card)", border: "1px solid var(--border)", bo
 const label = { display: "block", fontSize: ".75rem", color: "var(--muted)", marginBottom: ".35rem", fontWeight: 500 };
 const inp   = { width: "100%", boxSizing: "border-box", padding: ".5rem .65rem", background: "var(--input,#1e293b)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text)", fontSize: ".875rem" };
 const btn   = (v = "primary") => ({
-  padding: ".55rem 1.2rem", borderRadius: "6px", border: "none",
+  padding: ".55rem 1.2rem", borderRadius: "6px",
   fontWeight: 600, fontSize: ".875rem", cursor: "pointer",
   background: v === "primary" ? "var(--accent)" : v === "outline" ? "transparent" : "transparent",
   color: v === "primary" ? "#fff" : "var(--muted)",
   border: v === "outline" ? "1px solid var(--border)" : "none",
 });
-const grid2 = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: ".75rem" };
-const grid3 = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: ".75rem" };
 const fmt   = n => (n != null && n !== "" && Number(n) !== 0) ? "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "—";
 const revenueTypeLabel = v => String(v || "").trim().toUpperCase() === "ARR" ? "ARR" : "TRB";
 const secTitle = { fontWeight: 600, marginBottom: ".75rem", fontSize: ".78rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em" };
@@ -50,8 +48,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   const [revenueMeta, setRevenueMeta] = useState({ months: [], partners: [], schemes: [], totalRows: 0 });
   const [activeTab,setActiveTab]= useState("data");  // "data" | "reports"
   const [dataPage, setDataPage] = useState(1);
-  const [dataPageSize, setDataPageSize] = useState(100);
-  const [dataTotal, setDataTotal] = useState(0);
+  const [dataPageSize] = useState(100);
   // Reports state
   const [report,       setReport]       = useState(null);
   const [reportLoading,setReportLoading]= useState(false);
@@ -68,7 +65,6 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   const [reportPAN, setReportPAN] = useState("");
   const [reportRevenueType, setReportRevenueType] = useState("");
   const [reportView,   setReportView]   = useState("client"); // client|partner|llp|scheme|month|invoice
-  const [exporting,    setExporting]    = useState(false);
   const [deleting,     setDeleting]     = useState(null); // RevenueID being deleted
   const currentScopeLLPName = () => {
     if (currentLLP?.global) return "";
@@ -115,10 +111,11 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
       const rev = await gasGet("getNeoRevenue", params);
       if (rev.ok) {
         setRows((rev.data || []).map(r => ({ ...r, RevenueMonth: normRevMonth(r.RevenueMonth) })));
-        setDataTotal(Number(rev.total || 0));
         setDataPage(Math.floor(Number(rev.offset || 0) / Number(rev.limit || pageSize)) + 1);
       }
-    } catch {} finally { setLoading(false); }
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("Unable to load Neo Revenue", err);
+    } finally { setLoading(false); }
   }
 
   async function loadMetaAndMasters() {
@@ -141,7 +138,9 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
       if (cli.status === "fulfilled" && cli.value.ok) setClients(cli.value.data || []);
       if (par.status === "fulfilled" && par.value.ok) setPartners(par.value.data || []);
       if (llp.status === "fulfilled" && llp.value.ok) setLlps(llp.value.data || []);
-    } catch {}
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("Unable to load Neo Revenue metadata", err);
+    }
   }
 
   async function load(page = dataPage) {
@@ -240,7 +239,9 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     try {
       const r = await gasGet("getNeoRevenueReport", reportParams(overrides));
       if (r.ok) setReport(r);
-    } catch {}
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("Unable to load Neo Revenue report", err);
+    }
     finally { setReportLoading(false); }
   }
 
@@ -917,7 +918,7 @@ function ReportsPanel({
   };
   const visibleHeaders = (viewHeaders[reportView] || []).filter(h => !hiddenHeaders.has(h));
 
-  function renderRow(row, view) {
+  function renderRow(row) {
     const drillStyle = { color: "var(--accent)", fontWeight: 700, cursor: "pointer" };
     const td = (val, opts = {}, drill) => (
       <td
@@ -1106,7 +1107,7 @@ function ReportsPanel({
               key={v.key}
               onClick={() => setReportView(v.key)}
               style={{
-                padding: ".35rem .85rem", borderRadius: "6px", border: "none",
+                padding: ".35rem .85rem", borderRadius: "6px",
                 fontSize: ".8rem", fontWeight: 600, cursor: "pointer",
                 background: reportView === v.key ? "var(--accent)" : "var(--card)",
                 color:      reportView === v.key ? "#fff"          : "var(--muted)",
@@ -1143,7 +1144,7 @@ function ReportsPanel({
               <tbody>
                 {data.map((row, i) => (
                   <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
-                    {renderRow(row, reportView)}
+                    {renderRow(row)}
                   </tr>
                 ))}
               </tbody>

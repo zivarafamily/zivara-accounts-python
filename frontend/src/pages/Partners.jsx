@@ -7,7 +7,7 @@ const card  = { background: "var(--card)", border: "1px solid var(--border)", bo
 const label = { display: "block", fontSize: ".75rem", color: "var(--muted)", marginBottom: ".35rem", fontWeight: 500 };
 const inp   = { width: "100%", boxSizing: "border-box", padding: ".5rem .65rem", background: "var(--input,#1e293b)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text)", fontSize: ".875rem" };
 const btn   = (v = "primary") => ({
-  padding: ".55rem 1.2rem", borderRadius: "6px", border: "none",
+  padding: ".55rem 1.2rem", borderRadius: "6px",
   fontWeight: 600, fontSize: ".875rem", cursor: "pointer",
   background: v === "primary" ? "var(--accent)" : "transparent",
   color: v === "primary" ? "#fff" : "var(--muted)",
@@ -29,7 +29,9 @@ export default function Partners() {
       const [p, l] = await Promise.allSettled([gasGet("getPartners"), gasGet("getLLPs")]);
       if (p.status === "fulfilled" && p.value.ok) setRows(p.value.data || []);
       if (l.status === "fulfilled" && l.value.ok) setLlps(l.value.data || []);
-    } catch {} finally { setLoading(false); }
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("Unable to load partners", err);
+    } finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
