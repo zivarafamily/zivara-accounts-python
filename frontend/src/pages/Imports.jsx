@@ -69,15 +69,16 @@ function SummaryCard({ title, summary }) {
 
 export default function Imports() {
   const [file, setFile] = useState(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [neoFile, setNeoFile] = useState(null);
+  const [neoFileInputKey, setNeoFileInputKey] = useState(0);
   const [neoBusy, setNeoBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
 
   async function submit(e) {
     e.preventDefault();
-    const form = e.currentTarget;
     if (!file) return;
     setBusy(true);
     setError("");
@@ -86,7 +87,7 @@ export default function Imports() {
       const res = await importAccountsWorkbook(file);
       setResult(res.summary || {});
       setFile(null);
-      form.reset();
+      setFileInputKey(key => key + 1);
     } catch (err) {
       setError(err.message || "Unable to import workbook");
     } finally {
@@ -96,7 +97,6 @@ export default function Imports() {
 
   async function submitNeoInvoices(e) {
     e.preventDefault();
-    const form = e.currentTarget;
     if (!neoFile) return;
     setNeoBusy(true);
     setError("");
@@ -105,7 +105,7 @@ export default function Imports() {
       const res = await importNeoInvoicesCsv(neoFile);
       setResult(res.summary || {});
       setNeoFile(null);
-      form.reset();
+      setNeoFileInputKey(key => key + 1);
     } catch (err) {
       setError(err.message || "Unable to import NeoInvoices CSV");
     } finally {
@@ -127,6 +127,7 @@ export default function Imports() {
           <div style={{ flex:"1 1 280px" }}>
             <label style={label}>Workbook (.xlsx or .xlsm)</label>
             <input
+              key={fileInputKey}
               type="file"
               accept=".xlsx,.xlsm"
               onChange={e => setFile(e.target.files?.[0] || null)}
@@ -134,7 +135,7 @@ export default function Imports() {
             />
           </div>
           <button type="submit" style={btn()} disabled={!file || busy}>{busy ? "Importing..." : "Import Workbook"}</button>
-          {file && <button type="button" style={btn("ghost")} onClick={() => { setFile(null); setResult(null); }}>Clear</button>}
+          {file && <button type="button" style={btn("ghost")} onClick={() => { setFile(null); setResult(null); setFileInputKey(key => key + 1); }}>Clear</button>}
         </form>
         {error && <div style={{ color:"var(--danger)", fontSize:".8rem", marginTop:".75rem" }}>{error}</div>}
       </div>
@@ -144,6 +145,7 @@ export default function Imports() {
           <div style={{ flex:"1 1 280px" }}>
             <label style={label}>NeoInvoices CSV (.csv)</label>
             <input
+              key={neoFileInputKey}
               type="file"
               accept=".csv"
               onChange={e => setNeoFile(e.target.files?.[0] || null)}
@@ -151,7 +153,7 @@ export default function Imports() {
             />
           </div>
           <button type="submit" style={btn()} disabled={!neoFile || neoBusy}>{neoBusy ? "Importing..." : "Import Neo Invoices"}</button>
-          {neoFile && <button type="button" style={btn("ghost")} onClick={() => { setNeoFile(null); setResult(null); }}>Clear</button>}
+          {neoFile && <button type="button" style={btn("ghost")} onClick={() => { setNeoFile(null); setResult(null); setNeoFileInputKey(key => key + 1); }}>Clear</button>}
         </form>
       </div>
 
