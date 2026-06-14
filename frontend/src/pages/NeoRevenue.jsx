@@ -59,6 +59,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   const [importRows,    setImportRows]    = useState([]);   // parsed preview rows
   const [importSelected,setImportSelected]= useState(new Set()); // indices selected for import
   const [importFY,      setImportFY]      = useState("2025-26");
+  const [importMonth,   setImportMonth]   = useState(() => revenueMonthFromDate(new Date()));
   const [importing,     setImporting]     = useState(false);
   const [importDone,    setImportDone]    = useState(null); // { saved, skipped, skippedRows }
   const fileInputRef = useRef(null);
@@ -314,7 +315,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
       try {
         const data = new Uint8Array(e.target.result);
         const wb   = XLSX.read(data, { type: "array", raw: false });
-        const parsed = parseNeoSheet(wb, importFY);
+        const parsed = parseNeoSheet(wb, importFY, importMonth);
         // Mark which rows already exist in DB (count-aware)
         const existingCounts = new Map();
         rows.forEach(r => { const k = importKey(r); existingCounts.set(k, (existingCounts.get(k) || 0) + 1); });
@@ -342,7 +343,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     setImporting(true);
     const rowsToImport = importRows.filter((_, i) => importSelected.has(i));
     const defaultLLPName = currentScopeLLPName();
-    const statementRef = "FY" + importFY;
+    const statementRef = importMonth ? `Neo ${importMonth}` : "FY" + importFY;
 
     try {
       const r = await gasPost("saveNeoRevenueBatch", { rows: rowsToImport, defaultLLPName, statementRef });
@@ -734,6 +735,12 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
       {importOpen && (
         <ImportModal
           rows={importRows} fy={importFY} setFy={setImportFY}
+          importMonth={importMonth} setImportMonth={month => {
+            setImportMonth(month);
+            setImportRows([]);
+            setImportSelected(new Set());
+            setImportDone(null);
+          }}
           selected={importSelected} setSelected={setImportSelected}
           onPickFile={() => fileInputRef.current?.click()}
           importing={importing} done={importDone}
@@ -929,12 +936,26 @@ const NEO_MONTHS = ["Apr","April","May","Jun","June","Jul","Aug","Sep","Oct","No
 // Map FY string "2025-26" to year per month: Apr-Nov = startYear, Dec-Mar = startYear+1
 function monthLabel(col, fy) {
   const start = parseInt((fy || "2025-26").split("-")[0], 10);
-  const MAP = { April:"Apr", Apr:"Apr", May:"May", Jun:"Jun", June:"Jun", Jul:"Jul", Aug:"Aug", Sep:"Sep",
-                Oct:"Oct",  Nov:"Nov", Dec:"Dec", Jan:"Jan", Feb:"Feb", Mar:"Mar" };
+  const MAP = { January:"Jan", Jan:"Jan", February:"Feb", Feb:"Feb", March:"Mar", Mar:"Mar",
+                April:"Apr", Apr:"Apr", May:"May", June:"Jun", Jun:"Jun", July:"Jul", Jul:"Jul",
+                August:"Aug", Aug:"Aug", September:"Sep", Sept:"Sep", Sep:"Sep",
+                October:"Oct", Oct:"Oct", November:"Nov", Nov:"Nov", December:"Dec", Dec:"Dec" };
   const normalized = MAP[col] || col;
   const late  = ["Jan","Feb","Mar"];
   const yr    = late.includes(normalized) ? start + 1 : start;
   return normalized + "-" + yr;
+}
+
+function revenueMonthFromHeader(header, fy) {
+  const s = String(header || "").trim();
+  const monthMatch = s.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i);
+  if (!monthMatch) return "";
+  const label = monthLabel(monthMatch[1].slice(0, 1).toUpperCase() + monthMatch[1].slice(1).toLowerCase(), fy);
+  const yearMatch = s.match(/['\s-](\d{2,4})\b/);
+  if (!yearMatch) return label;
+  let year = parseInt(yearMatch[1], 10);
+  if (year < 100) year += 2000;
+  return label.replace(/-\d{4}$/, `-${year}`);
 }
 
 function revenueMonthFromDate(value) {
@@ -972,15 +993,16 @@ const H = {
   txntype:    h => norm(h).includes("txntype") || norm(h).includes("tnxtype") || norm(h).includes("trntype") || norm(h).includes("transactiontype"),
   scheme:     h => norm(h).includes("scheme"),
   amount:     h => norm(h) === "amount" || norm(h) === "investmentamount",
-  revamount:  h => norm(h) === "revenueamount" || norm(h) === "revenueamt" || norm(h) === "revenue" || norm(h) === "revenuea" || norm(h) === "grossrevenue" || norm(h) === "grossrev" || norm(h) === "grossreve",
+  revamount:  h => norm(h) === "revenueamount" || norm(h) === "revenueamt" || norm(h) === "revenue" || norm(h) === "revenuea" || norm(h).includes("grossrevenue") || norm(h).includes("grossrev"),
   commission: h => norm(h).includes("commission") || norm(h) === "commissio" || norm(h) === "ommission",
   ytd:        h => norm(h).includes("ytd"),
   incometype: h => norm(h).includes("incometype") || norm(h).includes("income") || norm(h) === "incometyp",
+  notes:      h => norm(h).includes("remarks") || norm(h).includes("notes"),
   revmonth:   h => norm(h) === "revenuemonth" || norm(h) === "revmonth",
   llp:        h => norm(h) === "llp" || norm(h) === "llpname",
 };
 
-function parseNeoSheet(wb, fy) {
+function parseNeoSheet(wb, fy, selectedRevenueMonth = "") {
   const ws   = wb.Sheets[wb.SheetNames[0]];
   const raw  = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
   if (!raw.length) return [];
@@ -1003,6 +1025,7 @@ function parseNeoSheet(wb, fy) {
   const kComm   = find(H.commission);
   const kYTD    = find(H.ytd);
   const kIncome = find(H.incometype);
+  const kNotes  = find(H.notes);
   const kRevMon = find(H.revmonth);
   const kRevAmt = find(H.revamount);
   const kLLP    = find(H.llp);
@@ -1038,6 +1061,7 @@ function parseNeoSheet(wb, fy) {
       CommissionPercent:toNum(r[kComm]),
       YTDValue:         toNum(r[kYTD]),
       IncomeType:       String(r[kIncome]||"").trim(),
+      Notes:            String(r[kNotes]||"").trim(),
     };
 
     if (monthCols.length > 0) {
@@ -1052,9 +1076,9 @@ function parseNeoSheet(wb, fy) {
       // Single-month row
       rows.push({ ...base, RevenueMonth: String(r[kRevMon]||"").trim(), RevenueAmount: toNum(r[kRevAmt]) });
     } else if (kRevAmt) {
-      // Row-wise partner statement: derive RevenueMonth from the Date column.
+      // Row-wise partner statement: use selected month first, then derive from the revenue header/date.
       const revenueAmount = toNum(r[kRevAmt]);
-      const revenueMonth = revenueMonthFromDate(r[kDate]);
+      const revenueMonth = selectedRevenueMonth || revenueMonthFromHeader(kRevAmt, fy) || revenueMonthFromDate(r[kDate]);
       if (revenueAmount !== "" && revenueAmount !== 0 && revenueMonth) {
         rows.push({ ...base, RevenueMonth: revenueMonth, RevenueAmount: revenueAmount });
       }
@@ -1065,7 +1089,7 @@ function parseNeoSheet(wb, fy) {
 }
 
 // ─── Import Modal Component ─────────────────────────────────────────────
-function ImportModal({ rows, fy, setFy, selected, setSelected, onPickFile, importing, done, onImport, onClose }) {
+function ImportModal({ rows, fy, setFy, importMonth, setImportMonth, selected, setSelected, onPickFile, importing, done, onImport, onClose }) {
   const dupCount  = rows.filter(r => r._isDuplicate).length;
   const allIdx    = rows.map((_, i) => i);
   const selCount  = selected ? selected.size : 0;
@@ -1101,10 +1125,10 @@ function ImportModal({ rows, fy, setFy, selected, setSelected, onPickFile, impor
         {/* Instructions */}
         <div style={{ background:"#6366f10d", border:"1px solid #6366f133", borderRadius:"8px", padding:".85rem 1rem", fontSize:".8rem", color:"var(--muted)", marginBottom:"1.25rem", lineHeight:1.6 }}>
           <strong style={{ color:"#818cf8" }}>Expected columns:</strong>&nbsp;
-          PAN · Client Name · Banker · Date · Product · Txn Type · Scheme Name · Amount · Commission % ·
-          <em> April · May · Jun · Jul · Aug · Sep · Oct · Nov · Dec · Jan · Feb · Mar</em> · YTD · Income Type
+          PAN · Client Name · Partner · Date · Product · Tnx Type · Scheme Name · Amount · Commission % · Remarks ·
+          <em> Gross Revenue April&apos;26</em> · Income Type
           <br/>
-          Each month column with a value becomes a separate revenue row. Months with no value are skipped.
+          Choose the revenue month before uploading. The gross revenue column may also be named Gross Revenue.
         </div>
 
         {/* Controls */}
@@ -1115,7 +1139,13 @@ function ImportModal({ rows, fy, setFy, selected, setSelected, onPickFile, impor
               {FY_OPTIONS.map(y => <option key={y}>{y}</option>)}
             </select>
           </div>
-          <button style={b("outline")} onClick={onPickFile} disabled={importing}>📂 Choose File (.xlsx / .csv)</button>
+          <div>
+            <label style={lbl}>Revenue Month</label>
+            <select style={{ ...inpS, minWidth:"145px" }} value={importMonth} onChange={e => setImportMonth(e.target.value)} disabled={importing}>
+              {billingMonthOptions(36, 12).map(m => <option key={m}>{m}</option>)}
+            </select>
+          </div>
+          <button style={b("outline")} onClick={onPickFile} disabled={importing || !importMonth}>Choose File (.xlsx / .csv)</button>
           {rows.length > 0 && !done && (
             <>
               {dupCount > 0 && (
