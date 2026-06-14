@@ -72,6 +72,17 @@ def _llp_id_from_payload(db: Session, payload: dict):
     return item.id if item else None
 
 
+def _revenue_scope_params(db: Session, user: User, llp_id: str | None, params: dict):
+    scoped = dict(params)
+    if llp_id:
+        scoped["llpName"] = llp_name(db, llp_id)
+    if user.role.lower() == "partner":
+        scoped["partnerName"] = user.name or user.username
+        scoped.pop("requesterRole", None)
+        scoped.pop("requesterName", None)
+    return scoped
+
+
 def _modules(value):
     if isinstance(value, list):
         return ",".join(value)
@@ -498,7 +509,8 @@ def update_neo_invoice(id: str, payload: dict, db: Session = Depends(get_db), us
 @router.get("/neo-revenue")
 def neo_revenue(
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
+    llp_id: str | None = Depends(get_llp_id),
     offset: int = 0,
     limit: int = 100,
     partnerName: str = "",
@@ -514,6 +526,7 @@ def neo_revenue(
         "financialYear": financialYear, "search": search,
         "requesterRole": requesterRole, "requesterName": requesterName,
     }
+    params = _revenue_scope_params(db, user, llp_id, params)
     rows = filter_revenue(db.query(NeoRevenue).all(), params)
     rows.sort(key=lambda r: (r.revenue_month, r.client_name))
     total = len(rows)
@@ -525,16 +538,18 @@ def neo_revenue(
 @router.get("/neo-revenue/meta")
 def neo_revenue_meta(
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
+    llp_id: str | None = Depends(get_llp_id),
     partnerName: str = "",
     llpName: str = "",
     requesterRole: str = "",
     requesterName: str = "",
 ):
-    rows = filter_revenue(db.query(NeoRevenue).all(), {
+    params = _revenue_scope_params(db, user, llp_id, {
         "partnerName": partnerName, "llpName": llpName,
         "requesterRole": requesterRole, "requesterName": requesterName,
     })
+    rows = filter_revenue(db.query(NeoRevenue).all(), params)
     return {
         "ok": True,
         "months": sorted({r.revenue_month for r in rows if r.revenue_month}),
@@ -547,7 +562,8 @@ def neo_revenue_meta(
 @router.get("/neo-revenue/report")
 def neo_revenue_report(
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
+    llp_id: str | None = Depends(get_llp_id),
     month: str = "",
     fromMonth: str = "",
     toMonth: str = "",
@@ -564,15 +580,34 @@ def neo_revenue_report(
     requesterRole: str = "",
     requesterName: str = "",
 ):
-    return revenue_report(db, locals())
+    params = _revenue_scope_params(db, user, llp_id, {
+        "month": month,
+        "fromMonth": fromMonth,
+        "toMonth": toMonth,
+        "financialYear": financialYear,
+        "fromDate": fromDate,
+        "toDate": toDate,
+        "llpName": llpName,
+        "partnerName": partnerName,
+        "superFamilyName": superFamilyName,
+        "familyName": familyName,
+        "schemeName": schemeName,
+        "pan": pan,
+        "revenueType": revenueType,
+        "requesterRole": requesterRole,
+        "requesterName": requesterName,
+    })
+    return revenue_report(db, params)
 
 
 @router.post("/neo-revenue")
-def add_neo_revenue(payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def add_neo_revenue(payload: dict, db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), user: User = Depends(current_user)):
     if not payload.get("ClientName"):
         raise HTTPException(status_code=400, detail="ClientName is required")
     if not payload.get("RevenueMonth"):
         raise HTTPException(status_code=400, detail="RevenueMonth is required")
+    if llp_id and not payload.get("LLPName"):
+        payload["LLPName"] = llp_name(db, llp_id)
     item = create_revenue(db, payload)
     audit(db, user.email, "neorevenue", "create", item.id)
     db.commit()
@@ -580,16 +615,17 @@ def add_neo_revenue(payload: dict, db: Session = Depends(get_db), user: User = D
 
 
 @router.post("/neo-revenue/batch")
-def add_neo_revenue_batch(payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def add_neo_revenue_batch(payload: dict, db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), user: User = Depends(current_user)):
     rows = payload.get("rows") or payload.get("Rows") or []
     if not isinstance(rows, list):
         raise HTTPException(status_code=400, detail="rows must be an array")
     existing = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
     saved, skipped, skipped_rows = 0, 0, []
+    default_llp_name = payload.get("defaultLLPName") or (llp_name(db, llp_id) if llp_id else "")
     for row in rows:
         try:
-            if payload.get("defaultLLPName") and not row.get("LLPName"):
-                row["LLPName"] = payload["defaultLLPName"]
+            if default_llp_name and not row.get("LLPName"):
+                row["LLPName"] = default_llp_name
             if payload.get("statementRef") and not row.get("StatementRef"):
                 row["StatementRef"] = payload["statementRef"]
             key = duplicate_key(row)

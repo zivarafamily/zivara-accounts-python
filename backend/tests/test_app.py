@@ -3,7 +3,8 @@ from io import BytesIO
 
 from openpyxl import Workbook
 from app.database import SessionLocal
-from app.models import CashBookEntry, Expense, LLPPayable, NeoRevenue, UploadedBill
+from app.models import CashBookEntry, Expense, LLP, LLPPartner, LLPPayable, NeoRevenue, UploadedBill, User
+from app.security import hash_password
 from app.services.payables import calculate_amounts
 
 
@@ -180,6 +181,55 @@ def test_neo_revenue_batch_accepts_neo_date_and_short_month(client, auth_headers
     rows = client.get("/neo-revenue?search=ABTPS5785N", headers=auth_headers).json()["data"]
     assert rows[0]["TransactionDate"] == "2026-04-30"
     assert rows[0]["RevenueMonth"] == "Apr-26"
+
+
+def test_partner_neo_revenue_is_scoped_to_own_llp_and_partner(client):
+    db = SessionLocal()
+    try:
+        other_llp = LLP(id="LLP002", llp_name="Other LLP", short_code="OTHER", gstin="", pan="", address="", status="Active")
+        partner_user = User(
+            id="USR_PARTNER",
+            name="Manugopal A K",
+            email="partner@zivara.local",
+            username="partner",
+            password_hash=hash_password("ChangeMe123!"),
+            role="partner",
+            allowed_modules="neorevenue,neoinvoices",
+            status="Active",
+        )
+        db.add_all([other_llp, partner_user])
+        db.flush()
+        db.add(LLPPartner(id="MAP_PARTNER", llp_id="LLP001", user_id=partner_user.id, role="partner", percentage="", allowed_modules="neorevenue,neoinvoices", status="Active"))
+        db.add_all([
+            NeoRevenue(id="REV_OWN", client_name="Own Client", partner_name="Manugopal A K", llp_name="Zivara Family Office LLP", revenue_month="Apr-2026", revenue_amount=Decimal("1000.00")),
+            NeoRevenue(id="REV_OTHER_PARTNER", client_name="Other Partner Client", partner_name="Other Partner", llp_name="Zivara Family Office LLP", revenue_month="Apr-2026", revenue_amount=Decimal("2000.00")),
+            NeoRevenue(id="REV_OTHER_LLP", client_name="Other LLP Client", partner_name="Manugopal A K", llp_name="Other LLP", revenue_month="Apr-2026", revenue_amount=Decimal("3000.00")),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    login = client.post("/auth/login", json={"username": "partner", "password": "ChangeMe123!"})
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}", "X-LLP-ID": "LLP001"}
+
+    rows = client.get(
+        "/neo-revenue?partnerName=Other%20Partner&llpName=Other%20LLP",
+        headers=headers,
+    ).json()
+    assert rows["total"] == 1
+    assert rows["data"][0]["RevenueID"] == "REV_OWN"
+
+    meta = client.get("/neo-revenue/meta?partnerName=Other%20Partner&llpName=Other%20LLP", headers=headers).json()
+    assert meta["totalRows"] == 1
+    assert meta["partners"] == ["Manugopal A K"]
+
+    report = client.get("/neo-revenue/report?partnerName=Other%20Partner&llpName=Other%20LLP", headers=headers).json()
+    assert report["kpis"]["TotalRevenue"] == 1000.0
+    assert len(report["clientWise"]) == 1
+
+    forbidden = client.get("/neo-revenue", headers={"Authorization": f"Bearer {token}", "X-LLP-ID": "LLP002"})
+    assert forbidden.status_code == 403
 
 
 def test_llp_scoped_create_requires_x_llp_id(client):
