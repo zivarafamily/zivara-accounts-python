@@ -12,6 +12,18 @@ const btn = (v = "primary") => ({
 
 const IMPORTS = [
   {
+    key: "Clients",
+    title: "Clients",
+    sheets: "Clients",
+    columns: "ClientID, ClientName, PAN, RMName, Segment, PartnerName, LLPName, FamilyName, SuperFamilyName, Status",
+  },
+  {
+    key: "NeoRevenue",
+    title: "Neo Revenue",
+    sheets: "NeoRevenue",
+    columns: "RevenueID, PAN, ClientName, RMName, TransactionDate, Product, SchemeName, RevenueMonth, RevenueAmount, PartnerName, LLPName",
+  },
+  {
     key: "Expenses",
     title: "Expenses",
     sheets: "Expenses",
@@ -154,6 +166,8 @@ export default function Imports() {
       {result && (
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))", gap:"1rem" }}>
           <SummaryCard title="Expenses" summary={result.Expenses} />
+          <SummaryCard title="Clients" summary={result.Clients} />
+          <SummaryCard title="Neo Revenue" summary={result.NeoRevenue} />
           <SummaryCard title="Payables" summary={result.LLPPayables} />
           <SummaryCard title="Neo Invoices" summary={result.NeoInvoices} />
           <SummaryCard title="Bank Statement" summary={result.BankStatement} />

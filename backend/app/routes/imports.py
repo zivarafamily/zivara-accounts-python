@@ -13,11 +13,13 @@ from app.dependencies import current_user
 from app.models import (
     BankAccount,
     CashBookEntry,
+    Client,
     Expense,
     LLP,
     LLPPartner,
     LLPPayable,
     NeoInvoice,
+    NeoRevenue,
     Partner,
     Receipt,
     Setting,
@@ -27,6 +29,7 @@ from app.models import (
 from app.security import hash_password
 from app.services.common import audit, make_id, normalize_key, parse_date
 from app.services.neo_invoices import apply_neo_invoice_payload, create_neo_invoice
+from app.services.neo_revenue import apply_client_payload, apply_revenue_payload, create_revenue, duplicate_key, serialize_revenue
 from app.services.payables import calculate_amounts, payable_status
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -215,6 +218,8 @@ async def import_accounts_workbook(
         "Settings",
         "LLPs",
         "Users",
+        "Clients",
+        "NeoRevenue",
         "Partners",
         "LLPPartners",
         "Vendors",
@@ -279,6 +284,34 @@ async def import_accounts_workbook(
         item.status = _text(row.get("Status")) or "Active"
         db.add(item)
         _commit(db, result["Partners"], "partners", item.id, user.email)
+
+    for index, row in enumerate(_rows(workbook, "Clients"), start=2):
+        if not _text(row.get("ClientName")):
+            _skip(result["Clients"], index, "Missing ClientName")
+            continue
+        item = db.get(Client, _text(row.get("ClientID"))) if _text(row.get("ClientID")) else None
+        item = item or Client(id=_text(row.get("ClientID")) or make_id("CLT"), client_name="")
+        apply_client_payload(item, row)
+        db.add(item)
+        _commit(db, result["Clients"], "clients", item.id, user.email)
+
+    existing_revenue_keys = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
+    for index, row in enumerate(_rows(workbook, "NeoRevenue"), start=2):
+        if not _text(row.get("ClientName")) or not _text(row.get("RevenueMonth")):
+            _skip(result["NeoRevenue"], index, "Missing ClientName or RevenueMonth")
+            continue
+        item = db.get(NeoRevenue, _text(row.get("RevenueID"))) if _text(row.get("RevenueID")) else None
+        key = duplicate_key(row)
+        if not item and key in existing_revenue_keys:
+            _skip(result["NeoRevenue"], index, "Duplicate NeoRevenue row")
+            continue
+        if item:
+            apply_revenue_payload(db, item, row)
+        else:
+            item = create_revenue(db, row)
+        db.add(item)
+        existing_revenue_keys.add(key)
+        _commit(db, result["NeoRevenue"], "neorevenue", item.id, user.email)
 
     for index, row in enumerate(_rows(workbook, "LLPPartners"), start=2):
         llp_id = _llp_id(db, row)

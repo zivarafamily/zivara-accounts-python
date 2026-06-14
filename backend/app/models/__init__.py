@@ -80,6 +80,22 @@ class Partner(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
+class Client(Base):
+    __tablename__ = "clients"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    client_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    pan: Mapped[str] = mapped_column(String(20), default="", index=True, nullable=False)
+    rm_name: Mapped[str] = mapped_column(String(160), default="", index=True, nullable=False)
+    segment: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="Active", index=True, nullable=False)
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    partner_name: Mapped[str] = mapped_column(String(160), default="", index=True, nullable=False)
+    llp_name: Mapped[str] = mapped_column(String(255), default="", index=True, nullable=False)
+    family_name: Mapped[str] = mapped_column(String(255), default="", index=True, nullable=False)
+    super_family_name: Mapped[str] = mapped_column(String(255), default="", index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class Vendor(Base):
     __tablename__ = "vendors"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
@@ -229,6 +245,38 @@ class NeoInvoice(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("llp_id", "invoice_no", name="uq_neo_invoices_llp_invoice_no"),
         Index("ix_neo_invoices_llp_month", "llp_id", "billing_month"),
+    )
+
+
+class NeoRevenue(Base, TimestampMixin):
+    __tablename__ = "neo_revenue"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    pan: Mapped[str] = mapped_column(String(20), default="", index=True, nullable=False)
+    client_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    rm_name: Mapped[str] = mapped_column(String(160), default="", index=True, nullable=False)
+    transaction_date: Mapped[Date | None] = mapped_column(Date, nullable=True, index=True)
+    product: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    transaction_type: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    scheme_name: Mapped[str] = mapped_column(String(255), default="", index=True, nullable=False)
+    investment_amount: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    commission_percent: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    revenue_month: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    revenue_amount: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    ytd_value: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    statement_ref: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    partner_name: Mapped[str] = mapped_column(String(160), default="", index=True, nullable=False)
+    llp_name: Mapped[str] = mapped_column(String(255), default="", index=True, nullable=False)
+    family_name: Mapped[str] = mapped_column(String(255), default="", index=True, nullable=False)
+    super_family_name: Mapped[str] = mapped_column(String(255), default="", index=True, nullable=False)
+    income_type: Mapped[str] = mapped_column(String(80), default="", index=True, nullable=False)
+    invoice_no: Mapped[str] = mapped_column(String(80), default="", index=True, nullable=False)
+    invoice_month: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    invoice_status: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    receipt_status: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    __table_args__ = (
+        Index("ix_neo_revenue_client_month", "client_name", "revenue_month"),
+        Index("ix_neo_revenue_partner_month", "partner_name", "revenue_month"),
     )
 
 

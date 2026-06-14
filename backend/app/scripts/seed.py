@@ -46,7 +46,7 @@ def seed():
                 role="admin",
                 allowed_modules=json.dumps([
                     "dashboard", "paymenttracker", "vendors", "expenses", "receipts",
-                    "neoinvoices", "reimbursements", "reconciliation", "vendorledger", "catdsreport",
+                    "clients", "neorevenue", "neoinvoices", "reimbursements", "reconciliation", "vendorledger", "catdsreport",
                     "bankaccounts", "cashbook", "imports", "users", "llps", "partners",
                 ]),
                 status="Active",

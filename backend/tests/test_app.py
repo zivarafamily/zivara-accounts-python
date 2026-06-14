@@ -100,6 +100,37 @@ def test_neo_invoice_create_list_update(client, auth_headers):
     assert updated.json()["data"]["Status"] == "Sent"
 
 
+def test_clients_enrich_neo_revenue_report(client, auth_headers):
+    client_payload = {
+        "ClientName": "Client A",
+        "PAN": "ABCDE1234F",
+        "RMName": "Manugopal",
+        "PartnerName": "Manugopal",
+        "LLPName": "Zivara Family Office LLP",
+        "FamilyName": "Family A",
+        "SuperFamilyName": "Super A",
+    }
+    assert client.post("/clients", headers=auth_headers, json=client_payload).status_code == 200
+    revenue_payload = {
+        "PAN": "ABCDE1234F",
+        "ClientName": "Old Client A",
+        "RevenueMonth": "Jun-2026",
+        "RevenueAmount": "1000",
+        "InvestmentAmount": "50000",
+        "YTDValue": "50000",
+        "IncomeType": "ARR",
+    }
+    created = client.post("/neo-revenue", headers=auth_headers, json=revenue_payload)
+    assert created.status_code == 200
+    data = created.json()["data"]
+    assert data["ClientName"] == "Client A"
+    assert data["FamilyName"] == "Family A"
+
+    report = client.get("/neo-revenue/report", headers=auth_headers).json()
+    assert report["kpis"]["TotalRevenue"] == 1000.0
+    assert report["clientWise"][0]["FamilyName"] == "Family A"
+
+
 def test_llp_scoped_create_requires_x_llp_id(client):
     login = client.post("/auth/login", json={"username": "admin", "password": "ChangeMe123!"})
     token = login.json()["access_token"]

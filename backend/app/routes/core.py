@@ -10,11 +10,13 @@ from app.dependencies import current_user, get_llp_id, require_llp_id, require_r
 from app.models import (
     BankAccount,
     CashBookEntry,
+    Client,
     Expense,
     LLP,
     LLPPartner,
     LLPPayable,
     NeoInvoice,
+    NeoRevenue,
     Partner,
     Receipt,
     User,
@@ -24,6 +26,16 @@ from app.security import hash_password
 from app.services.common import audit, dec, export_rows, iso, llp_name, make_id, money, normalize_key, parse_date, yes_no
 from app.services.expenses import create_expense, latest_cash_balance, reimburse_expense, serialize_expense
 from app.services.neo_invoices import apply_neo_invoice_payload, create_neo_invoice, serialize_neo_invoice
+from app.services.neo_revenue import (
+    apply_client_payload,
+    apply_revenue_payload,
+    create_revenue,
+    duplicate_key,
+    filter_revenue,
+    revenue_report,
+    serialize_client,
+    serialize_revenue,
+)
 from app.services.payables import calculate_amounts, create_payable, payable_status, serialize_payable
 
 router = APIRouter(tags=["core"])
@@ -245,6 +257,35 @@ def update_llp_partner(id: str, payload: dict, db: Session = Depends(get_db), us
     return {"ok": True}
 
 
+@router.get("/clients")
+def clients(db: Session = Depends(get_db), _: User = Depends(current_user)):
+    rows = db.query(Client).order_by(Client.client_name).all()
+    return {"ok": True, "data": [serialize_client(c) for c in rows]}
+
+
+@router.post("/clients")
+def add_client(payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    if not payload.get("ClientName"):
+        raise HTTPException(status_code=400, detail="ClientName is required")
+    item = Client(id=payload.get("ClientID") or make_id("CLT"), client_name=payload.get("ClientName"))
+    apply_client_payload(item, payload)
+    db.add(item)
+    audit(db, user.email, "clients", "create", item.id)
+    db.commit()
+    return {"ok": True, "message": "Client saved", "data": serialize_client(item)}
+
+
+@router.put("/clients/{id}")
+def update_client(id: str, payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    item = db.get(Client, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Client not found")
+    apply_client_payload(item, payload)
+    audit(db, user.email, "clients", "update", id)
+    db.commit()
+    return {"ok": True, "message": "Client updated", "data": serialize_client(item)}
+
+
 @router.post("/vendors")
 def create_vendor(payload: dict, db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), user: User = Depends(current_user)):
     item = Vendor(id=payload.get("VendorID") or make_id("VND"), llp_id=_llp_or_default(db, llp_id), vendor_name=payload.get("VendorName") or "", category=payload.get("Category") or "", gstin=payload.get("GSTIN") or "", pan=payload.get("PAN") or "", state=payload.get("State") or "", notes=payload.get("Notes") or "", status=payload.get("Status") or "Active")
@@ -432,6 +473,137 @@ def update_neo_invoice(id: str, payload: dict, db: Session = Depends(get_db), us
     audit(db, user.email, "neoinvoices", "update", id)
     db.commit()
     return {"ok": True, "message": "NeoInvoice updated", "data": serialize_neo_invoice(item)}
+
+
+@router.get("/neo-revenue")
+def neo_revenue(
+    db: Session = Depends(get_db),
+    _: User = Depends(current_user),
+    offset: int = 0,
+    limit: int = 100,
+    partnerName: str = "",
+    llpName: str = "",
+    month: str = "",
+    financialYear: str = "",
+    search: str = "",
+    requesterRole: str = "",
+    requesterName: str = "",
+):
+    params = {
+        "partnerName": partnerName, "llpName": llpName, "month": month,
+        "financialYear": financialYear, "search": search,
+        "requesterRole": requesterRole, "requesterName": requesterName,
+    }
+    rows = filter_revenue(db.query(NeoRevenue).all(), params)
+    rows.sort(key=lambda r: (r.revenue_month, r.client_name))
+    total = len(rows)
+    limit = max(1, min(500, limit or 100))
+    offset = max(0, offset or 0)
+    return {"ok": True, "data": [serialize_revenue(r) for r in rows[offset:offset + limit]], "total": total, "offset": offset, "limit": limit}
+
+
+@router.get("/neo-revenue/meta")
+def neo_revenue_meta(
+    db: Session = Depends(get_db),
+    _: User = Depends(current_user),
+    partnerName: str = "",
+    llpName: str = "",
+    requesterRole: str = "",
+    requesterName: str = "",
+):
+    rows = filter_revenue(db.query(NeoRevenue).all(), {
+        "partnerName": partnerName, "llpName": llpName,
+        "requesterRole": requesterRole, "requesterName": requesterName,
+    })
+    return {
+        "ok": True,
+        "months": sorted({r.revenue_month for r in rows if r.revenue_month}),
+        "partners": sorted({r.partner_name or r.rm_name for r in rows if r.partner_name or r.rm_name}),
+        "schemes": sorted({r.scheme_name for r in rows if r.scheme_name}),
+        "totalRows": len(rows),
+    }
+
+
+@router.get("/neo-revenue/report")
+def neo_revenue_report(
+    db: Session = Depends(get_db),
+    _: User = Depends(current_user),
+    month: str = "",
+    fromMonth: str = "",
+    toMonth: str = "",
+    financialYear: str = "",
+    fromDate: str = "",
+    toDate: str = "",
+    llpName: str = "",
+    partnerName: str = "",
+    superFamilyName: str = "",
+    familyName: str = "",
+    schemeName: str = "",
+    pan: str = "",
+    revenueType: str = "",
+    requesterRole: str = "",
+    requesterName: str = "",
+):
+    return revenue_report(db, locals())
+
+
+@router.post("/neo-revenue")
+def add_neo_revenue(payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    if not payload.get("ClientName"):
+        raise HTTPException(status_code=400, detail="ClientName is required")
+    if not payload.get("RevenueMonth"):
+        raise HTTPException(status_code=400, detail="RevenueMonth is required")
+    item = create_revenue(db, payload)
+    audit(db, user.email, "neorevenue", "create", item.id)
+    db.commit()
+    return {"ok": True, "message": "NeoRevenue saved", "data": serialize_revenue(item)}
+
+
+@router.post("/neo-revenue/batch")
+def add_neo_revenue_batch(payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    rows = payload.get("rows") or payload.get("Rows") or []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="rows must be an array")
+    existing = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
+    saved, skipped, skipped_rows = 0, 0, []
+    for row in rows:
+        if payload.get("defaultLLPName") and not row.get("LLPName"):
+            row["LLPName"] = payload["defaultLLPName"]
+        if payload.get("statementRef") and not row.get("StatementRef"):
+            row["StatementRef"] = payload["statementRef"]
+        key = duplicate_key(row)
+        if key in existing:
+            skipped += 1
+            skipped_rows.append({"client": row.get("ClientName", ""), "month": row.get("RevenueMonth", ""), "scheme": row.get("SchemeName", ""), "reason": "Duplicate"})
+            continue
+        item = create_revenue(db, row)
+        audit(db, user.email, "neorevenue", "import", item.id)
+        existing.add(key)
+        saved += 1
+    db.commit()
+    return {"ok": True, "saved": saved, "skipped": skipped, "skippedRows": skipped_rows}
+
+
+@router.put("/neo-revenue/{id}")
+def update_neo_revenue(id: str, payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    item = db.get(NeoRevenue, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="NeoRevenue not found")
+    apply_revenue_payload(db, item, payload)
+    audit(db, user.email, "neorevenue", "update", id)
+    db.commit()
+    return {"ok": True, "message": "NeoRevenue updated", "data": serialize_revenue(item)}
+
+
+@router.delete("/neo-revenue/{id}")
+def delete_neo_revenue(id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    item = db.get(NeoRevenue, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="NeoRevenue not found")
+    db.delete(item)
+    audit(db, user.email, "neorevenue", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "NeoRevenue deleted"}
 
 
 @router.put("/receipts/{id}")
