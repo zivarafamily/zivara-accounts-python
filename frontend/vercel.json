@@ -1,5 +1,9 @@
 {
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://zivara-accounts-api.onrender.com/$1"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
