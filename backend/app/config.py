@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 480
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origin_regex: str = r"^https?://((localhost|127\.0\.0\.1):\d+|[a-z0-9-]+\.vercel\.app|[a-z0-9-]+\.netlify\.app|[a-z0-9-]+\.pages\.dev)$"
     upload_dir: str = "./uploads"
     seed_admin_email: str = "admin@zivara.local"
     seed_admin_password: str = "ChangeMe123!"

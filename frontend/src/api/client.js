@@ -56,10 +56,16 @@ function authHeaders(extra = {}) {
 async function request(path, options = {}) {
   assertApiBaseReachableFromPage();
   const { headers = {}, ...fetchOptions } = options;
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...fetchOptions,
-    headers: authHeaders(headers),
-  });
+  const url = `${BASE_URL}${path}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      ...fetchOptions,
+      headers: authHeaders(headers),
+    });
+  } catch (err) {
+    throw new Error(`Unable to reach backend at ${BASE_URL}. Check VITE_API_BASE_URL, backend deployment, and CORS settings. (${err?.message || "fetch failed"})`);
+  }
   const raw = await res.text();
   const data = parseJsonSafe(raw);
   if (!res.ok) {

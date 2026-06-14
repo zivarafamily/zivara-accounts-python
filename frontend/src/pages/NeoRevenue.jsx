@@ -29,6 +29,7 @@ const grid3 = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(16
 const fmt   = n => (n != null && n !== "" && Number(n) !== 0) ? "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "—";
 const revenueTypeLabel = v => String(v || "").trim().toUpperCase() === "ARR" ? "ARR" : "TRB";
 const secTitle = { fontWeight: 600, marginBottom: ".75rem", fontSize: ".78rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em" };
+const IMPORT_CHUNK_SIZE = 100;
 
 export default function NeoRevenue({ role = "admin", employeeRef = "", fullName = "", user = "" }) {
   const [rows,     setRows]     = useState([]);
@@ -346,9 +347,28 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     const statementRef = importMonth ? `Neo ${importMonth}` : "FY" + importFY;
 
     try {
-      const r = await gasPost("saveNeoRevenueBatch", { rows: rowsToImport, defaultLLPName, statementRef });
-      setImportDone({ saved: r.saved || 0, skipped: r.skipped || 0, skippedRows: r.skippedRows || [] });
-      if ((r.saved || 0) > 0) load();
+      let saved = 0;
+      let skipped = 0;
+      const skippedRows = [];
+      for (let start = 0; start < rowsToImport.length; start += IMPORT_CHUNK_SIZE) {
+        const chunk = rowsToImport.slice(start, start + IMPORT_CHUNK_SIZE);
+        try {
+          const r = await gasPost("saveNeoRevenueBatch", { rows: chunk, defaultLLPName, statementRef });
+          saved += Number(r.saved || 0);
+          skipped += Number(r.skipped || 0);
+          skippedRows.push(...(r.skippedRows || []));
+        } catch (chunkErr) {
+          skipped += chunk.length;
+          skippedRows.push(...chunk.map(row => ({
+            client: row.ClientName || "(blank)",
+            month: row.RevenueMonth || "",
+            scheme: row.SchemeName || "",
+            reason: String(chunkErr?.message || "Batch import failed"),
+          })));
+        }
+      }
+      setImportDone({ saved, skipped, skippedRows });
+      if (saved > 0) load();
       setImporting(false);
       return;
     } catch (batchErr) {
