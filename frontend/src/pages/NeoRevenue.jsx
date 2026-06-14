@@ -45,7 +45,6 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   const [monthFilter, setMonthFilter] = useState(""); // by RevenueMonth
   const [partnerFilter, setPartnerFilter] = useState("");
   const [clients,  setClients]  = useState([]);
-  const [employees,setEmployees]= useState([]);
   const [partners, setPartners] = useState([]);
   const [llps,     setLlps]     = useState([]);
   const [revenueMeta, setRevenueMeta] = useState({ months: [], partners: [], schemes: [], totalRows: 0 });
@@ -125,10 +124,9 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   async function loadMetaAndMasters() {
     try {
       const scopeParams = neoRevenueScopeParams();
-      const [meta, cli, emp, par, llp] = await Promise.allSettled([
+      const [meta, cli, par, llp] = await Promise.allSettled([
         gasGet("getNeoRevenueMeta", scopeParams),
         gasGet("getClients"),
-        gasGet("getEmployees"),
         gasGet("getPartners"),
         gasGet("getLLPs"),
       ]);
@@ -141,7 +139,6 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
         });
       }
       if (cli.status === "fulfilled" && cli.value.ok) setClients(cli.value.data || []);
-      if (emp.status === "fulfilled" && emp.value.ok) setEmployees(emp.value.data || []);
       if (par.status === "fulfilled" && par.value.ok) setPartners(par.value.data || []);
       if (llp.status === "fulfilled" && llp.value.ok) setLlps(llp.value.data || []);
     } catch {}
@@ -493,16 +490,19 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
                     <input style={inp} value={form.ClientName} onChange={e => {
                       set("ClientName", e.target.value);
                       const found = clients.find(c => c.ClientName === e.target.value);
-                      if (found) { if (!form.PAN) set("PAN", found.PAN || ""); if (!form.RMName) set("RMName", found.RMName || ""); }
+                      if (found) {
+                        if (!form.PAN) set("PAN", found.PAN || "");
+                        if (!form.PartnerName) set("PartnerName", found.PartnerName || found.RMName || "");
+                      }
                     }} required list="rev-client-list" autoComplete="off" />
                     <datalist id="rev-client-list">
                       {clients.map(c => <option key={c.ClientID} value={c.ClientName} />)}
                     </datalist></div>
-                  <div><label style={label}>RM Name</label>
-                    <input style={inp} value={form.RMName} onChange={e => set("RMName", e.target.value)}
-                      list="rev-rm-list" autoComplete="off" />
-                    <datalist id="rev-rm-list">
-                      {employees.map(e => <option key={e.EmployeeID} value={e.Name} />)}
+                  <div><label style={label}>Partner Name</label>
+                    <input style={inp} value={form.PartnerName} onChange={e => set("PartnerName", e.target.value)}
+                      list="rev-partner-list" autoComplete="off" />
+                    <datalist id="rev-partner-list">
+                      {partners.map(p => <option key={p.PartnerID} value={p.PartnerName} />)}
                     </datalist></div>
                 </div>
               </div>
@@ -538,12 +538,6 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
               <div>
                 <div style={secTitle}>Attribution &amp; Invoice</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: ".75rem" }}>
-                  <div><label style={label}>Partner Name</label>
-                    <input style={inp} value={form.PartnerName} onChange={e => set("PartnerName", e.target.value)}
-                      list="rev-partner-list" autoComplete="off" />
-                    <datalist id="rev-partner-list">
-                      {partners.map(p => <option key={p.PartnerID} value={p.PartnerName} />)}
-                    </datalist></div>
                   <div><label style={label}>LLP Name</label>
                     <input style={inp} value={form.LLPName} onChange={e => set("LLPName", e.target.value)}
                       list="rev-llp-list" autoComplete="off" />
@@ -744,7 +738,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".83rem" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  {["Month","PAN","Client","RM","Partner","Product","Txn Type","Scheme","Inv. Amt","Comm%","Rev. Amt","YTD","Ref",""].map(h =>
+                  {["Month","PAN","Client","Partner","Product","Txn Type","Scheme","Inv. Amt","Comm%","Rev. Amt","YTD","Ref",""].map(h =>
                     <th key={h} style={{ padding: ".5rem .65rem", textAlign: "left", color: "var(--muted)", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
                   )}
                 </tr>
@@ -755,7 +749,6 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
                     <td style={{ padding: ".5rem .65rem", fontWeight: 600, whiteSpace: "nowrap" }}>{row.RevenueMonth || "—"}</td>
                     <td style={{ padding: ".5rem .65rem", color: "var(--muted)", fontSize: ".78rem" }}>{row.PAN || "—"}</td>
                     <td style={{ padding: ".5rem .65rem" }}>{row.ClientName || "—"}</td>
-                    <td style={{ padding: ".5rem .65rem", color: "var(--muted)" }}>{row.RMName || "—"}</td>
                     <td style={{ padding: ".5rem .65rem", color: "var(--muted)" }}>{row.PartnerName || row.RMName || "—"}</td>
                     <td style={{ padding: ".5rem .65rem", color: "var(--muted)" }}>{row.Product || "—"}</td>
                     <td style={{ padding: ".5rem .65rem", color: revenueTypeLabel(row.TransactionType) === "ARR" ? "#22d3ee" : "#f59e0b", fontWeight: 600 }}>{revenueTypeLabel(row.TransactionType)}</td>

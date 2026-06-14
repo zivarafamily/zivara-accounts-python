@@ -21,7 +21,7 @@ const IMPORTS = [
     key: "NeoRevenue",
     title: "Neo Revenue",
     sheets: "NeoRevenue",
-    columns: "RevenueID, PAN, ClientName, RMName, TransactionDate, Product, SchemeName, RevenueMonth, RevenueAmount, PartnerName, LLPName",
+    columns: "RevenueID, PAN, ClientName, PartnerName, TransactionDate, Product, SchemeName, RevenueMonth, RevenueAmount, LLPName",
   },
   {
     key: "Expenses",
