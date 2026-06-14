@@ -2,6 +2,15 @@
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
+function assertApiBaseReachableFromPage() {
+  const pageHost = window.location.hostname;
+  const isLocalPage = ["localhost", "127.0.0.1", ""].includes(pageHost);
+  const isLocalApi = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(BASE_URL);
+  if (!isLocalPage && isLocalApi) {
+    throw new Error("Public app is still configured to use the local backend. Set VITE_API_BASE_URL to the public backend URL and redeploy.");
+  }
+}
+
 function parseJsonSafe(raw) {
   try {
     return JSON.parse(raw);
@@ -45,6 +54,7 @@ function authHeaders(extra = {}) {
 }
 
 async function request(path, options = {}) {
+  assertApiBaseReachableFromPage();
   const { headers = {}, ...fetchOptions } = options;
   const res = await fetch(`${BASE_URL}${path}`, {
     ...fetchOptions,
@@ -70,10 +80,6 @@ const getRoutes = {
   getLLPsForUser: "/llps/for-user",
   getLLPPartners: "/llp-partners",
   getPartners: "/partners",
-  getClients: "/clients",
-  getNeoRevenue: "/neo-revenue",
-  getNeoRevenueMeta: "/neo-revenue/meta",
-  getNeoRevenueReport: "/neo-revenue/report",
   getVendors: "/vendors",
   getLLPPayables: "/payables",
   getPayables: "/payables",
@@ -101,12 +107,6 @@ const postRoutes = {
   updateLLPPartner: ["PUT", p => `/llp-partners/${p.MappingID}`],
   savePartner: ["POST", "/partners"],
   updatePartner: ["PUT", p => `/partners/${p.PartnerID}`],
-  saveClient: ["POST", "/clients"],
-  updateClient: ["PUT", p => `/clients/${p.ClientID}`],
-  saveNeoRevenue: ["POST", "/neo-revenue"],
-  saveNeoRevenueBatch: ["POST", "/neo-revenue/batch"],
-  updateNeoRevenue: ["PUT", p => `/neo-revenue/${p.RevenueID}`],
-  deleteNeoRevenue: ["DELETE", p => `/neo-revenue/${p.RevenueID}`],
   saveVendor: ["POST", "/vendors"],
   updateVendor: ["PUT", p => `/vendors/${p.VendorID}`],
   saveLLPPayable: ["POST", "/payables"],
