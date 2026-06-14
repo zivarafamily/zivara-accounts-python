@@ -77,6 +77,7 @@ export default function Imports() {
 
   async function submit(e) {
     e.preventDefault();
+    const form = e.currentTarget;
     if (!file) return;
     setBusy(true);
     setError("");
@@ -85,7 +86,7 @@ export default function Imports() {
       const res = await importAccountsWorkbook(file);
       setResult(res.summary || {});
       setFile(null);
-      e.currentTarget.reset();
+      form.reset();
     } catch (err) {
       setError(err.message || "Unable to import workbook");
     } finally {
@@ -95,6 +96,7 @@ export default function Imports() {
 
   async function submitNeoInvoices(e) {
     e.preventDefault();
+    const form = e.currentTarget;
     if (!neoFile) return;
     setNeoBusy(true);
     setError("");
@@ -103,7 +105,7 @@ export default function Imports() {
       const res = await importNeoInvoicesCsv(neoFile);
       setResult(res.summary || {});
       setNeoFile(null);
-      e.currentTarget.reset();
+      form.reset();
     } catch (err) {
       setError(err.message || "Unable to import NeoInvoices CSV");
     } finally {
