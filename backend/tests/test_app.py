@@ -357,6 +357,7 @@ def test_accounts_workbook_imports_neo_gross_revenue_statement(client, auth_head
         row = db.query(NeoRevenue).one()
         assert row.client_name == "SUNIL HARIDASS"
         assert row.partner_name == "Manugopal A K"
+        assert row.llp_name == "Zivara Family Office LLP"
         assert row.revenue_month == "Apr-2026"
         assert row.revenue_amount == Decimal("430978.66")
         assert row.income_type == "ARR"

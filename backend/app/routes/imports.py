@@ -211,6 +211,11 @@ def _llp_id(db, row):
     return llp.id if llp else None
 
 
+def _single_llp_name(db):
+    llps = db.query(LLP).all()
+    return llps[0].llp_name if len(llps) == 1 else ""
+
+
 def _user_by_row(db, row):
     user_id = _text(_value(row, "UserID", "User ID"))
     username = _text(_value(row, "Username", "UserName", "User Name")).lower()
@@ -382,10 +387,13 @@ async def import_accounts_workbook(
         _commit(db, result["Clients"], "clients", item.id, user.email)
 
     existing_revenue_keys = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
+    default_llp_name = _single_llp_name(db)
     for index, row in _neo_revenue_import_rows(workbook):
         if not _text(row.get("ClientName")) or not _text(row.get("RevenueMonth")):
             _skip(result["NeoRevenue"], index, "Missing ClientName or RevenueMonth")
             continue
+        if not _text(row.get("LLPName")) and default_llp_name:
+            row["LLPName"] = default_llp_name
         item = db.get(NeoRevenue, _text(row.get("RevenueID"))) if _text(row.get("RevenueID")) else None
         key = duplicate_key(row)
         if not item and key in existing_revenue_keys:
