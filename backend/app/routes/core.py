@@ -567,19 +567,23 @@ def add_neo_revenue_batch(payload: dict, db: Session = Depends(get_db), user: Us
     existing = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
     saved, skipped, skipped_rows = 0, 0, []
     for row in rows:
-        if payload.get("defaultLLPName") and not row.get("LLPName"):
-            row["LLPName"] = payload["defaultLLPName"]
-        if payload.get("statementRef") and not row.get("StatementRef"):
-            row["StatementRef"] = payload["statementRef"]
-        key = duplicate_key(row)
-        if key in existing:
+        try:
+            if payload.get("defaultLLPName") and not row.get("LLPName"):
+                row["LLPName"] = payload["defaultLLPName"]
+            if payload.get("statementRef") and not row.get("StatementRef"):
+                row["StatementRef"] = payload["statementRef"]
+            key = duplicate_key(row)
+            if key in existing:
+                skipped += 1
+                skipped_rows.append({"client": row.get("ClientName", ""), "month": row.get("RevenueMonth", ""), "scheme": row.get("SchemeName", ""), "reason": "Duplicate"})
+                continue
+            item = create_revenue(db, row)
+            audit(db, user.email, "neorevenue", "import", item.id)
+            existing.add(key)
+            saved += 1
+        except Exception as exc:
             skipped += 1
-            skipped_rows.append({"client": row.get("ClientName", ""), "month": row.get("RevenueMonth", ""), "scheme": row.get("SchemeName", ""), "reason": "Duplicate"})
-            continue
-        item = create_revenue(db, row)
-        audit(db, user.email, "neorevenue", "import", item.id)
-        existing.add(key)
-        saved += 1
+            skipped_rows.append({"client": row.get("ClientName", ""), "month": row.get("RevenueMonth", ""), "scheme": row.get("SchemeName", ""), "reason": str(exc) or "Import error"})
     db.commit()
     return {"ok": True, "saved": saved, "skipped": skipped, "skippedRows": skipped_rows}
 

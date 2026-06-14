@@ -37,7 +37,19 @@ def parse_date(value: Any) -> date | None:
         return value
     if isinstance(value, datetime):
         return value.date()
-    return date.fromisoformat(str(value)[:10])
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        pass
+    for fmt in ("%d-%b-%Y", "%d-%b-%y", "%d/%b/%Y", "%d/%b/%y", "%d-%m-%Y", "%d-%m-%y", "%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def iso(value: Any) -> str:

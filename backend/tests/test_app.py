@@ -131,6 +131,32 @@ def test_clients_enrich_neo_revenue_report(client, auth_headers):
     assert report["clientWise"][0]["FamilyName"] == "Family A"
 
 
+def test_neo_revenue_batch_accepts_neo_date_and_short_month(client, auth_headers):
+    payload = {
+        "rows": [{
+            "PAN": "ABTPS5785N",
+            "ClientName": "NIKHIL SUNIL",
+            "PartnerName": "Manugopal A K",
+            "TransactionDate": "30-Apr-26",
+            "Product": "PMS",
+            "TransactionType": "ARR",
+            "SchemeName": "Neo Multi-Asset Moderate Strategy",
+            "InvestmentAmount": "57762450.6",
+            "RevenueMonth": "Apr-26",
+            "RevenueAmount": "1000",
+            "IncomeType": "ARR",
+        }],
+        "statementRef": "Neo Apr-26",
+    }
+    res = client.post("/neo-revenue/batch", headers=auth_headers, json=payload)
+    assert res.status_code == 200
+    assert res.json()["saved"] == 1
+
+    rows = client.get("/neo-revenue?search=ABTPS5785N", headers=auth_headers).json()["data"]
+    assert rows[0]["TransactionDate"] == "2026-04-30"
+    assert rows[0]["RevenueMonth"] == "Apr-26"
+
+
 def test_llp_scoped_create_requires_x_llp_id(client):
     login = client.post("/auth/login", json={"username": "admin", "password": "ChangeMe123!"})
     token = login.json()["access_token"]
