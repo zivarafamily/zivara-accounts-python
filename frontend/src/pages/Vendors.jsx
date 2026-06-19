@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 
 const CATEGORIES = ["Accommodation", "Air Travel", "Cab / Transport", "Food", "Consulting", "Office Supplies", "Software", "Utilities", "Misc"];
 const STATUSES   = ["Active", "Inactive"];
@@ -32,7 +32,7 @@ export default function Vendors() {
   async function load() {
     setLoading(true);
     try {
-      const r = await gasGet("getVendors");
+      const r = await apiGet("getVendors");
       if (r.ok) setVendors(r.data || []);
     } catch {} finally { setLoading(false); }
   }
@@ -60,7 +60,7 @@ export default function Vendors() {
     try {
       const action  = editId ? "updateVendor" : "saveVendor";
       const payload = editId ? { ...form, VendorID: editId } : form;
-      const r = await gasPost(action, payload);
+      const r = await apiPost(action, payload);
       if (r.ok) { setOpen(false); setEditId(null); setForm(initial); load(); }
       else alert(r.error || "Error saving vendor");
     } finally { setSaving(false); }

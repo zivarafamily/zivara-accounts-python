@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { gasPost } from "../api/client";
+import { apiPost } from "../api/client";
 
 const inp = {
   width: "100%", padding: ".6rem .75rem", borderRadius: "6px",
@@ -24,7 +24,7 @@ export default function Login({ onLogin }) {
     setError("");
     setBusy(true);
     try {
-      const res = await gasPost("login", {
+      const res = await apiPost("login", {
         username: form.username.trim(),
         password: form.password.trim(),
       });

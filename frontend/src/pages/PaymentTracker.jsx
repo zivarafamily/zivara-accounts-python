@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { gasGet, gasPost, uploadBill } from "../api/client";
+import { apiGet, apiPost, uploadBill } from "../api/client";
 import { formatDate } from "../utils/format";
 import { useLLP } from "../context/LLPContext";
 
@@ -85,8 +85,8 @@ export default function PaymentTracker() {
     setError("");
     try {
       const [payRes, vendorRes] = await Promise.allSettled([
-        gasGet("getLLPPayables"),
-        gasGet("getVendors"),
+        apiGet("getLLPPayables"),
+        apiGet("getVendors"),
       ]);
       if (payRes.status === "fulfilled" && payRes.value.ok) {
         setRows(payRes.value.data || []);
@@ -218,7 +218,7 @@ export default function PaymentTracker() {
             VendorPAN: existingVendor.PAN || vendorPayload.VendorPAN,
           };
         } else {
-          const vendorRes = await gasPost("saveVendor", {
+          const vendorRes = await apiPost("saveVendor", {
             VendorName: form.VendorName,
             Category: form.VendorCategory,
             GSTIN: form.VendorGSTIN,
@@ -243,7 +243,7 @@ export default function PaymentTracker() {
         TDSAmount: amounts.tds,
         NetPayable: amounts.net,
       };
-      const saved = await gasPost(editId ? "updateLLPPayable" : "saveLLPPayable", editId ? { ...payload, PayableID: editId } : payload);
+      const saved = await apiPost(editId ? "updateLLPPayable" : "saveLLPPayable", editId ? { ...payload, PayableID: editId } : payload);
       const payableId = editId || saved.data?.PayableID;
       if (billFile && payableId) {
         const uploaded = await uploadBill(billFile, {
@@ -271,7 +271,7 @@ export default function PaymentTracker() {
     if (ref === null) return;
     setSaving(true);
     try {
-      await gasPost("markLLPPayablePaid", {
+      await apiPost("markLLPPayablePaid", {
         PayableID: row.PayableID,
         PaidAmount: row.NetPayable,
         PaymentDate: new Date().toISOString().slice(0, 10),

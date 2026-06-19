@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 
 const MODULE_OPTIONS = [
   { key:"dashboard", label:"Dashboard" },
@@ -100,7 +100,7 @@ export default function Users() {
     setLoading(true);
     setError("");
     try {
-      const [ur, lr, mr] = await Promise.all([gasGet("getUsers"), gasGet("getLLPs"), gasGet("getLLPPartners")]);
+      const [ur, lr, mr] = await Promise.all([apiGet("getUsers"), apiGet("getLLPs"), apiGet("getLLPPartners")]);
       if (ur.ok) setUsers(ur.data || []);
       if (lr.ok) setLlps(lr.data || []);
       if (mr.ok) setMemberships(mr.data || []);
@@ -171,7 +171,7 @@ export default function Users() {
         AllowedModules:modules.join(","),
       };
       if (form.Password) payload.Password = form.Password;
-      const userRes = await gasPost(editId ? "updateUser" : "saveUser", editId ? { ...payload, UserID:editId } : payload);
+      const userRes = await apiPost(editId ? "updateUser" : "saveUser", editId ? { ...payload, UserID:editId } : payload);
       const userId = editId || userRes.data?.UserID;
       const username = payload.Username;
 
@@ -187,7 +187,7 @@ export default function Users() {
           AllowedModules:modules.join(","),
           Status:"Active",
         };
-        await gasPost(existing ? "updateLLPPartner" : "saveLLPPartner", existing ? { ...membershipPayload, MappingID:existing.MappingID } : membershipPayload);
+        await apiPost(existing ? "updateLLPPartner" : "saveLLPPartner", existing ? { ...membershipPayload, MappingID:existing.MappingID } : membershipPayload);
       }
 
       setMessage(userId ? "User saved" : "User saved");

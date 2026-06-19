@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 import { formatDate } from "../utils/format";
 
 const initial = {
@@ -43,7 +43,7 @@ export default function CashBook() {
   async function load() {
     setLoading(true);
     try {
-      const r = await gasGet("getCashBook");
+      const r = await apiGet("getCashBook");
       if (r.ok) {
         const data = r.data || [];
         setEntries(data);
@@ -61,7 +61,7 @@ export default function CashBook() {
 
   async function save(e) {
     e.preventDefault();
-    const r = await gasPost("saveCashEntry", form);
+    const r = await apiPost("saveCashEntry", form);
     if (r.ok) { setForm(initial); setFormOpen(false); load(); }
     else alert(r.error || "Error saving");
   }

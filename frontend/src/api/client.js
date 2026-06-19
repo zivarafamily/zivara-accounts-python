@@ -237,3 +237,8 @@ export async function importNeoInvoicesCsv(file) {
     body: formData,
   });
 }
+
+// Clearer names for the active FastAPI backend.
+// Old gasGet/gasPost names are kept so existing pages do not break.
+export const apiGet = gasGet;
+export const apiPost = gasPost;

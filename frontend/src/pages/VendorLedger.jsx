@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { gasGet } from "../api/client";
+import { apiGet } from "../api/client";
 
 const card = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
 const btn = (v = "primary") => ({
@@ -26,8 +26,8 @@ export default function VendorLedger() {
   async function loadVendors() {
     try {
       const [vendorRes, payableRes] = await Promise.all([
-        gasGet("getVendors"),
-        gasGet("getLLPPayables"),
+        apiGet("getVendors"),
+        apiGet("getLLPPayables"),
       ]);
       const byName = new Map();
       (vendorRes.data || [])
@@ -50,7 +50,7 @@ export default function VendorLedger() {
     setLoading(true);
     setError("");
     try {
-      const r = await gasGet("getVendorLedger", nextVendor ? { vendor: nextVendor } : {});
+      const r = await apiGet("getVendorLedger", nextVendor ? { vendor: nextVendor } : {});
       setHeaders(r.headers || []);
       setRows(r.data || []);
       setSummary(r.summary || {});

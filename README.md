@@ -2,7 +2,15 @@
 
 Dedicated accounts, GST, TDS, payment tracking, reimbursement, bank and CA reporting app for Zivara LLP entities.
 
-This app was extracted from the office app so accounting/compliance workflows can evolve separately from Neo revenue and Neo invoice workflows.
+## Active Architecture
+
+This project uses:
+
+```text
+React Frontend -> Python FastAPI Backend -> SQL Database
+```
+
+Google Apps Script backend is not used.
 
 ## Scope
 
@@ -15,26 +23,38 @@ This app was extracted from the office app so accounting/compliance workflows ca
 - Bank accounts
 - LLP and partner setup
 
-## Out Of Scope
-
-- Neo revenue uploads
-- Neo statements
-- Neo invoice creation
-- Revenue share rules
-- Partner revenue settlement
-
-Those remain in the Neo revenue app.
-
 ## Structure
 
 ```text
-zivara-accounts/
+zivara-accounts-python/
   frontend/       React/Vite app
-  gas-backend/    Google Apps Script backend
-  docs/           Sheet headers and deployment notes
+  backend/        Python FastAPI backend
+  docs/           Setup and reference notes
 ```
 
-## Local Frontend
+## Local Backend Setup
+
+```bash
+cd backend
+pip install -r requirements.txt
+alembic upgrade head
+python -m app.scripts.seed
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Backend runs at:
+
+```text
+http://127.0.0.1:8000
+```
+
+API docs:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+## Local Frontend Setup
 
 ```bash
 cd frontend
@@ -45,20 +65,24 @@ npm run dev
 Create `frontend/.env`:
 
 ```text
-VITE_GAS_WEB_APP_URL=https://script.google.com/macros/s/YOUR_ACCOUNTS_WEB_APP_ID/exec
+VITE_API_BASE_URL=/api
 ```
 
-## Backend
+Frontend runs at:
 
-Copy the files in `gas-backend/` into a new Apps Script project or push with clasp. Set `SPREADSHEET_ID` in `Utils.gs`.
-
-Run setup helpers as needed:
-
-```js
-setupLLPPayablesSheet()
-setupVendorsSheet()
-setupBankAccountsSheet()
-setupLLPsSheet()
-setupPartnersSheet()
-setupLLPPartnersSheet()
+```text
+http://127.0.0.1:5173
 ```
+
+## Important Environment Variables
+
+For backend production:
+
+```text
+DATABASE_URL=your_database_url
+JWT_SECRET_KEY=change-this-to-a-long-random-secret
+SEED_ADMIN_PASSWORD=change-this-password
+ENVIRONMENT=production
+```
+
+Do not use default passwords or default JWT secrets in production.

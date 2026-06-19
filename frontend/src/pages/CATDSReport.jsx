@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { gasGet } from "../api/client";
+import { apiGet } from "../api/client";
 
 const card = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
 const btn = (v = "primary") => ({
@@ -26,7 +26,7 @@ export default function CATDSReport() {
     setLoading(true);
     setError("");
     try {
-      const r = await gasGet("getCATDSReport", month ? { month } : {});
+      const r = await apiGet("getCATDSReport", month ? { month } : {});
       setHeaders(r.headers || []);
       setRows(r.data || []);
       setSummary(r.summary || {});

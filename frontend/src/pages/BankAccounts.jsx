@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 
 const initial = {
   AccountName:"", BankName:"", AccountNumber:"", IFSC:"",
@@ -43,7 +43,7 @@ export default function BankAccounts() {
   async function load() {
     setLoading(true);
     try {
-      const r = await gasGet("getBankAccounts");
+      const r = await apiGet("getBankAccounts");
       if (r.ok) setAccounts(r.data || []);
     } catch {}
     finally { setLoading(false); }
@@ -70,7 +70,7 @@ export default function BankAccounts() {
     e.preventDefault();
     const action  = editId ? "updateBankAccount" : "saveBankAccount";
     const payload = editId ? { ...form, AccountID: editId } : form;
-    const r = await gasPost(action, payload);
+    const r = await apiPost(action, payload);
     if (r.ok) { setFormOpen(false); setEditId(null); setForm(initial); load(); }
     else alert(r.error || "Error saving");
   }

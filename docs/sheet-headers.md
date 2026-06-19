@@ -1,15 +1,16 @@
-# Zivara Accounts Sheet Headers
+# Zivara Accounts Data Reference
 
-Create these Google Sheet tabs with row 1 headers.
+This project now uses the Python FastAPI backend and SQL database.
 
-## Settings
-| Key | Value |
+Google Sheets and Apps Script are not used for the active backend.
 
 ## Users
-| UserID | Name | Username | Role | AllowedModules | Status | CreatedAt | UpdatedAt |
 
-Store login passwords in Apps Script Script Properties, not in the sheet:
-`PASS_<username> = password`
+Users are stored in the backend database.
+
+Passwords must be hashed by the backend and must never be stored as plain text.
+
+| UserID | Name | Username | Role | AllowedModules | Status | CreatedAt | UpdatedAt |
 
 ## LLPs
 | LLPID | LLPName | ShortCode | GSTIN | PAN | Address | Status | CreatedAt |

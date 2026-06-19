@@ -28,7 +28,7 @@ self.addEventListener('activate', e => {
 });
 
 // Fetch strategy:
-// - Skip cross-origin (Google Apps Script API calls) → always network
+// - Skip backend API calls → always network
 // - JS/CSS/image assets → cache-first
 // - HTML navigation → network-first with offline fallback
 self.addEventListener('fetch', e => {

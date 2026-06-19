@@ -4,7 +4,7 @@
 // admin/managing_partner: falls back to all LLPs if no personal mappings, or bypasses entirely.
 
 import { useEffect, useState } from "react";
-import { gasGet } from "../api/client";
+import { apiGet } from "../api/client";
 import { useLLP } from "../context/LLPContext";
 
 const ADMIN_ROLES = ["admin", "managing_partner"];
@@ -30,7 +30,7 @@ export default function LLPSelector({ username, role, onLogout }) {
     let cancelled = false;
     async function fetchLLPs() {
       try {
-        const res = await gasGet("getLLPsForUser", { username });
+        const res = await apiGet("getLLPsForUser", { username });
         if (cancelled) return;
         const data = res.data || [];
 

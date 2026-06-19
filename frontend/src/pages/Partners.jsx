@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 
 const initial = { PartnerName: "", LLPID: "", LLPName: "", Email: "", Mobile: "", Status: "Active" };
 
@@ -26,7 +26,7 @@ export default function Partners() {
   async function load() {
     setLoading(true);
     try {
-      const [p, l] = await Promise.allSettled([gasGet("getPartners"), gasGet("getLLPs")]);
+      const [p, l] = await Promise.allSettled([apiGet("getPartners"), apiGet("getLLPs")]);
       if (p.status === "fulfilled" && p.value.ok) setRows(p.value.data || []);
       if (l.status === "fulfilled" && l.value.ok) setLlps(l.value.data || []);
     } catch (err) {
@@ -57,7 +57,7 @@ export default function Partners() {
     try {
       const action  = editId ? "updatePartner" : "savePartner";
       const payload = editId ? { ...form, PartnerID: editId } : form;
-      const r = await gasPost(action, payload);
+      const r = await apiPost(action, payload);
       if (r.ok) { setFormOpen(false); setEditId(null); setForm(initial); load(); }
       else alert(r.error || "Error saving");
     } finally { setSaving(false); }

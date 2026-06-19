@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 
 const MODULE_OPTIONS = [
   { key:"dashboard",        label:"Dashboard" },
@@ -59,7 +59,7 @@ function LLPsSection({ llps, onRefresh }) {
     try {
       const action  = editId ? "updateLLP" : "saveLLP";
       const payload = editId ? { ...form, LLPID: editId } : form;
-      const r = await gasPost(action, payload);
+      const r = await apiPost(action, payload);
       if (r.ok) { setFormOpen(false); setEditId(null); setForm(llpInitial); onRefresh(); }
       else alert(r.error || "Error saving");
     } finally { setSaving(false); }
@@ -187,7 +187,7 @@ function MembershipsSection({ llps, users }) {
   async function load() {
     setLoading(true);
     try {
-      const r = await gasGet("getLLPPartners");
+      const r = await apiGet("getLLPPartners");
       if (r.ok) setRows(r.data || []);
     } catch {} finally { setLoading(false); }
   }
@@ -226,7 +226,7 @@ function MembershipsSection({ llps, users }) {
       const payload = { ...form, AllowedModules: selMods.join(",") };
       if (editId) payload.MappingID = editId;
       const action = editId ? "updateLLPPartner" : "saveLLPPartner";
-      const r = await gasPost(action, payload);
+      const r = await apiPost(action, payload);
       if (r.ok) { setFormOpen(false); setEditId(null); setForm(mpInitial); setSelMods([]); load(); }
       else alert(r.error || "Error saving");
     } finally { setSaving(false); }
@@ -409,8 +409,8 @@ export default function LLPs() {
     setLoading(true);
     try {
       const [lr, ur] = await Promise.all([
-        gasGet("getLLPs"),
-        gasGet("getUsers"),
+        apiGet("getLLPs"),
+        apiGet("getUsers"),
       ]);
       if (lr.ok) setLlps(lr.data || []);
       if (ur.ok) setUsers(ur.data || []);

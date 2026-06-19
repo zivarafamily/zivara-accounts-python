@@ -41,4 +41,4 @@ The database stores upload metadata.
 
 This can later be replaced with cloud object storage without changing the accounting records.
 
-Google Drive folder-sharing actions from the old Apps Script backend are no longer part of the active backend.
+Cloud drive folder-sharing actions are not part of the active backend.

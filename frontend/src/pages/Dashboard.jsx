@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { gasGet } from "../api/client";
+import { apiGet } from "../api/client";
 
 const fmt = n => "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const card = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.1rem 1.25rem" };
@@ -15,7 +15,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     setLoading(true);
-    gasGet("getAccountsDashboard")
+    apiGet("getAccountsDashboard")
       .then(r => { if (r.ok) setData(r); })
       .finally(() => setLoading(false));
   }, []);

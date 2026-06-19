@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { gasGet } from "../api/client";
+import { apiGet } from "../api/client";
 
 const card = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
 const fmt  = n => n != null && n !== "" ? "₹"+Number(n).toLocaleString("en-IN") : "—";
@@ -21,7 +21,7 @@ export default function Reconciliation() {
 
   async function load() {
     setLoading(true);
-    try { const r = await gasGet("getReconciliationSummary"); if (r.ok) setRows(r.data||[]); }
+    try { const r = await apiGet("getReconciliationSummary"); if (r.ok) setRows(r.data||[]); }
     catch {} finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);

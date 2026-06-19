@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { gasGet, gasPost, uploadSignature } from "../api/client";
+import { apiGet, apiPost, uploadSignature } from "../api/client";
 import { formatDate, billingMonthOptions } from "../utils/format";
 import { useLLP } from "../context/LLPContext";
 
@@ -479,10 +479,10 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
     setLoading(true);
     try {
       const [invRes, bankRes, empRes, llpRes] = await Promise.allSettled([
-        gasGet("getNeoInvoices"),
-        gasGet("getBankAccounts"),
-        gasGet("getUsers"),
-        gasGet("getLLPs"),
+        apiGet("getNeoInvoices"),
+        apiGet("getBankAccounts"),
+        apiGet("getUsers"),
+        apiGet("getLLPs"),
       ]);
       if (invRes.status  === "fulfilled" && invRes.value.ok)  setInvoices(invRes.value.data || []);
       if (bankRes.status === "fulfilled" && bankRes.value.ok) setBankAccounts(bankRes.value.data || []);
@@ -708,7 +708,7 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
     try {
       const action  = editId ? "updateNeoInvoice" : "saveNeoInvoice";
       const payload = editId ? { ...form, NeoInvoiceID: editId } : form;
-      const r = await gasPost(action, payload);
+      const r = await apiPost(action, payload);
       if (r.ok) { setOpen(false); setEditId(null); setForm(initial); load(); }
       else alert(r.error || "Error saving invoice");
     } finally { setSaving(false); }

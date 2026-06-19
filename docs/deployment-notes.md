@@ -1,22 +1,72 @@
 # Deployment Notes
 
-## Apps Script Backend
+## Active Deployment Flow
 
-1. Create a new Apps Script project for Zivara Accounts.
-2. Copy all files from `gas-backend/`.
-3. Update `SPREADSHEET_ID` in `Utils.gs`.
-4. Deploy as Web App:
-   - Execute as: Me
-   - Access: Anyone
-5. Copy the `/exec` URL.
+```text
+Vercel Frontend -> FastAPI Backend -> SQL Database
+```
 
-## Frontend
+Google Apps Script is not used.
 
-Set `VITE_GAS_WEB_APP_URL` to the accounts Apps Script `/exec` URL.
+## Backend Deployment
 
-For Vercel:
+Deploy the Python FastAPI backend separately, for example on Render.
 
-1. Import this repo.
-2. Set Root Directory to `frontend`.
-3. Add `VITE_GAS_WEB_APP_URL`.
-4. Deploy.
+Required backend environment variables:
+
+```text
+DATABASE_URL=your_database_url
+JWT_SECRET_KEY=change-this-to-a-long-random-secret
+SEED_ADMIN_PASSWORD=change-this-password
+ENVIRONMENT=production
+```
+
+After deployment, run database migrations:
+
+```bash
+alembic upgrade head
+```
+
+Then seed the first admin user:
+
+```bash
+python -m app.scripts.seed
+```
+
+## Frontend Deployment
+
+Deploy the frontend folder to Vercel.
+
+Frontend environment variable:
+
+```text
+VITE_API_BASE_URL=/api
+```
+
+The frontend uses `frontend/vercel.json` to rewrite `/api/*` requests to the deployed FastAPI backend.
+
+## Local Development
+
+Backend:
+
+```bash
+cd backend
+pip install -r requirements.txt
+alembic upgrade head
+python -m app.scripts.seed
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Local frontend `.env`:
+
+```text
+VITE_API_BASE_URL=/api
+```

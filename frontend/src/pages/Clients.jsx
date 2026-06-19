@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 
 const initial = {
   ClientName: "",
@@ -44,12 +44,12 @@ export default function Clients({ role = "admin", employeeRef = "" }) {
 
   async function load() {
     setLoading(true);
-    try { const r = await gasGet("getClients"); if (r.ok) setClients(r.data || []); }
+    try { const r = await apiGet("getClients"); if (r.ok) setClients(r.data || []); }
     catch {} finally { setLoading(false); }
   }
   useEffect(() => {
     load();
-    gasGet("getLLPs").then(r => { if (r.ok) setLlps(r.data || []); }).catch(() => {});
+    apiGet("getLLPs").then(r => { if (r.ok) setLlps(r.data || []); }).catch(() => {});
   }, []);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -77,7 +77,7 @@ export default function Clients({ role = "admin", employeeRef = "" }) {
     try {
       const action  = editId ? "updateClient" : "saveClient";
       const payload = editId ? { ...form, ClientID: editId } : form;
-      const r = await gasPost(action, payload);
+      const r = await apiPost(action, payload);
       if (r.ok) { setOpen(false); setEditId(null); setForm(initial); load(); }
       else alert(r.error || "Error saving client");
     } catch (err) { alert(err.message); }

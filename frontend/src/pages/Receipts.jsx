@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 import { formatDate, billingMonthOptions } from "../utils/format";
 
 const initial = {
@@ -35,7 +35,7 @@ export default function Receipts() {
 
   async function load() {
     setLoading(true);
-    try { const r = await gasGet("getReceipts"); if (r.ok) setReceipts(r.data||[]); }
+    try { const r = await apiGet("getReceipts"); if (r.ok) setReceipts(r.data||[]); }
     catch {} finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
@@ -54,7 +54,7 @@ export default function Receipts() {
     e.preventDefault();
     const action = editId ? "updateReceipt" : "saveReceipt";
     const payload = editId ? { ...form, ReceiptID: editId } : form;
-    const r = await gasPost(action, payload);
+    const r = await apiPost(action, payload);
     if (r.ok) { setFormOpen(false); setEditId(null); setForm(initial); load(); }
     else alert(r.error || "Error saving");
   }

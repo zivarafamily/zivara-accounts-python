@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState, useMemo } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 import { billingMonthOptions } from "../utils/format";
 import { useLLP } from "../context/LLPContext";
 
@@ -75,7 +75,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     if (!window.confirm(`Delete entry for "${row.ClientName}" (${row.RevenueMonth})? This cannot be undone.`)) return;
     setDeleting(row.RevenueID);
     try {
-      const r = await gasPost("deleteNeoRevenue", { RevenueID: row.RevenueID });
+      const r = await apiPost("deleteNeoRevenue", { RevenueID: row.RevenueID });
       if (r.ok) load();
       else alert(r.error || "Delete failed");
     } catch { alert("Delete failed"); }
@@ -108,7 +108,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
         ...(activePartner ? { partnerName: activePartner } : {}),
         ...overrides,
       });
-      const rev = await gasGet("getNeoRevenue", params);
+      const rev = await apiGet("getNeoRevenue", params);
       if (rev.ok) {
         setRows((rev.data || []).map(r => ({ ...r, RevenueMonth: normRevMonth(r.RevenueMonth) })));
         setDataPage(Math.floor(Number(rev.offset || 0) / Number(rev.limit || pageSize)) + 1);
@@ -122,10 +122,10 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     try {
       const scopeParams = neoRevenueScopeParams();
       const [meta, cli, par, llp] = await Promise.allSettled([
-        gasGet("getNeoRevenueMeta", scopeParams),
-        gasGet("getClients"),
-        gasGet("getPartners"),
-        gasGet("getLLPs"),
+        apiGet("getNeoRevenueMeta", scopeParams),
+        apiGet("getClients"),
+        apiGet("getPartners"),
+        apiGet("getLLPs"),
       ]);
       if (meta.status === "fulfilled" && meta.value.ok) {
         setRevenueMeta({
@@ -237,7 +237,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   async function refreshReport(overrides = {}) {
     setReportLoading(true);
     try {
-      const r = await gasGet("getNeoRevenueReport", reportParams(overrides));
+      const r = await apiGet("getNeoRevenueReport", reportParams(overrides));
       if (r.ok) setReport(r);
     } catch (err) {
       if (import.meta.env.DEV) console.warn("Unable to load Neo Revenue report", err);
@@ -287,7 +287,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     try {
       const action  = editId ? "updateNeoRevenue" : "saveNeoRevenue";
       const payload = editId ? { ...form, RevenueID: editId } : form;
-      const r = await gasPost(action, payload);
+      const r = await apiPost(action, payload);
       if (r.ok) { setFormOpen(false); setEditId(null); setForm(initial); load(); }
       else alert(r.error || "Error saving");
     } finally { setSaving(false); }

@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { gasGet, gasPost } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 import { formatDate } from "../utils/format";
 
 const card  = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "1.25rem" };
@@ -23,7 +23,7 @@ export default function Reimbursements({ role = "admin", employeeRef = "" }) {
 
   function loadData() {
     setLoading(true);
-    gasGet("getReimbursementReport")
+    apiGet("getReimbursementReport")
       .then(r => { if (r.ok) setRows(r.data || []); })
       .finally(() => setLoading(false));
   }
@@ -34,7 +34,7 @@ export default function Reimbursements({ role = "admin", employeeRef = "" }) {
     if (!SOURCE_ACTION[row.Source]) return;
     setReimbursing(row.RefID);
     try {
-      await gasPost(SOURCE_ACTION[row.Source], {
+      await apiPost(SOURCE_ACTION[row.Source], {
         [SOURCE_ID[row.Source]]: row.RefID,
         Status: REIMBURSED,
       });

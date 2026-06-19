@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { gasGet, gasPost, uploadBill } from "../api/client";
+import { apiGet, apiPost, uploadBill } from "../api/client";
 import { formatDate } from "../utils/format";
 
 const initial = {
@@ -48,8 +48,8 @@ export default function Expenses() {
     setLoading(true);
     try {
       const [expRes, vndRes] = await Promise.allSettled([
-        gasGet("getExpenses"),
-        gasGet("getVendors"),
+        apiGet("getExpenses"),
+        apiGet("getVendors"),
       ]);
       if (expRes.status === "fulfilled" && expRes.value.ok) setExpenses(expRes.value.data || []);
       if (vndRes.status === "fulfilled" && vndRes.value.ok) setVendors((vndRes.value.data || []).filter(v => v.Status !== "Inactive"));
@@ -98,7 +98,7 @@ export default function Expenses() {
     setUploadError("");
     setUploadMessage("");
     try {
-      const r = await gasPost(action, payload);
+      const r = await apiPost(action, payload);
       if (r.ok) {
         const expenseId = editId || r.data?.ExpenseID;
         if (billFile && expenseId) {
