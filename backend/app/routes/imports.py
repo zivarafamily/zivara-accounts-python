@@ -139,41 +139,181 @@ def _revenue_month_from_header(header):
     return f"{month}-{year}"
 
 
+
+def _is_total_row(row):
+    values = [_text(value).lower() for value in row.values()]
+
+    return any(
+        value in {"total", "grand total"}
+        or value.startswith("total ")
+        or value.endswith(" total")
+        for value in values
+    )
+
+
+def _neo_revenue_total_checks(workbook):
+    checks = []
+
+    for sheet in workbook.worksheets:
+        headers = [_text(cell.value) for cell in sheet[1]]
+
+        gross_headers = [
+            header
+            for header in headers
+            if "gross" in _compact_key(header) and "revenue" in _compact_key(header)
+        ]
+
+        for gross_header in gross_headers:
+            revenue_month = _revenue_month_from_header(gross_header)
+
+            if not revenue_month:
+                continue
+
+            detail_total = Decimal("0.00")
+            declared_total = None
+            detail_rows = 0
+
+            for values in sheet.iter_rows(min_row=2, values_only=True):
+                source = {
+                    header: value
+                    for header, value in zip(headers, values)
+                    if header
+                }
+
+                if not any(_text(v) for v in source.values()):
+                    continue
+
+                amount = _money(source.get(gross_header))
+
+                if _is_total_row(source):
+                    declared_total = amount
+                    continue
+
+                pan = _row_value(source, "PAN")
+                client_name = _row_value(source, "ClientName", "Client Name")
+
+                if not _text(pan) and not _text(client_name):
+                    continue
+
+                if amount == Decimal("0.00"):
+                    continue
+
+                detail_total += amount
+                detail_rows += 1
+
+            checks.append({
+                "sheet": sheet.title,
+                "gross_header": gross_header,
+                "revenue_month": revenue_month,
+                "detail_total": detail_total.quantize(Decimal("0.01")),
+                "declared_total": declared_total.quantize(Decimal("0.01")) if declared_total is not None else None,
+                "detail_rows": detail_rows,
+            })
+
+    return checks
+
+
+def _validate_neo_revenue_totals(workbook):
+    checks = _neo_revenue_total_checks(workbook)
+
+    for check in checks:
+        declared_total = check["declared_total"]
+
+        # If Neo file has no Total row, do not block import.
+        # But if Total row exists, it must match.
+        if declared_total is None:
+            continue
+
+        detail_total = check["detail_total"]
+
+        if detail_total != declared_total:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Neo revenue total mismatch. "
+                    f"Sheet: {check['sheet']}. "
+                    f"Month: {check['revenue_month']}. "
+                    f"Detail rows total: {detail_total}. "
+                    f"Neo Total row: {declared_total}."
+                ),
+            )
+
+
 def _neo_revenue_import_rows(workbook):
     explicit = _rows(workbook, "NeoRevenue")
+
     if explicit:
         for index, row in enumerate(explicit, start=2):
+            if _is_total_row(row):
+                continue
             yield index, row
         return
 
     for sheet in workbook.worksheets:
         headers = [_text(cell.value) for cell in sheet[1]]
-        gross_headers = [header for header in headers if "gross" in _compact_key(header) and "revenue" in _compact_key(header)]
+
+        gross_headers = [
+            header
+            for header in headers
+            if "gross" in _compact_key(header) and "revenue" in _compact_key(header)
+        ]
+
         for gross_header in gross_headers:
             revenue_month = _revenue_month_from_header(gross_header)
+
             if not revenue_month:
                 continue
+
             for index, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
-                source = {header: value for header, value in zip(headers, values) if header}
+                source = {
+                    header: value
+                    for header, value in zip(headers, values)
+                    if header
+                }
+
                 if not any(_text(v) for v in source.values()):
                     continue
+
+                # Neo file has final Total row.
+                # Use Total row for validation only, not import.
+                if _is_total_row(source):
+                    continue
+
+                pan = _row_value(source, "PAN")
+                client_name = _row_value(source, "ClientName", "Client Name")
+                revenue_amount = source.get(gross_header)
+
+                if not _text(pan) and not _text(client_name):
+                    continue
+
+                if _money(revenue_amount) == Decimal("0.00"):
+                    continue
+
                 row = {
-                    "PAN": _row_value(source, "PAN"),
-                    "ClientName": _row_value(source, "ClientName", "Client Name"),
+                    "PAN": pan,
+                    "ClientName": client_name,
                     "RMName": _row_value(source, "RMName", "RM Name", "Partner"),
                     "PartnerName": _row_value(source, "PartnerName", "Partner Name", "Partner"),
                     "TransactionDate": _row_value(source, "TransactionDate", "Transaction Date", "Date"),
                     "Product": _row_value(source, "Product"),
-                    "TransactionType": _row_value(source, "TransactionType", "Transaction Type", "Tnx Type", "Txn Type", "Trn Type"),
+                    "TransactionType": _row_value(
+                        source,
+                        "TransactionType",
+                        "Transaction Type",
+                        "Tnx Type",
+                        "Txn Type",
+                        "Trn Type",
+                    ),
                     "SchemeName": _row_value(source, "SchemeName", "Scheme Name"),
                     "InvestmentAmount": _row_value(source, "InvestmentAmount", "Investment Amount", "Amount"),
                     "CommissionPercent": _row_value(source, "CommissionPercent", "Commission %", "Commission"),
                     "Notes": _row_value(source, "Notes", "Remarks"),
-                    "IncomeType": _row_value(source, "IncomeType", "Income Type"),
+                    "IncomeType": _row_value(source, "IncomeType", "Income Type") or "ARR",
                     "RevenueMonth": revenue_month,
-                    "RevenueAmount": source.get(gross_header),
+                    "RevenueAmount": revenue_amount,
                     "StatementRef": sheet.title,
                 }
+
                 yield index, row
 
 
@@ -255,6 +395,86 @@ def _commit(db, summary, module, ref_id, user_email):
 
 def _clean_csv_row(row):
     return {str(key or "").strip(): value for key, value in row.items() if str(key or "").strip()}
+
+
+
+@router.post("/neo-revenue-csv")
+async def import_neo_revenue_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    filename = (file.filename or "").lower()
+
+    if not filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Upload a NeoRevenue .csv file")
+
+    content = (await file.read()).decode("utf-8-sig")
+    reader = csv.DictReader(StringIO(content))
+
+    summary = _summary()
+
+    existing_revenue_keys = {
+        duplicate_key(serialize_revenue(r))
+        for r in db.query(NeoRevenue).all()
+    }
+
+    seen_in_file = set()
+    default_llp_name = _single_llp_name(db)
+
+    for index, raw in enumerate(reader, start=2):
+        row = _clean_csv_row(raw)
+
+        if not _text(row.get("ClientName")):
+            _skip(summary, index, "Missing ClientName")
+            continue
+
+        if not _text(row.get("RevenueMonth")):
+            _skip(summary, index, "Missing RevenueMonth")
+            continue
+
+        if not _text(row.get("LLPName")) and default_llp_name:
+            row["LLPName"] = default_llp_name
+
+        revenue_id = _text(row.get("RevenueID"))
+        item = db.get(NeoRevenue, revenue_id) if revenue_id else None
+
+        key = duplicate_key(row)
+
+        if not item and key in existing_revenue_keys:
+            _skip(summary, index, "Duplicate NeoRevenue row already exists")
+            continue
+
+        if not item and key in seen_in_file:
+            _skip(summary, index, "Duplicate NeoRevenue row inside uploaded file")
+            continue
+
+        try:
+            if item:
+                apply_revenue_payload(db, item, row)
+                ref_id = item.id
+            else:
+                item = create_revenue(db, row)
+                ref_id = item.id
+
+            db.add(item)
+
+            existing_revenue_keys.add(key)
+            seen_in_file.add(key)
+
+            _commit(db, summary, "neorevenue", ref_id, user.email)
+
+        except Exception as exc:
+            db.rollback()
+            _skip(summary, index, str(exc) or "NeoRevenue import error")
+
+    return {
+        "ok": True,
+        "message": "NeoRevenue CSV import complete",
+        "summary": {
+            "NeoRevenue": summary
+        },
+    }
 
 
 @router.post("/neo-invoices-csv")

@@ -2,7 +2,7 @@ import csv
 import io
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -31,20 +31,54 @@ def money(value: Any) -> float:
 
 
 def parse_date(value: Any) -> date | None:
-    if not value:
+    if value in (None, ""):
         return None
+
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
+
     if isinstance(value, datetime):
         return value.date()
+
+    # Excel serial date support.
+    # Neo exports sometimes give date as number like 46142.
+    # Excel date system starts from 1899-12-30.
+    if isinstance(value, (int, float)) and value > 20000:
+        try:
+            return date(1899, 12, 30) + timedelta(days=int(value))
+        except Exception:
+            return None
+
     text = str(value).strip()
     if not text:
         return None
+
+    # Numeric string Excel serial date, example: "46142"
+    if text.replace(".", "", 1).isdigit():
+        try:
+            number = float(text)
+            if number > 20000:
+                return date(1899, 12, 30) + timedelta(days=int(number))
+        except Exception:
+            pass
+
     try:
         return date.fromisoformat(text[:10])
     except ValueError:
         pass
-    for fmt in ("%d-%b-%Y", "%d-%b-%y", "%d/%b/%Y", "%d/%b/%y", "%d-%m-%Y", "%d-%m-%y", "%d/%m/%Y", "%d/%m/%y"):
+
+    for fmt in (
+        "%d-%b-%Y",
+        "%d-%b-%y",
+        "%d/%b/%Y",
+        "%d/%b/%y",
+        "%d-%m-%Y",
+        "%d-%m-%y",
+        "%d/%m/%Y",
+        "%d/%m/%y",
+        "%d.%m.%Y",
+        "%d.%m.%y",
+    ):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:

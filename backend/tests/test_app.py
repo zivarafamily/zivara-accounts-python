@@ -401,11 +401,11 @@ def test_accounts_workbook_imports_neo_gross_revenue_statement(client, auth_head
         "AACPH9029C",
         "SUNIL HARIDASS",
         "Manugopal A K",
-        "2026-04-30",
+        46142,
         "PMS",
         "Purchase",
         "Neo Multi-Asset Moderate Strategy",
-        100000,
+        0,
         0.9,
         "",
         430978.662,
@@ -425,7 +425,7 @@ def test_accounts_workbook_imports_neo_gross_revenue_statement(client, auth_head
     assert res.status_code == 200
     summary = res.json()["summary"]
     assert summary["NeoRevenue"]["imported"] == 1
-    assert summary["NeoRevenue"]["skipped"] == 1
+    assert summary["NeoRevenue"]["skipped"] == 0
 
     db = SessionLocal()
     try:
@@ -435,6 +435,7 @@ def test_accounts_workbook_imports_neo_gross_revenue_statement(client, auth_head
         assert row.llp_name == "Zivara Family Office LLP"
         assert row.revenue_month == "Apr-2026"
         assert row.revenue_amount == Decimal("430978.66")
+        assert row.transaction_date.isoformat() == "2026-04-30"
         assert row.income_type == "ARR"
     finally:
         db.close()

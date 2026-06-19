@@ -67,6 +67,10 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   const [reportView,   setReportView]   = useState("client"); // client|partner|llp|scheme|month|invoice
   const [deleting,     setDeleting]     = useState(null); // RevenueID being deleted
   const currentScopeLLPName = () => {
+    // Neo Revenue imports may not exactly match the selected LLP name.
+    // For admin / managing partner, show all Neo Revenue by default.
+    if (!isPartnerRole) return "__ALL__";
+
     if (currentLLP?.global) return "";
     return currentLLP?.llpName || currentLLP?.LLPName || currentLLP?.Name || "";
   };
@@ -310,9 +314,10 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   const fyOptions = useMemo(() => Array.from(new Set(months.map(fyFromRevenueMonth).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b)), [months]);
 
+  // Do not auto-select FY.
+  // Auto FY filter can hide imported old Sheet data.
   useEffect(() => {
-    if (reportFY || fyOptions.length === 0) return;
-    setReportFY(fyOptions[fyOptions.length - 1]);
+    return;
   }, [fyOptions, reportFY]);
 
   const monthsInSelectedFY = useMemo(() => (

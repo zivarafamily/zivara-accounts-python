@@ -74,12 +74,24 @@ def _llp_id_from_payload(db: Session, payload: dict):
 
 def _revenue_scope_params(db: Session, user: User, llp_id: str | None, params: dict):
     scoped = dict(params)
-    if llp_id:
-        scoped["llpName"] = llp_name(db, llp_id)
-    if user.role.lower() == "partner":
+    role = (user.role or "").lower()
+
+    # Neo Revenue is usually imported from external Neo files.
+    # Admin / Managing Partner should see all imported rows by default.
+    # Partner role remains restricted to own partner name.
+    if role == "partner":
+        if llp_id:
+            scoped["llpName"] = llp_name(db, llp_id)
         scoped["partnerName"] = user.name or user.username
         scoped.pop("requesterRole", None)
         scoped.pop("requesterName", None)
+        return scoped
+
+    # For admin roles, only filter LLP if frontend explicitly sends llpName.
+    # Do not force selected LLP from X-LLP-ID, because it can hide imported Neo rows.
+    if scoped.get("llpName") in {"__ALL__", "ALL", "All", ""}:
+        scoped["llpName"] = ""
+
     return scoped
 
 
@@ -600,48 +612,130 @@ def neo_revenue_report(
     return revenue_report(db, params)
 
 
+
 @router.post("/neo-revenue")
-def add_neo_revenue(payload: dict, db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), user: User = Depends(current_user)):
+def add_neo_revenue(
+    payload: dict,
+    db: Session = Depends(get_db),
+    llp_id: str | None = Depends(get_llp_id),
+    user: User = Depends(current_user),
+):
     if not payload.get("ClientName"):
         raise HTTPException(status_code=400, detail="ClientName is required")
+
     if not payload.get("RevenueMonth"):
         raise HTTPException(status_code=400, detail="RevenueMonth is required")
+
     if llp_id and not payload.get("LLPName"):
         payload["LLPName"] = llp_name(db, llp_id)
+
+    new_key = duplicate_key(payload)
+
+    existing_keys = {
+        duplicate_key(serialize_revenue(r))
+        for r in db.query(NeoRevenue).all()
+    }
+
+    if new_key in existing_keys:
+        raise HTTPException(
+            status_code=409,
+            detail="Duplicate NeoRevenue row already exists",
+        )
+
     item = create_revenue(db, payload)
+
     audit(db, user.email, "neorevenue", "create", item.id)
     db.commit()
-    return {"ok": True, "message": "NeoRevenue saved", "data": serialize_revenue(item)}
+
+    return {
+        "ok": True,
+        "message": "NeoRevenue saved",
+        "data": serialize_revenue(item),
+    }
+
 
 
 @router.post("/neo-revenue/batch")
-def add_neo_revenue_batch(payload: dict, db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), user: User = Depends(current_user)):
+def add_neo_revenue_batch(
+    payload: dict,
+    db: Session = Depends(get_db),
+    llp_id: str | None = Depends(get_llp_id),
+    user: User = Depends(current_user),
+):
     rows = payload.get("rows") or payload.get("Rows") or []
+
     if not isinstance(rows, list):
         raise HTTPException(status_code=400, detail="rows must be an array")
-    existing = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
+
+    existing = {
+        duplicate_key(serialize_revenue(r))
+        for r in db.query(NeoRevenue).all()
+    }
+
+    seen_in_upload = set()
+
     saved, skipped, skipped_rows = 0, 0, []
-    default_llp_name = payload.get("defaultLLPName") or (llp_name(db, llp_id) if llp_id else "")
+
+    default_llp_name = payload.get("defaultLLPName") or (
+        llp_name(db, llp_id) if llp_id else ""
+    )
+
     for row in rows:
         try:
             if default_llp_name and not row.get("LLPName"):
                 row["LLPName"] = default_llp_name
+
             if payload.get("statementRef") and not row.get("StatementRef"):
                 row["StatementRef"] = payload["statementRef"]
+
             key = duplicate_key(row)
+
             if key in existing:
                 skipped += 1
-                skipped_rows.append({"client": row.get("ClientName", ""), "month": row.get("RevenueMonth", ""), "scheme": row.get("SchemeName", ""), "reason": "Duplicate"})
+                skipped_rows.append({
+                    "client": row.get("ClientName", ""),
+                    "month": row.get("RevenueMonth", ""),
+                    "scheme": row.get("SchemeName", ""),
+                    "reason": "Duplicate already exists in database",
+                })
                 continue
+
+            if key in seen_in_upload:
+                skipped += 1
+                skipped_rows.append({
+                    "client": row.get("ClientName", ""),
+                    "month": row.get("RevenueMonth", ""),
+                    "scheme": row.get("SchemeName", ""),
+                    "reason": "Duplicate inside uploaded batch",
+                })
+                continue
+
             item = create_revenue(db, row)
+
             audit(db, user.email, "neorevenue", "import", item.id)
+
             existing.add(key)
+            seen_in_upload.add(key)
+
             saved += 1
+
         except Exception as exc:
             skipped += 1
-            skipped_rows.append({"client": row.get("ClientName", ""), "month": row.get("RevenueMonth", ""), "scheme": row.get("SchemeName", ""), "reason": str(exc) or "Import error"})
+            skipped_rows.append({
+                "client": row.get("ClientName", ""),
+                "month": row.get("RevenueMonth", ""),
+                "scheme": row.get("SchemeName", ""),
+                "reason": str(exc) or "Import error",
+            })
+
     db.commit()
-    return {"ok": True, "saved": saved, "skipped": skipped, "skippedRows": skipped_rows}
+
+    return {
+        "ok": True,
+        "saved": saved,
+        "skipped": skipped,
+        "skippedRows": skipped_rows,
+    }
 
 
 @router.put("/neo-revenue/{id}")
