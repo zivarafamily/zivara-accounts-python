@@ -617,7 +617,6 @@ async def import_accounts_workbook(
         _commit(db, result["Clients"], "clients", item.id, user.email)
 
     database_revenue_keys = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
-    seen_revenue_keys = set()
     default_llp_name = _single_llp_name(db)
     for index, row in _neo_revenue_import_rows(workbook):
         if not _text(row.get("ClientName")) or not _text(row.get("RevenueMonth")):
@@ -630,15 +629,11 @@ async def import_accounts_workbook(
         if not item and key in database_revenue_keys:
             _skip(result["NeoRevenue"], index, "Duplicate NeoRevenue row already exists in database", row)
             continue
-        if not item and key in seen_revenue_keys:
-            _skip(result["NeoRevenue"], index, "Duplicate NeoRevenue row inside uploaded workbook", row)
-            continue
         if item:
             apply_revenue_payload(db, item, row)
         else:
             item = create_revenue(db, row)
         db.add(item)
-        seen_revenue_keys.add(key)
         _commit(db, result["NeoRevenue"], "neorevenue", item.id, user.email)
 
     for index, row in enumerate(_rows(workbook, "LLPPartners"), start=2):

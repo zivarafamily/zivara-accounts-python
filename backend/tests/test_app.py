@@ -512,7 +512,8 @@ def test_accounts_workbook_imports_negative_neo_gross_revenue(client, auth_heade
     ])
     sheet.append(["POSPAN1234A", "Positive Client", "Manugopal A K", "2025-08-31", "PMS", "Purchase", "Positive Scheme", 1000, 500.25, "TRB"])
     sheet.append(["NEGPAN1234A", "Negative Client", "Manugopal A K", "2025-08-31", "PMS", "Reversal", "Negative Scheme", 1000, -125.75, "TRB"])
-    sheet.append([None, None, "Total", None, None, None, None, None, 374.50, None])
+    sheet.append(["NEGPAN1234A", "Negative Client", "Manugopal A K", "2025-08-31", "PMS", "Reversal", "Negative Scheme", 1000, -125.75, "TRB"])
+    sheet.append([None, None, "Total", None, None, None, None, None, 248.75, None])
 
     stream = BytesIO()
     wb.save(stream)
@@ -525,14 +526,14 @@ def test_accounts_workbook_imports_negative_neo_gross_revenue(client, auth_heade
     )
     assert res.status_code == 200
     summary = res.json()["summary"]["NeoRevenue"]
-    assert summary["imported"] == 2
+    assert summary["imported"] == 3
     assert summary["skipped"] == 0
 
     db = SessionLocal()
     try:
-        rows = {row.pan: row for row in db.query(NeoRevenue).all()}
-        assert rows["POSPAN1234A"].revenue_amount == Decimal("500.25")
-        assert rows["NEGPAN1234A"].revenue_amount == Decimal("-125.75")
+        rows = db.query(NeoRevenue).all()
+        assert sum(row.revenue_amount for row in rows) == Decimal("248.75")
+        assert sum(1 for row in rows if row.pan == "NEGPAN1234A") == 2
     finally:
         db.close()
 
