@@ -20,6 +20,9 @@ def run_migrations():
 def seed():
     run_migrations()
     settings = get_settings()
+    if settings.environment.lower() == "production" and settings.seed_admin_password == "ChangeMe123!":
+        raise RuntimeError("SEED_ADMIN_PASSWORD must be changed before seeding production")
+
     db = SessionLocal()
     try:
         llp = db.get(LLP, "LLP001")

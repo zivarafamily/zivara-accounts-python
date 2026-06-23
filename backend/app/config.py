@@ -35,9 +35,6 @@ class Settings(BaseSettings):
             if self.jwt_secret_key == "CHANGE_THIS_TO_A_LONG_RANDOM_SECRET":
                 raise ValueError("JWT_SECRET_KEY must be changed in production")
 
-            if self.seed_admin_password == "ChangeMe123!":
-                raise ValueError("SEED_ADMIN_PASSWORD must be changed in production")
-
         return self
 
 
