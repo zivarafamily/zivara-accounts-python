@@ -589,6 +589,7 @@ def neo_revenue_report(
     schemeName: str = "",
     pan: str = "",
     revenueType: str = "",
+    search: str = "",
     requesterRole: str = "",
     requesterName: str = "",
 ):
@@ -606,6 +607,7 @@ def neo_revenue_report(
         "schemeName": schemeName,
         "pan": pan,
         "revenueType": revenueType,
+        "search": search,
         "requesterRole": requesterRole,
         "requesterName": requesterName,
     })

@@ -525,6 +525,7 @@ async def import_accounts_workbook(
 
     content = await file.read()
     workbook = load_workbook(BytesIO(content), data_only=True)
+    _validate_neo_revenue_totals(workbook)
     result = {name: _summary() for name in [
         "Settings",
         "LLPs",

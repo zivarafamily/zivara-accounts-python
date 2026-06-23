@@ -49,7 +49,9 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   const [activeTab,setActiveTab]= useState("data");  // "data" | "reports"
   const [dataPage, setDataPage] = useState(1);
   const [dataPageSize] = useState(100);
+  const [dataTotal, setDataTotal] = useState(0);
   // Reports state
+  const [overview,     setOverview]     = useState(null);
   const [report,       setReport]       = useState(null);
   const [reportLoading,setReportLoading]= useState(false);
   const [reportMonth,  setReportMonth]  = useState("");
@@ -116,6 +118,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
       if (rev.ok) {
         setRows((rev.data || []).map(r => ({ ...r, RevenueMonth: normRevMonth(r.RevenueMonth) })));
         setDataPage(Math.floor(Number(rev.offset || 0) / Number(rev.limit || pageSize)) + 1);
+        setDataTotal(Number(rev.total || 0));
       }
     } catch (err) {
       if (import.meta.env.DEV) console.warn("Unable to load Neo Revenue", err);
@@ -148,16 +151,20 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   }
 
   async function load(page = dataPage) {
-    await Promise.all([loadMetaAndMasters(), loadDataPage(page)]);
+    await Promise.all([loadMetaAndMasters(), loadDataPage(page), refreshOverview()]);
   }
 
   useEffect(() => {
     setDataPage(1);
     loadMetaAndMasters();
+    refreshOverview();
   }, [currentLLP?.global, currentLLP?.llpName, currentLLP?.LLPName, currentLLP?.Name, normalizedRole, ownPartnerName]);
 
   useEffect(() => {
-    const timer = setTimeout(() => loadDataPage(dataPage), search ? 250 : 0);
+    const timer = setTimeout(() => {
+      loadDataPage(dataPage);
+      refreshOverview();
+    }, search ? 250 : 0);
     return () => clearTimeout(timer);
   }, [currentLLP?.global, currentLLP?.llpName, currentLLP?.LLPName, currentLLP?.Name, normalizedRole, ownPartnerName, dataPage, dataPageSize, search, monthFilter, reportFY, partnerFilter]);
 
@@ -236,6 +243,25 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
       ...(revenueType ? { revenueType } : {}),
       ...(isPartnerRole && ownPartnerName ? { requesterRole: normalizedRole, requesterName: ownPartnerName } : {}),
     };
+  }
+
+  function overviewParams() {
+    const activePartner = isPartnerRole ? ownPartnerName : partnerFilter;
+    return neoRevenueScopeParams({
+      ...(monthFilter ? { month: monthFilter } : {}),
+      ...(reportFY ? { financialYear: reportFY } : {}),
+      ...(activePartner ? { partnerName: activePartner } : {}),
+      ...(search ? { search } : {}),
+    });
+  }
+
+  async function refreshOverview() {
+    try {
+      const r = await apiGet("getNeoRevenueReport", overviewParams());
+      if (r.ok) setOverview(r);
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("Unable to load Neo Revenue overview", err);
+    }
   }
 
   async function refreshReport(overrides = {}) {
@@ -369,7 +395,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
       .sort((a, b) => moSort(a.RevenueMonth) - moSort(b.RevenueMonth));
   }, [rows, search, monthFilter, reportFY, partnerFilter, isPartnerRole, ownPartnerName]);
 
-  const summaryRows = useMemo(() => rows.filter(r => {
+  const pageSummaryRows = useMemo(() => rows.filter(r => {
     const s = search.toLowerCase();
     const matchSearch = !s ||
       (r.ClientName || "").toLowerCase().includes(s) ||
@@ -383,20 +409,26 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
 
   const latestRevenueMonth = useMemo(() => {
     if (monthFilter) return monthFilter;
-    return summaryRows.reduce((latest, r) => {
-      if (!r.RevenueMonth) return latest;
-      return !latest || revenueMonthSortValue(r.RevenueMonth) > revenueMonthSortValue(latest)
-        ? r.RevenueMonth
-        : latest;
+    const reportMonths = Array.isArray(overview?.monthWise) ? overview.monthWise : [];
+    const latestFromReport = reportMonths.reduce((latest, r) => {
+      const month = r.RevenueMonth;
+      if (!month) return latest;
+      return !latest || revenueMonthSortValue(month) > revenueMonthSortValue(latest) ? month : latest;
     }, "");
-  }, [summaryRows, monthFilter]);
+    if (latestFromReport) return latestFromReport;
+    return pageSummaryRows.reduce((latest, r) => {
+      if (!r.RevenueMonth) return latest;
+      return !latest || revenueMonthSortValue(r.RevenueMonth) > revenueMonthSortValue(latest) ? r.RevenueMonth : latest;
+    }, "");
+  }, [overview, pageSummaryRows, monthFilter]);
 
   const totalRevenue = useMemo(() => {
-    const revenueRows = latestRevenueMonth
-      ? summaryRows.filter(r => r.RevenueMonth === latestRevenueMonth)
-      : filtered;
+    const reportMonths = Array.isArray(overview?.monthWise) ? overview.monthWise : [];
+    const reportMonth = reportMonths.find(r => r.RevenueMonth === latestRevenueMonth);
+    if (reportMonth) return Number(reportMonth.TotalRevenue || 0);
+    const revenueRows = latestRevenueMonth ? pageSummaryRows.filter(r => r.RevenueMonth === latestRevenueMonth) : filtered;
     return revenueRows.reduce((s, r) => s + Number(r.RevenueAmount || 0), 0);
-  }, [filtered, summaryRows, latestRevenueMonth]);
+  }, [filtered, pageSummaryRows, overview, latestRevenueMonth]);
 
   // FY YTD is revenue from April through the selected/latest visible revenue month.
   const totalYTD = useMemo(() => {
@@ -404,11 +436,24 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     if (!cutoffLabel) return 0;
     const cutoff = revenueMonthSortValue(cutoffLabel);
     const fy = fyFromRevenueMonth(cutoffLabel);
-    return summaryRows.reduce((sum, r) => {
+    const reportMonths = Array.isArray(overview?.monthWise) ? overview.monthWise : [];
+    if (reportMonths.length) {
+      return reportMonths.reduce((sum, r) => {
+        if (fyFromRevenueMonth(r.RevenueMonth) !== fy || revenueMonthSortValue(r.RevenueMonth) > cutoff) return sum;
+        return sum + Number(r.TotalRevenue || 0);
+      }, 0);
+    }
+    return pageSummaryRows.reduce((sum, r) => {
       if (fyFromRevenueMonth(r.RevenueMonth) !== fy || revenueMonthSortValue(r.RevenueMonth) > cutoff) return sum;
       return sum + Number(r.RevenueAmount || 0);
     }, 0);
-  }, [summaryRows, latestRevenueMonth]);
+  }, [pageSummaryRows, overview, latestRevenueMonth]);
+
+  const effectiveDataTotal = dataTotal || revenueMeta.totalRows || rows.length;
+  const dataStart = filtered.length ? (dataPage - 1) * dataPageSize + 1 : 0;
+  const dataEnd = filtered.length ? (dataPage - 1) * dataPageSize + filtered.length : 0;
+  const canPrevDataPage = dataPage > 1;
+  const canNextDataPage = dataEnd < effectiveDataTotal;
 
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
@@ -419,7 +464,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
         <div>
           <h2 style={{ margin: 0, fontSize: "1.2rem", fontWeight: 700 }}>Neo Revenue</h2>
           <p style={{ margin: 0, fontSize: ".8rem", color: "var(--muted)" }}>
-            Commission statements from Neo &nbsp;·&nbsp; {rows.length} rows
+            Commission statements from Neo &nbsp;·&nbsp; {effectiveDataTotal.toLocaleString("en-IN")} rows
           </p>
         </div>
         <div style={{ display: "flex", gap: ".6rem", flexWrap: "wrap", alignItems: "center" }}>
@@ -457,7 +502,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
       </div>
 
       {/* Summary */}
-      {rows.length > 0 && (
+      {effectiveDataTotal > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: ".75rem" }}>
           <div style={{ ...card, textAlign: "center" }}>
             <div style={{ fontSize: ".72rem", color: "var(--muted)", marginBottom: ".3rem" }}>
@@ -731,8 +776,14 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
           </button>
         )}
         <span style={{ marginLeft: "auto", fontSize: ".8rem", color: "var(--muted)" }}>
-          {filtered.length} of {rows.length} rows
+          Showing {dataStart.toLocaleString("en-IN")}-{dataEnd.toLocaleString("en-IN")} of {effectiveDataTotal.toLocaleString("en-IN")} rows
         </span>
+        <button style={btn("ghost")} disabled={!canPrevDataPage || loading} onClick={() => loadDataPage(dataPage - 1)}>
+          Prev
+        </button>
+        <button style={btn("ghost")} disabled={!canNextDataPage || loading} onClick={() => loadDataPage(dataPage + 1)}>
+          Next
+        </button>
       </div>
 
       {/* ── TABLE ───────────────────────────────────────────────────────── */}
