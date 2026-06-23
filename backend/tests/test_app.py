@@ -232,6 +232,59 @@ def test_partner_neo_revenue_is_scoped_to_own_llp_and_partner(client):
     assert forbidden.status_code == 403
 
 
+def test_admin_can_delete_neo_revenue_month(client, auth_headers):
+    db = SessionLocal()
+    try:
+        db.add_all([
+            NeoRevenue(id="REV_APR_1", client_name="April One", revenue_month="Apr-2026", revenue_amount=Decimal("100.00")),
+            NeoRevenue(id="REV_APR_2", client_name="April Two", revenue_month="Apr-2026", revenue_amount=Decimal("200.00")),
+            NeoRevenue(id="REV_MAY_1", client_name="May One", revenue_month="May-2026", revenue_amount=Decimal("300.00")),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    res = client.delete("/neo-revenue/month/Apr-2026", headers=auth_headers)
+    assert res.status_code == 200
+    assert res.json()["deleted"] == 2
+
+    rows = client.get("/neo-revenue", headers=auth_headers).json()["data"]
+    assert [row["RevenueID"] for row in rows] == ["REV_MAY_1"]
+
+
+def test_partner_cannot_delete_neo_revenue_month(client):
+    db = SessionLocal()
+    try:
+        partner_user = User(
+            id="USR_PARTNER_DELETE",
+            name="Partner Delete",
+            email="partner-delete@zivara.local",
+            username="partner-delete",
+            password_hash=hash_password("ChangeMe123!"),
+            role="partner",
+            allowed_modules="neorevenue",
+            status="Active",
+        )
+        db.add(partner_user)
+        db.flush()
+        db.add(LLPPartner(id="MAP_PARTNER_DELETE", llp_id="LLP001", user_id=partner_user.id, role="partner", percentage="", allowed_modules="neorevenue", status="Active"))
+        db.add(NeoRevenue(id="REV_DENIED_DELETE", client_name="Protected", revenue_month="Apr-2026", revenue_amount=Decimal("100.00")))
+        db.commit()
+    finally:
+        db.close()
+
+    login = client.post("/auth/login", json={"username": "partner-delete", "password": "ChangeMe123!"})
+    token = login.json()["access_token"]
+    res = client.delete("/neo-revenue/month/Apr-2026", headers={"Authorization": f"Bearer {token}", "X-LLP-ID": "LLP001"})
+    assert res.status_code == 403
+
+    db = SessionLocal()
+    try:
+        assert db.get(NeoRevenue, "REV_DENIED_DELETE") is not None
+    finally:
+        db.close()
+
+
 def test_llp_scoped_create_requires_x_llp_id(client):
     login = client.post("/auth/login", json={"username": "admin", "password": "ChangeMe123!"})
     token = login.json()["access_token"]

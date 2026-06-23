@@ -88,6 +88,29 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     finally { setDeleting(null); }
   }
 
+  async function handleDeleteMonth() {
+    if (!canManageRevenue || !monthFilter) return;
+    const rowText = effectiveDataTotal ? ` (${effectiveDataTotal.toLocaleString("en-IN")} matching rows)` : "";
+    const ok = window.confirm(`Delete all Neo Revenue rows for ${monthFilter}${rowText}? This cannot be undone.`);
+    if (!ok) return;
+    setDeleting(`month:${monthFilter}`);
+    try {
+      const r = await apiPost("deleteNeoRevenueMonth", { RevenueMonth: monthFilter });
+      if (r.ok) {
+        alert(r.message || `Deleted ${r.deleted || 0} rows`);
+        setMonthFilter("");
+        setReport(null);
+        await load(1);
+      } else {
+        alert(r.error || "Month delete failed");
+      }
+    } catch (err) {
+      alert(err.message || "Month delete failed");
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   function neoRevenueScopeParams(extra = {}) {
     const llpName = currentScopeLLPName();
     return {
@@ -773,6 +796,15 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
         {(search || monthFilter || partnerFilter) && (
           <button style={btn("ghost")} onClick={() => { setSearch(""); setMonthFilter(""); setPartnerFilter(""); }}>
             Clear filters
+          </button>
+        )}
+        {canManageRevenue && monthFilter && (
+          <button
+            style={{ ...btn("ghost"), color: "#f87171", border: "1px solid rgba(248,113,113,.45)" }}
+            disabled={deleting === `month:${monthFilter}`}
+            onClick={handleDeleteMonth}
+          >
+            {deleting === `month:${monthFilter}` ? "Deleting..." : `Delete ${monthFilter}`}
           </button>
         )}
         <span style={{ marginLeft: "auto", fontSize: ".8rem", color: "var(--muted)" }}>

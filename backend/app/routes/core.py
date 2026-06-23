@@ -751,8 +751,27 @@ def update_neo_revenue(id: str, payload: dict, db: Session = Depends(get_db), us
     return {"ok": True, "message": "NeoRevenue updated", "data": serialize_revenue(item)}
 
 
+@router.delete("/neo-revenue/month/{month}")
+def delete_neo_revenue_month(
+    month: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("super_admin", "admin", "managing_partner")),
+):
+    rows = db.query(NeoRevenue).filter(NeoRevenue.revenue_month == month).all()
+    deleted = len(rows)
+    for item in rows:
+        db.delete(item)
+    audit(db, user.email, "neorevenue", "delete-month", month)
+    db.commit()
+    return {"ok": True, "message": f"Deleted {deleted} NeoRevenue rows for {month}", "deleted": deleted}
+
+
 @router.delete("/neo-revenue/{id}")
-def delete_neo_revenue(id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def delete_neo_revenue(
+    id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("super_admin", "admin", "managing_partner")),
+):
     item = db.get(NeoRevenue, id)
     if not item:
         raise HTTPException(status_code=404, detail="NeoRevenue not found")

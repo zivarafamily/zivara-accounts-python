@@ -122,6 +122,7 @@ const postRoutes = {
   saveNeoRevenue: ["POST", "/neo-revenue"],
   updateNeoRevenue: ["PUT", p => `/neo-revenue/${p.RevenueID}`],
   deleteNeoRevenue: ["DELETE", p => `/neo-revenue/${p.RevenueID}`],
+  deleteNeoRevenueMonth: ["DELETE", p => `/neo-revenue/month/${encodeURIComponent(p.RevenueMonth)}`],
   saveVendor: ["POST", "/vendors"],
   updateVendor: ["PUT", p => `/vendors/${p.VendorID}`],
   saveLLPPayable: ["POST", "/payables"],
