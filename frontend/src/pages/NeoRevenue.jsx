@@ -297,7 +297,8 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     } finally { setSaving(false); }
   }
 
-  // Unique months for filter dropdown — sorted in FY order (Apr → Mar)
+  // Unique months for filter dropdown — sorted in FY order (Apr → Mar).
+  // Use metadata because rows only contains the current paginated data page.
   const months = useMemo(() => {
     const FY_ORDER = ["Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar"];
     const moSort = mo => {
@@ -307,9 +308,12 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
       const yr = parseInt(y, 10) || 0;
       return yr * 100 + (mi === -1 ? 99 : mi);
     };
-    const set = new Set(rows.map(r => r.RevenueMonth).filter(Boolean));
+    const set = new Set([
+      ...(revenueMeta.months || []),
+      ...rows.map(r => r.RevenueMonth),
+    ].filter(Boolean));
     return Array.from(set).sort((a, b) => moSort(a) - moSort(b));
-  }, [rows]);
+  }, [revenueMeta.months, rows]);
 
   const fyOptions = useMemo(() => Array.from(new Set(months.map(fyFromRevenueMonth).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b)), [months]);
