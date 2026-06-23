@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { importAccountsWorkbook, importNeoInvoicesCsv, importNeoRevenueWorkbook } from "../api/client";
-import { billingMonthOptions } from "../utils/format";
 
 const card = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
 const label = { display:"block", fontSize:".75rem", color:"var(--muted)", marginBottom:".35rem", fontWeight:500 };
@@ -43,6 +42,22 @@ const IMPORTS = [
     columns: "LLPID, Date, Description/Narration, Debit/Withdrawal, Credit/Deposit, Balance, ReferenceNo/UTR",
   },
 ];
+
+const NEO_REVENUE_MONTHS = [
+  { value: "Jan", label: "January" },
+  { value: "Feb", label: "February" },
+  { value: "Mar", label: "March" },
+  { value: "Apr", label: "April" },
+  { value: "May", label: "May" },
+  { value: "Jun", label: "June" },
+  { value: "Jul", label: "July" },
+  { value: "Aug", label: "August" },
+  { value: "Sep", label: "September" },
+  { value: "Oct", label: "October" },
+  { value: "Nov", label: "November" },
+  { value: "Dec", label: "December" },
+];
+const NEO_REVENUE_YEARS = Array.from({ length: 11 }, (_, index) => String(2020 + index));
 
 function skippedRows(result) {
   if (!result) return [];
@@ -129,7 +144,8 @@ export default function Imports() {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [neoRevenueFile, setNeoRevenueFile] = useState(null);
-  const [neoRevenueMonth, setNeoRevenueMonth] = useState("");
+  const [neoRevenueMonthName, setNeoRevenueMonthName] = useState("");
+  const [neoRevenueYear, setNeoRevenueYear] = useState("");
   const [neoRevenueFileInputKey, setNeoRevenueFileInputKey] = useState(0);
   const [neoRevenueBusy, setNeoRevenueBusy] = useState(false);
   const [neoFile, setNeoFile] = useState(null);
@@ -139,7 +155,7 @@ export default function Imports() {
   const [result, setResult] = useState(null);
   const skipped = skippedRows(result);
   const skippedGroups = skippedBreakdown(skipped);
-  const monthOptions = billingMonthOptions(30, 6);
+  const selectedNeoRevenueMonth = neoRevenueMonthName && neoRevenueYear ? `${neoRevenueMonthName}-${neoRevenueYear}` : "";
 
   async function submit(e) {
     e.preventDefault();
@@ -179,12 +195,12 @@ export default function Imports() {
 
   async function submitNeoRevenue(e) {
     e.preventDefault();
-    if (!neoRevenueFile || !neoRevenueMonth) return;
+    if (!neoRevenueFile || !selectedNeoRevenueMonth) return;
     setNeoRevenueBusy(true);
     setError("");
     setResult(null);
     try {
-      const res = await importNeoRevenueWorkbook(neoRevenueFile, neoRevenueMonth);
+      const res = await importNeoRevenueWorkbook(neoRevenueFile, selectedNeoRevenueMonth);
       setResult(res.summary || {});
       setNeoRevenueFile(null);
       setNeoRevenueFileInputKey(key => key + 1);
@@ -224,11 +240,18 @@ export default function Imports() {
 
       <div style={card}>
         <form onSubmit={submitNeoRevenue} style={{ display:"flex", gap:"1rem", alignItems:"end", flexWrap:"wrap" }}>
-          <div style={{ flex:"1 1 220px" }}>
-            <label style={label}>Neo Revenue month</label>
-            <select style={{ width:"100%", padding:".5rem .65rem", borderRadius:"6px", border:"1px solid var(--border)", background:"var(--input)", color:"var(--text)" }} value={neoRevenueMonth} onChange={e => setNeoRevenueMonth(e.target.value)} required>
+          <div style={{ flex:"1 1 160px" }}>
+            <label style={label}>Month</label>
+            <select style={{ width:"100%", padding:".5rem .65rem", borderRadius:"6px", border:"1px solid var(--border)", background:"var(--input)", color:"var(--text)" }} value={neoRevenueMonthName} onChange={e => setNeoRevenueMonthName(e.target.value)} required>
               <option value="">Select month</option>
-              {monthOptions.map(month => <option key={month} value={month}>{month}</option>)}
+              {NEO_REVENUE_MONTHS.map(month => <option key={month.value} value={month.value}>{month.label}</option>)}
+            </select>
+          </div>
+          <div style={{ flex:"1 1 130px" }}>
+            <label style={label}>Year</label>
+            <select style={{ width:"100%", padding:".5rem .65rem", borderRadius:"6px", border:"1px solid var(--border)", background:"var(--input)", color:"var(--text)" }} value={neoRevenueYear} onChange={e => setNeoRevenueYear(e.target.value)} required>
+              <option value="">Select year</option>
+              {NEO_REVENUE_YEARS.map(year => <option key={year} value={year}>{year}</option>)}
             </select>
           </div>
           <div style={{ flex:"1 1 280px" }}>
@@ -241,7 +264,7 @@ export default function Imports() {
               required
             />
           </div>
-          <button type="submit" style={btn()} disabled={!neoRevenueFile || !neoRevenueMonth || neoRevenueBusy}>
+          <button type="submit" style={btn()} disabled={!neoRevenueFile || !selectedNeoRevenueMonth || neoRevenueBusy}>
             {neoRevenueBusy ? "Importing..." : "Import Neo Revenue"}
           </button>
           {neoRevenueFile && <button type="button" style={btn("ghost")} onClick={() => { setNeoRevenueFile(null); setResult(null); setNeoRevenueFileInputKey(key => key + 1); }}>Clear</button>}
