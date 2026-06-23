@@ -538,6 +538,48 @@ def test_accounts_workbook_imports_negative_neo_gross_revenue(client, auth_heade
         db.close()
 
 
+def test_accounts_workbook_allows_small_neo_total_rounding_difference(client, auth_headers):
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Sheet1"
+    sheet.append(["PAN", "Client Name", "Partner", "Date", "Product", "Tnx Type", "Scheme Name", "Amount", "Gross Revenue May'25", "Income Type"])
+    sheet.append(["ROUND001A", "Rounding Client", "Manugopal A K", "2025-05-31", "PMS", "Purchase", "Rounded Scheme", 1000, 5267003.80, "TRB"])
+    sheet.append([None, None, "Total", None, None, None, None, None, 5267003.78, None])
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    res = client.post(
+        "/imports/accounts-workbook",
+        headers=auth_headers,
+        files={"file": ("neo-rounding.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    assert res.json()["summary"]["NeoRevenue"]["imported"] == 1
+
+
+def test_accounts_workbook_rejects_large_neo_total_mismatch(client, auth_headers):
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Sheet1"
+    sheet.append(["PAN", "Client Name", "Partner", "Date", "Product", "Tnx Type", "Scheme Name", "Amount", "Gross Revenue May'25", "Income Type"])
+    sheet.append(["MISMATCH1A", "Mismatch Client", "Manugopal A K", "2025-05-31", "PMS", "Purchase", "Mismatch Scheme", 1000, 1000, "TRB"])
+    sheet.append([None, None, "Total", None, None, None, None, None, 999, None])
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    res = client.post(
+        "/imports/accounts-workbook",
+        headers=auth_headers,
+        files={"file": ("neo-mismatch.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 400
+    assert "Neo revenue total mismatch" in res.json()["detail"]
+
+
 def test_neo_invoices_csv_import(client, auth_headers):
     csv_data = (
         "NeoInvoiceID,RaisedBy,InvoiceType,GSTMode,IsProforma,InvoiceTitle,InvoiceNo,InvoiceDate,BillingMonth,"

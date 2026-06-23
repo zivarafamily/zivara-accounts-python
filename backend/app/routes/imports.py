@@ -118,6 +118,7 @@ MONTH_ALIASES = {
     "nov": "Nov", "november": "Nov",
     "dec": "Dec", "december": "Dec",
 }
+NEO_REVENUE_TOTAL_TOLERANCE = Decimal("0.05")
 
 
 def _revenue_month_from_header(header):
@@ -226,7 +227,7 @@ def _validate_neo_revenue_totals(workbook):
 
         detail_total = check["detail_total"]
 
-        if detail_total != declared_total:
+        if abs(detail_total - declared_total) > NEO_REVENUE_TOTAL_TOLERANCE:
             raise HTTPException(
                 status_code=400,
                 detail=(
