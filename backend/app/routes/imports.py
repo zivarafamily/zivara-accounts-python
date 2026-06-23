@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from io import BytesIO, StringIO
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from openpyxl import load_workbook
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -152,7 +152,7 @@ def _is_total_row(row):
     )
 
 
-def _neo_revenue_total_checks(workbook):
+def _neo_revenue_total_checks(workbook, revenue_month_filter=""):
     checks = []
 
     for sheet in workbook.worksheets:
@@ -168,6 +168,8 @@ def _neo_revenue_total_checks(workbook):
             revenue_month = _revenue_month_from_header(gross_header)
 
             if not revenue_month:
+                continue
+            if revenue_month_filter and revenue_month != revenue_month_filter:
                 continue
 
             detail_total = Decimal("0.00")
@@ -214,8 +216,8 @@ def _neo_revenue_total_checks(workbook):
     return checks
 
 
-def _validate_neo_revenue_totals(workbook):
-    checks = _neo_revenue_total_checks(workbook)
+def _validate_neo_revenue_totals(workbook, revenue_month_filter=""):
+    checks = _neo_revenue_total_checks(workbook, revenue_month_filter)
 
     for check in checks:
         declared_total = check["declared_total"]
@@ -240,12 +242,14 @@ def _validate_neo_revenue_totals(workbook):
             )
 
 
-def _neo_revenue_import_rows(workbook):
+def _neo_revenue_import_rows(workbook, revenue_month_filter=""):
     explicit = _rows(workbook, "NeoRevenue")
 
     if explicit:
         for index, row in enumerate(explicit, start=2):
             if _is_total_row(row):
+                continue
+            if revenue_month_filter and _text(row.get("RevenueMonth")) != revenue_month_filter:
                 continue
             yield index, row
         return
@@ -263,6 +267,8 @@ def _neo_revenue_import_rows(workbook):
             revenue_month = _revenue_month_from_header(gross_header)
 
             if not revenue_month:
+                continue
+            if revenue_month_filter and revenue_month != revenue_month_filter:
                 continue
 
             for index, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
@@ -521,6 +527,59 @@ async def import_neo_invoices_csv(
         _commit(db, summary, "neoinvoices", ref_id, user.email)
 
     return {"ok": True, "message": "NeoInvoices import complete", "summary": {"NeoInvoices": summary}}
+
+
+@router.post("/neo-revenue-workbook")
+async def import_neo_revenue_workbook(
+    revenue_month: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    filename = (file.filename or "").lower()
+    selected_month = _text(revenue_month)
+
+    if not filename.endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Upload an Excel .xlsx file")
+    if not selected_month:
+        raise HTTPException(status_code=400, detail="Revenue month is required")
+
+    content = await file.read()
+    workbook = load_workbook(BytesIO(content), data_only=True)
+    _validate_neo_revenue_totals(workbook, selected_month)
+
+    summary = _summary()
+    database_revenue_keys = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
+    default_llp_name = _single_llp_name(db)
+    matched_rows = 0
+
+    for index, row in _neo_revenue_import_rows(workbook, selected_month):
+        matched_rows += 1
+        if not _text(row.get("ClientName")) or not _text(row.get("RevenueMonth")):
+            _skip(summary, index, "Missing ClientName or RevenueMonth", row)
+            continue
+        if not _text(row.get("LLPName")) and default_llp_name:
+            row["LLPName"] = default_llp_name
+        item = db.get(NeoRevenue, _text(row.get("RevenueID"))) if _text(row.get("RevenueID")) else None
+        key = duplicate_key(row)
+        if not item and key in database_revenue_keys:
+            _skip(summary, index, "Duplicate NeoRevenue row already exists in database", row)
+            continue
+        if item:
+            apply_revenue_payload(db, item, row)
+        else:
+            item = create_revenue(db, row)
+        db.add(item)
+        _commit(db, summary, "neorevenue", item.id, user.email)
+
+    if matched_rows == 0:
+        _skip(summary, selected_month, f"No Neo Revenue rows found for {selected_month}")
+
+    return {
+        "ok": True,
+        "message": f"NeoRevenue import complete for {selected_month}",
+        "summary": {"NeoRevenue": summary},
+    }
 
 
 @router.post("/accounts-workbook")

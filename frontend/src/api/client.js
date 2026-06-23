@@ -228,6 +228,18 @@ export async function importAccountsWorkbook(file) {
   });
 }
 
+export async function importNeoRevenueWorkbook(file, revenueMonth) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("revenue_month", revenueMonth);
+
+  return request("/imports/neo-revenue-workbook", {
+    method: "POST",
+    headers: {},
+    body: formData,
+  });
+}
+
 export async function importNeoInvoicesCsv(file) {
   const formData = new FormData();
   formData.append("file", file);

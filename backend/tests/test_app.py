@@ -580,6 +580,53 @@ def test_accounts_workbook_rejects_large_neo_total_mismatch(client, auth_headers
     assert "Neo revenue total mismatch" in res.json()["detail"]
 
 
+def test_neo_revenue_workbook_imports_only_selected_month(client, auth_headers):
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Sheet1"
+    sheet.append([
+        "PAN",
+        "Client Name",
+        "Partner",
+        "Date",
+        "Product",
+        "Tnx Type",
+        "Scheme Name",
+        "Amount",
+        "Gross Revenue May'25",
+        "Gross Revenue June'25",
+        "Income Type",
+    ])
+    sheet.append(["MAYPAN1234A", "May Client", "Manugopal A K", "2025-05-31", "PMS", "Purchase", "May Scheme", 1000, 100, 0, "TRB"])
+    sheet.append(["JUNPAN1234A", "June Client", "Manugopal A K", "2025-06-30", "PMS", "Purchase", "June Scheme", 1000, 0, 250, "TRB"])
+    sheet.append([None, None, "Total", None, None, None, None, None, 100, 250, None])
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    res = client.post(
+        "/imports/neo-revenue-workbook",
+        headers=auth_headers,
+        data={"revenue_month": "Jun-2025"},
+        files={"file": ("neo-selected-month.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    summary = res.json()["summary"]["NeoRevenue"]
+    assert summary["imported"] == 1
+    assert summary["skipped"] == 0
+
+    db = SessionLocal()
+    try:
+        rows = db.query(NeoRevenue).all()
+        assert len(rows) == 1
+        assert rows[0].revenue_month == "Jun-2025"
+        assert rows[0].pan == "JUNPAN1234A"
+        assert rows[0].revenue_amount == Decimal("250.00")
+    finally:
+        db.close()
+
+
 def test_neo_invoices_csv_import(client, auth_headers):
     csv_data = (
         "NeoInvoiceID,RaisedBy,InvoiceType,GSTMode,IsProforma,InvoiceTitle,InvoiceNo,InvoiceDate,BillingMonth,"

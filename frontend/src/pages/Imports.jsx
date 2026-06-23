@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { importAccountsWorkbook, importNeoInvoicesCsv } from "../api/client";
+import { importAccountsWorkbook, importNeoInvoicesCsv, importNeoRevenueWorkbook } from "../api/client";
+import { billingMonthOptions } from "../utils/format";
 
 const card = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
 const label = { display:"block", fontSize:".75rem", color:"var(--muted)", marginBottom:".35rem", fontWeight:500 };
@@ -127,6 +128,10 @@ export default function Imports() {
   const [file, setFile] = useState(null);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [neoRevenueFile, setNeoRevenueFile] = useState(null);
+  const [neoRevenueMonth, setNeoRevenueMonth] = useState("");
+  const [neoRevenueFileInputKey, setNeoRevenueFileInputKey] = useState(0);
+  const [neoRevenueBusy, setNeoRevenueBusy] = useState(false);
   const [neoFile, setNeoFile] = useState(null);
   const [neoFileInputKey, setNeoFileInputKey] = useState(0);
   const [neoBusy, setNeoBusy] = useState(false);
@@ -134,6 +139,7 @@ export default function Imports() {
   const [result, setResult] = useState(null);
   const skipped = skippedRows(result);
   const skippedGroups = skippedBreakdown(skipped);
+  const monthOptions = billingMonthOptions(30, 6);
 
   async function submit(e) {
     e.preventDefault();
@@ -171,6 +177,24 @@ export default function Imports() {
     }
   }
 
+  async function submitNeoRevenue(e) {
+    e.preventDefault();
+    if (!neoRevenueFile || !neoRevenueMonth) return;
+    setNeoRevenueBusy(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await importNeoRevenueWorkbook(neoRevenueFile, neoRevenueMonth);
+      setResult(res.summary || {});
+      setNeoRevenueFile(null);
+      setNeoRevenueFileInputKey(key => key + 1);
+    } catch (err) {
+      setError(err.message || "Unable to import Neo Revenue workbook");
+    } finally {
+      setNeoRevenueBusy(false);
+    }
+  }
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:"1.25rem" }}>
       <div>
@@ -196,6 +220,35 @@ export default function Imports() {
           {file && <button type="button" style={btn("ghost")} onClick={() => { setFile(null); setResult(null); setFileInputKey(key => key + 1); }}>Clear</button>}
         </form>
         {error && <div style={{ color:"var(--danger)", fontSize:".8rem", marginTop:".75rem" }}>{error}</div>}
+      </div>
+
+      <div style={card}>
+        <form onSubmit={submitNeoRevenue} style={{ display:"flex", gap:"1rem", alignItems:"end", flexWrap:"wrap" }}>
+          <div style={{ flex:"1 1 220px" }}>
+            <label style={label}>Neo Revenue month</label>
+            <select style={{ width:"100%", padding:".5rem .65rem", borderRadius:"6px", border:"1px solid var(--border)", background:"var(--input)", color:"var(--text)" }} value={neoRevenueMonth} onChange={e => setNeoRevenueMonth(e.target.value)} required>
+              <option value="">Select month</option>
+              {monthOptions.map(month => <option key={month} value={month}>{month}</option>)}
+            </select>
+          </div>
+          <div style={{ flex:"1 1 280px" }}>
+            <label style={label}>Neo Revenue workbook (.xlsx or .xlsm)</label>
+            <input
+              key={neoRevenueFileInputKey}
+              type="file"
+              accept=".xlsx,.xlsm"
+              onChange={e => setNeoRevenueFile(e.target.files?.[0] || null)}
+              required
+            />
+          </div>
+          <button type="submit" style={btn()} disabled={!neoRevenueFile || !neoRevenueMonth || neoRevenueBusy}>
+            {neoRevenueBusy ? "Importing..." : "Import Neo Revenue"}
+          </button>
+          {neoRevenueFile && <button type="button" style={btn("ghost")} onClick={() => { setNeoRevenueFile(null); setResult(null); setNeoRevenueFileInputKey(key => key + 1); }}>Clear</button>}
+        </form>
+        <div style={{ color:"var(--muted)", fontSize:".75rem", marginTop:".65rem" }}>
+          Imports only the selected Gross Revenue month from the Neo statement.
+        </div>
       </div>
 
       <div style={card}>
