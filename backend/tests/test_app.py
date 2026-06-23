@@ -494,6 +494,49 @@ def test_accounts_workbook_imports_neo_gross_revenue_statement(client, auth_head
         db.close()
 
 
+def test_accounts_workbook_imports_negative_neo_gross_revenue(client, auth_headers):
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Sheet1"
+    sheet.append([
+        "PAN",
+        "Client Name",
+        "Partner",
+        "Date",
+        "Product",
+        "Tnx Type",
+        "Scheme Name",
+        "Amount",
+        "Gross Revenue Aug'25",
+        "Income Type",
+    ])
+    sheet.append(["POSPAN1234A", "Positive Client", "Manugopal A K", "2025-08-31", "PMS", "Purchase", "Positive Scheme", 1000, 500.25, "TRB"])
+    sheet.append(["NEGPAN1234A", "Negative Client", "Manugopal A K", "2025-08-31", "PMS", "Reversal", "Negative Scheme", 1000, -125.75, "TRB"])
+    sheet.append([None, None, "Total", None, None, None, None, None, 374.50, None])
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    res = client.post(
+        "/imports/accounts-workbook",
+        headers=auth_headers,
+        files={"file": ("neo-negative.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    summary = res.json()["summary"]["NeoRevenue"]
+    assert summary["imported"] == 2
+    assert summary["skipped"] == 0
+
+    db = SessionLocal()
+    try:
+        rows = {row.pan: row for row in db.query(NeoRevenue).all()}
+        assert rows["POSPAN1234A"].revenue_amount == Decimal("500.25")
+        assert rows["NEGPAN1234A"].revenue_amount == Decimal("-125.75")
+    finally:
+        db.close()
+
+
 def test_neo_invoices_csv_import(client, auth_headers):
     csv_data = (
         "NeoInvoiceID,RaisedBy,InvoiceType,GSTMode,IsProforma,InvoiceTitle,InvoiceNo,InvoiceDate,BillingMonth,"
