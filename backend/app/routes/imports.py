@@ -321,9 +321,18 @@ def _summary():
     return {"imported": 0, "skipped": 0, "errors": []}
 
 
-def _skip(summary, row_no, message):
+def _safe_row(row):
+    if not isinstance(row, dict):
+        return {}
+    return {str(key): _text(value) for key, value in row.items()}
+
+
+def _skip(summary, row_no, message, row=None):
     summary["skipped"] += 1
-    summary["errors"].append({"row": row_no, "message": message})
+    error = {"row": row_no, "message": message}
+    if row is not None:
+        error["data"] = _safe_row(row)
+    summary["errors"].append(error)
 
 
 def _llp_by_key(db, value):
@@ -426,11 +435,11 @@ async def import_neo_revenue_csv(
         row = _clean_csv_row(raw)
 
         if not _text(row.get("ClientName")):
-            _skip(summary, index, "Missing ClientName")
+            _skip(summary, index, "Missing ClientName", row)
             continue
 
         if not _text(row.get("RevenueMonth")):
-            _skip(summary, index, "Missing RevenueMonth")
+            _skip(summary, index, "Missing RevenueMonth", row)
             continue
 
         if not _text(row.get("LLPName")) and default_llp_name:
@@ -442,11 +451,11 @@ async def import_neo_revenue_csv(
         key = duplicate_key(row)
 
         if not item and key in existing_revenue_keys:
-            _skip(summary, index, "Duplicate NeoRevenue row already exists")
+            _skip(summary, index, "Duplicate NeoRevenue row already exists", row)
             continue
 
         if not item and key in seen_in_file:
-            _skip(summary, index, "Duplicate NeoRevenue row inside uploaded file")
+            _skip(summary, index, "Duplicate NeoRevenue row inside uploaded file", row)
             continue
 
         try:
@@ -466,7 +475,7 @@ async def import_neo_revenue_csv(
 
         except Exception as exc:
             db.rollback()
-            _skip(summary, index, str(exc) or "NeoRevenue import error")
+            _skip(summary, index, str(exc) or "NeoRevenue import error", row)
 
     return {
         "ok": True,
@@ -497,7 +506,7 @@ async def import_neo_invoices_csv(
         billing_month = _text(row.get("BillingMonth"))
         llp_id = _llp_id(db, row) or _text(row.get("SellerLLPID")) or None
         if not invoice_no or not billing_month:
-            _skip(summary, index, "Missing InvoiceNo or BillingMonth")
+            _skip(summary, index, "Missing InvoiceNo or BillingMonth", row)
             continue
         item = db.get(NeoInvoice, invoice_id) if invoice_id else None
         if not item:
@@ -546,7 +555,7 @@ async def import_accounts_workbook(
     for index, row in enumerate(_rows(workbook, "Settings"), start=2):
         key = _text(row.get("Key"))
         if not key:
-            _skip(result["Settings"], index, "Missing Key")
+            _skip(result["Settings"], index, "Missing Key", row)
             continue
         db.merge(Setting(id=make_id("SET"), key=key, value=_text(row.get("Value"))))
         _commit(db, result["Settings"], "settings", key, user.email)
@@ -554,7 +563,7 @@ async def import_accounts_workbook(
     for index, row in enumerate(_rows(workbook, "LLPs"), start=2):
         llp_id = _text(row.get("LLPID")) or make_id("LLP")
         if not _text(row.get("LLPName")):
-            _skip(result["LLPs"], index, "Missing LLPName")
+            _skip(result["LLPs"], index, "Missing LLPName", row)
             continue
         existing = db.get(LLP, llp_id)
         item = existing or LLP(id=llp_id, llp_name="")
@@ -570,7 +579,7 @@ async def import_accounts_workbook(
     for index, row in enumerate(_rows(workbook, "Users"), start=2):
         username = _text(row.get("Username")).lower()
         if not username:
-            _skip(result["Users"], index, "Missing Username")
+            _skip(result["Users"], index, "Missing Username", row)
             continue
         item = db.query(User).filter(User.username == username).first() or User(
             id=_text(row.get("UserID")) or make_id("USR"),
@@ -599,7 +608,7 @@ async def import_accounts_workbook(
 
     for index, row in enumerate(_rows(workbook, "Clients"), start=2):
         if not _text(row.get("ClientName")):
-            _skip(result["Clients"], index, "Missing ClientName")
+            _skip(result["Clients"], index, "Missing ClientName", row)
             continue
         item = db.get(Client, _text(row.get("ClientID"))) if _text(row.get("ClientID")) else None
         item = item or Client(id=_text(row.get("ClientID")) or make_id("CLT"), client_name="")
@@ -607,32 +616,36 @@ async def import_accounts_workbook(
         db.add(item)
         _commit(db, result["Clients"], "clients", item.id, user.email)
 
-    existing_revenue_keys = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
+    database_revenue_keys = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
+    seen_revenue_keys = set()
     default_llp_name = _single_llp_name(db)
     for index, row in _neo_revenue_import_rows(workbook):
         if not _text(row.get("ClientName")) or not _text(row.get("RevenueMonth")):
-            _skip(result["NeoRevenue"], index, "Missing ClientName or RevenueMonth")
+            _skip(result["NeoRevenue"], index, "Missing ClientName or RevenueMonth", row)
             continue
         if not _text(row.get("LLPName")) and default_llp_name:
             row["LLPName"] = default_llp_name
         item = db.get(NeoRevenue, _text(row.get("RevenueID"))) if _text(row.get("RevenueID")) else None
         key = duplicate_key(row)
-        if not item and key in existing_revenue_keys:
-            _skip(result["NeoRevenue"], index, "Duplicate NeoRevenue row")
+        if not item and key in database_revenue_keys:
+            _skip(result["NeoRevenue"], index, "Duplicate NeoRevenue row already exists in database", row)
+            continue
+        if not item and key in seen_revenue_keys:
+            _skip(result["NeoRevenue"], index, "Duplicate NeoRevenue row inside uploaded workbook", row)
             continue
         if item:
             apply_revenue_payload(db, item, row)
         else:
             item = create_revenue(db, row)
         db.add(item)
-        existing_revenue_keys.add(key)
+        seen_revenue_keys.add(key)
         _commit(db, result["NeoRevenue"], "neorevenue", item.id, user.email)
 
     for index, row in enumerate(_rows(workbook, "LLPPartners"), start=2):
         llp_id = _llp_id(db, row)
         target = _user_by_row(db, row)
         if not llp_id or not target:
-            _skip(result["LLPPartners"], index, "Missing matching LLP or Username")
+            _skip(result["LLPPartners"], index, "Missing matching LLP or Username", row)
             continue
         item = db.get(LLPPartner, _text(row.get("MappingID"))) if _text(row.get("MappingID")) else None
         item = item or LLPPartner(id=_text(row.get("MappingID")) or make_id("MAP"), llp_id=llp_id, user_id=target.id)
@@ -660,7 +673,7 @@ async def import_accounts_workbook(
     for index, row in enumerate(_rows(workbook, "BankAccounts"), start=2):
         llp_id = _llp_id(db, row)
         if not llp_id:
-            _skip(result["BankAccounts"], index, "Missing matching LLP")
+            _skip(result["BankAccounts"], index, "Missing matching LLP", row)
             continue
         item = db.get(BankAccount, _text(row.get("AccountID"))) if _text(row.get("AccountID")) else None
         item = item or BankAccount(id=_text(row.get("AccountID")) or make_id("BANK"), llp_id=llp_id, account_name="", bank_name="", account_number="")
@@ -681,7 +694,7 @@ async def import_accounts_workbook(
     for index, row in enumerate(_rows_any(workbook, "LLPPayables", "Payables"), start=2):
         llp_id = _llp_id(db, row)
         if not llp_id:
-            _skip(result["LLPPayables"], index, "Missing matching LLP")
+            _skip(result["LLPPayables"], index, "Missing matching LLP", row)
             continue
         vendor = _vendor(db, llp_id, row.get("VendorName"))
         merged = {key: row.get(key) for key in row}
@@ -719,7 +732,7 @@ async def import_accounts_workbook(
     for index, row in enumerate(_rows(workbook, "Expenses"), start=2):
         llp_id = _llp_id(db, row)
         if not llp_id:
-            _skip(result["Expenses"], index, "Missing matching LLP")
+            _skip(result["Expenses"], index, "Missing matching LLP", row)
             continue
         item = db.get(Expense, _text(row.get("ExpenseID"))) if _text(row.get("ExpenseID")) else None
         item = item or Expense(id=_text(row.get("ExpenseID")) or make_id("EXP"), llp_id=llp_id)
@@ -759,7 +772,7 @@ async def import_accounts_workbook(
     for index, row in enumerate(_rows(workbook, "Receipts"), start=2):
         llp_id = _llp_id(db, row)
         if not llp_id:
-            _skip(result["Receipts"], index, "Missing matching LLP")
+            _skip(result["Receipts"], index, "Missing matching LLP", row)
             continue
         item = db.get(Receipt, _text(row.get("ReceiptID"))) if _text(row.get("ReceiptID")) else None
         item = item or Receipt(id=_text(row.get("ReceiptID")) or make_id("REC"), llp_id=llp_id)
@@ -778,7 +791,7 @@ async def import_accounts_workbook(
     for index, row in enumerate(_rows(workbook, "CashBook"), start=2):
         llp_id = _llp_id(db, row)
         if not llp_id:
-            _skip(result["CashBook"], index, "Missing matching LLP")
+            _skip(result["CashBook"], index, "Missing matching LLP", row)
             continue
         item = db.get(CashBookEntry, _text(row.get("EntryID"))) if _text(row.get("EntryID")) else None
         item = item or CashBookEntry(id=_text(row.get("EntryID")) or make_id("CASH"), llp_id=llp_id)
@@ -799,7 +812,7 @@ async def import_accounts_workbook(
     for index, row in enumerate(_rows_any(workbook, "BankStatement", "BankStatements"), start=2):
         llp_id = _llp_id(db, row)
         if not llp_id:
-            _skip(result["BankStatement"], index, "Missing matching LLP")
+            _skip(result["BankStatement"], index, "Missing matching LLP", row)
             continue
         debit = _money(_value(row, "Debit", "Withdrawal", "AmountOut"))
         credit = _money(_value(row, "Credit", "Deposit", "AmountIn"))

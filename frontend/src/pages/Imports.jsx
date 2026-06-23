@@ -43,6 +43,47 @@ const IMPORTS = [
   },
 ];
 
+function skippedRows(result) {
+  if (!result) return [];
+  return Object.entries(result).flatMap(([module, summary]) => (
+    Array.isArray(summary?.errors)
+      ? summary.errors.map(err => ({ module, ...err, data: err.data || {} }))
+      : []
+  ));
+}
+
+function csvCell(value) {
+  const text = value == null ? "" : String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadSkippedRows(result) {
+  const rows = skippedRows(result);
+  if (!rows.length) return;
+
+  const dataKeys = Array.from(new Set(rows.flatMap(row => Object.keys(row.data || {})))).sort();
+  const headers = ["Module", "SourceRow", "Reason", ...dataKeys];
+  const lines = [
+    headers.map(csvCell).join(","),
+    ...rows.map(row => [
+      row.module,
+      row.row,
+      row.message,
+      ...dataKeys.map(key => row.data?.[key] ?? ""),
+    ].map(csvCell).join(",")),
+  ];
+
+  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `skipped-import-rows-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function SummaryCard({ title, summary }) {
   const imported = summary?.imported || 0;
   const skipped = summary?.skipped || 0;
@@ -76,6 +117,7 @@ export default function Imports() {
   const [neoBusy, setNeoBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
+  const skipped = skippedRows(result);
 
   async function submit(e) {
     e.preventDefault();
@@ -168,14 +210,29 @@ export default function Imports() {
       </div>
 
       {result && (
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))", gap:"1rem" }}>
-          <SummaryCard title="Expenses" summary={result.Expenses} />
-          <SummaryCard title="Clients" summary={result.Clients} />
-          <SummaryCard title="Neo Revenue" summary={result.NeoRevenue} />
-          <SummaryCard title="Payables" summary={result.LLPPayables} />
-          <SummaryCard title="Neo Invoices" summary={result.NeoInvoices} />
-          <SummaryCard title="Bank Statement" summary={result.BankStatement} />
-        </div>
+        <>
+          {skipped.length > 0 && (
+            <div style={{ ...card, display:"flex", justifyContent:"space-between", alignItems:"center", gap:"1rem", flexWrap:"wrap" }}>
+              <div>
+                <div style={{ fontWeight:700 }}>Skipped rows found</div>
+                <div style={{ fontSize:".78rem", color:"var(--muted)", marginTop:".25rem" }}>
+                  Export {skipped.length} skipped rows with reasons and source values.
+                </div>
+              </div>
+              <button type="button" style={btn()} onClick={() => downloadSkippedRows(result)}>
+                Export skipped rows for Excel
+              </button>
+            </div>
+          )}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))", gap:"1rem" }}>
+            <SummaryCard title="Expenses" summary={result.Expenses} />
+            <SummaryCard title="Clients" summary={result.Clients} />
+            <SummaryCard title="Neo Revenue" summary={result.NeoRevenue} />
+            <SummaryCard title="Payables" summary={result.LLPPayables} />
+            <SummaryCard title="Neo Invoices" summary={result.NeoInvoices} />
+            <SummaryCard title="Bank Statement" summary={result.BankStatement} />
+          </div>
+        </>
       )}
     </div>
   );
