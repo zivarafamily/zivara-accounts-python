@@ -432,7 +432,7 @@ def test_accounts_workbook_imports_expenses_payables_and_bank_statement(client, 
         db.close()
 
 
-def test_accounts_workbook_imports_neo_gross_revenue_statement(client, auth_headers):
+def test_neo_revenue_workbook_imports_gross_revenue_statement(client, auth_headers):
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Sheet1"
@@ -471,8 +471,9 @@ def test_accounts_workbook_imports_neo_gross_revenue_statement(client, auth_head
     stream.seek(0)
 
     res = client.post(
-        "/imports/accounts-workbook",
+        "/imports/neo-revenue-workbook",
         headers=auth_headers,
+        data={"revenue_month": "Apr-2026"},
         files={"file": ("neo-gross.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
     )
     assert res.status_code == 200
@@ -494,7 +495,7 @@ def test_accounts_workbook_imports_neo_gross_revenue_statement(client, auth_head
         db.close()
 
 
-def test_accounts_workbook_imports_negative_neo_gross_revenue(client, auth_headers):
+def test_neo_revenue_workbook_imports_negative_gross_revenue(client, auth_headers):
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Sheet1"
@@ -520,8 +521,9 @@ def test_accounts_workbook_imports_negative_neo_gross_revenue(client, auth_heade
     stream.seek(0)
 
     res = client.post(
-        "/imports/accounts-workbook",
+        "/imports/neo-revenue-workbook",
         headers=auth_headers,
+        data={"revenue_month": "Aug-2025"},
         files={"file": ("neo-negative.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
     )
     assert res.status_code == 200
@@ -538,7 +540,7 @@ def test_accounts_workbook_imports_negative_neo_gross_revenue(client, auth_heade
         db.close()
 
 
-def test_accounts_workbook_allows_small_neo_total_rounding_difference(client, auth_headers):
+def test_neo_revenue_workbook_allows_small_total_rounding_difference(client, auth_headers):
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Sheet1"
@@ -551,15 +553,16 @@ def test_accounts_workbook_allows_small_neo_total_rounding_difference(client, au
     stream.seek(0)
 
     res = client.post(
-        "/imports/accounts-workbook",
+        "/imports/neo-revenue-workbook",
         headers=auth_headers,
+        data={"revenue_month": "May-2025"},
         files={"file": ("neo-rounding.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
     )
     assert res.status_code == 200
     assert res.json()["summary"]["NeoRevenue"]["imported"] == 1
 
 
-def test_accounts_workbook_rejects_large_neo_total_mismatch(client, auth_headers):
+def test_neo_revenue_workbook_rejects_large_total_mismatch(client, auth_headers):
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Sheet1"
@@ -572,8 +575,9 @@ def test_accounts_workbook_rejects_large_neo_total_mismatch(client, auth_headers
     stream.seek(0)
 
     res = client.post(
-        "/imports/accounts-workbook",
+        "/imports/neo-revenue-workbook",
         headers=auth_headers,
+        data={"revenue_month": "May-2025"},
         files={"file": ("neo-mismatch.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
     )
     assert res.status_code == 400

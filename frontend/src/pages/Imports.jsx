@@ -18,12 +18,6 @@ const IMPORTS = [
     columns: "ClientID, ClientName, PAN, RMName, Segment, PartnerName, LLPName, FamilyName, SuperFamilyName, Status",
   },
   {
-    key: "NeoRevenue",
-    title: "Neo Revenue",
-    sheets: "NeoRevenue",
-    columns: "RevenueID, PAN, ClientName, PartnerName, TransactionDate, Product, SchemeName, RevenueMonth, RevenueAmount, LLPName",
-  },
-  {
     key: "Expenses",
     title: "Expenses",
     sheets: "Expenses",
@@ -58,6 +52,14 @@ const NEO_REVENUE_MONTHS = [
   { value: "Dec", label: "December" },
 ];
 const NEO_REVENUE_YEARS = Array.from({ length: 11 }, (_, index) => String(2020 + index));
+const SUMMARY_CARDS = [
+  ["Expenses", "Expenses"],
+  ["Clients", "Clients"],
+  ["NeoRevenue", "Neo Revenue"],
+  ["LLPPayables", "Payables"],
+  ["NeoInvoices", "Neo Invoices"],
+  ["BankStatement", "Bank Statement"],
+];
 
 function skippedRows(result) {
   if (!result) return [];
@@ -216,14 +218,14 @@ export default function Imports() {
       <div>
         <h2 style={{ fontWeight:700, fontSize:"1.25rem", color:"var(--text)" }}>Import Excel</h2>
         <p style={{ color:"var(--muted)", fontSize:".8rem", marginTop:".2rem" }}>
-          Upload one workbook to import expenses, payables, and bank statement rows.
+          Upload accounts workbooks and month-specific Neo Revenue statements.
         </p>
       </div>
 
       <div style={card}>
         <form onSubmit={submit} style={{ display:"flex", gap:"1rem", alignItems:"end", flexWrap:"wrap" }}>
           <div style={{ flex:"1 1 280px" }}>
-            <label style={label}>Workbook (.xlsx or .xlsm)</label>
+            <label style={label}>Accounts workbook (.xlsx or .xlsm)</label>
             <input
               key={fileInputKey}
               type="file"
@@ -232,9 +234,12 @@ export default function Imports() {
               required
             />
           </div>
-          <button type="submit" style={btn()} disabled={!file || busy}>{busy ? "Importing..." : "Import Workbook"}</button>
+          <button type="submit" style={btn()} disabled={!file || busy}>{busy ? "Importing..." : "Import Accounts Workbook"}</button>
           {file && <button type="button" style={btn("ghost")} onClick={() => { setFile(null); setResult(null); setFileInputKey(key => key + 1); }}>Clear</button>}
         </form>
+        <div style={{ color:"var(--muted)", fontSize:".75rem", marginTop:".65rem" }}>
+          Imports settings, LLPs, users, clients, partners, vendors, payables, expenses, receipts, cash book, and bank statements. Use the Neo Revenue section below for revenue statements.
+        </div>
         {error && <div style={{ color:"var(--danger)", fontSize:".8rem", marginTop:".75rem" }}>{error}</div>}
       </div>
 
@@ -332,12 +337,9 @@ export default function Imports() {
             </div>
           )}
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))", gap:"1rem" }}>
-            <SummaryCard title="Expenses" summary={result.Expenses} />
-            <SummaryCard title="Clients" summary={result.Clients} />
-            <SummaryCard title="Neo Revenue" summary={result.NeoRevenue} />
-            <SummaryCard title="Payables" summary={result.LLPPayables} />
-            <SummaryCard title="Neo Invoices" summary={result.NeoInvoices} />
-            <SummaryCard title="Bank Statement" summary={result.BankStatement} />
+            {SUMMARY_CARDS
+              .filter(([key]) => result[key])
+              .map(([key, title]) => <SummaryCard key={key} title={title} summary={result[key]} />)}
           </div>
         </>
       )}

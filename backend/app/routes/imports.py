@@ -414,85 +414,6 @@ def _clean_csv_row(row):
 
 
 
-@router.post("/neo-revenue-csv")
-async def import_neo_revenue_csv(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-):
-    filename = (file.filename or "").lower()
-
-    if not filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Upload a NeoRevenue .csv file")
-
-    content = (await file.read()).decode("utf-8-sig")
-    reader = csv.DictReader(StringIO(content))
-
-    summary = _summary()
-
-    existing_revenue_keys = {
-        duplicate_key(serialize_revenue(r))
-        for r in db.query(NeoRevenue).all()
-    }
-
-    seen_in_file = set()
-    default_llp_name = _single_llp_name(db)
-
-    for index, raw in enumerate(reader, start=2):
-        row = _clean_csv_row(raw)
-
-        if not _text(row.get("ClientName")):
-            _skip(summary, index, "Missing ClientName", row)
-            continue
-
-        if not _text(row.get("RevenueMonth")):
-            _skip(summary, index, "Missing RevenueMonth", row)
-            continue
-
-        if not _text(row.get("LLPName")) and default_llp_name:
-            row["LLPName"] = default_llp_name
-
-        revenue_id = _text(row.get("RevenueID"))
-        item = db.get(NeoRevenue, revenue_id) if revenue_id else None
-
-        key = duplicate_key(row)
-
-        if not item and key in existing_revenue_keys:
-            _skip(summary, index, "Duplicate NeoRevenue row already exists", row)
-            continue
-
-        if not item and key in seen_in_file:
-            _skip(summary, index, "Duplicate NeoRevenue row inside uploaded file", row)
-            continue
-
-        try:
-            if item:
-                apply_revenue_payload(db, item, row)
-                ref_id = item.id
-            else:
-                item = create_revenue(db, row)
-                ref_id = item.id
-
-            db.add(item)
-
-            existing_revenue_keys.add(key)
-            seen_in_file.add(key)
-
-            _commit(db, summary, "neorevenue", ref_id, user.email)
-
-        except Exception as exc:
-            db.rollback()
-            _skip(summary, index, str(exc) or "NeoRevenue import error", row)
-
-    return {
-        "ok": True,
-        "message": "NeoRevenue CSV import complete",
-        "summary": {
-            "NeoRevenue": summary
-        },
-    }
-
-
 @router.post("/neo-invoices-csv")
 async def import_neo_invoices_csv(
     file: UploadFile = File(...),
@@ -594,13 +515,11 @@ async def import_accounts_workbook(
 
     content = await file.read()
     workbook = load_workbook(BytesIO(content), data_only=True)
-    _validate_neo_revenue_totals(workbook)
     result = {name: _summary() for name in [
         "Settings",
         "LLPs",
         "Users",
         "Clients",
-        "NeoRevenue",
         "Partners",
         "LLPPartners",
         "Vendors",
@@ -675,26 +594,6 @@ async def import_accounts_workbook(
         apply_client_payload(item, row)
         db.add(item)
         _commit(db, result["Clients"], "clients", item.id, user.email)
-
-    database_revenue_keys = {duplicate_key(serialize_revenue(r)) for r in db.query(NeoRevenue).all()}
-    default_llp_name = _single_llp_name(db)
-    for index, row in _neo_revenue_import_rows(workbook):
-        if not _text(row.get("ClientName")) or not _text(row.get("RevenueMonth")):
-            _skip(result["NeoRevenue"], index, "Missing ClientName or RevenueMonth", row)
-            continue
-        if not _text(row.get("LLPName")) and default_llp_name:
-            row["LLPName"] = default_llp_name
-        item = db.get(NeoRevenue, _text(row.get("RevenueID"))) if _text(row.get("RevenueID")) else None
-        key = duplicate_key(row)
-        if not item and key in database_revenue_keys:
-            _skip(result["NeoRevenue"], index, "Duplicate NeoRevenue row already exists in database", row)
-            continue
-        if item:
-            apply_revenue_payload(db, item, row)
-        else:
-            item = create_revenue(db, row)
-        db.add(item)
-        _commit(db, result["NeoRevenue"], "neorevenue", item.id, user.email)
 
     for index, row in enumerate(_rows(workbook, "LLPPartners"), start=2):
         llp_id = _llp_id(db, row)
