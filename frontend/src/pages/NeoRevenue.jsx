@@ -271,7 +271,6 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   function overviewParams() {
     const activePartner = isPartnerRole ? ownPartnerName : partnerFilter;
     return neoRevenueScopeParams({
-      ...(monthFilter ? { month: monthFilter } : {}),
       ...(reportFY ? { financialYear: reportFY } : {}),
       ...(activePartner ? { partnerName: activePartner } : {}),
       ...(search ? { search } : {}),
