@@ -631,6 +631,36 @@ def test_neo_revenue_workbook_imports_only_selected_month(client, auth_headers):
         db.close()
 
 
+def test_neo_revenue_workbook_uses_selected_year_when_header_year_is_wrong(client, auth_headers):
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Sheet1"
+    sheet.append(["PAN", "Client Name", "Partner", "Date", "Product", "Tnx Type", "Scheme Name", "Amount", "Gross Revenue May'25", "Income Type"])
+    sheet.append(["MAY26PAN1A", "May 2026 Client", "Manugopal A K", "2026-05-31", "AIF", "Purchase", "May 2026 Scheme", 1000, 1234.56, "TRB"])
+    sheet.append([None, None, "Total", None, None, None, None, None, 1234.56, None])
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    res = client.post(
+        "/imports/neo-revenue-workbook",
+        headers=auth_headers,
+        data={"revenue_month": "May-2026"},
+        files={"file": ("neo-may26-wrong-header-year.xlsx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    assert res.json()["summary"]["NeoRevenue"]["imported"] == 1
+
+    db = SessionLocal()
+    try:
+        row = db.query(NeoRevenue).one()
+        assert row.revenue_month == "May-2026"
+        assert row.revenue_amount == Decimal("1234.56")
+    finally:
+        db.close()
+
+
 def test_neo_invoices_csv_import(client, auth_headers):
     csv_data = (
         "NeoInvoiceID,RaisedBy,InvoiceType,GSTMode,IsProforma,InvoiceTitle,InvoiceNo,InvoiceDate,BillingMonth,"
