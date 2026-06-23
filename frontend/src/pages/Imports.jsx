@@ -84,6 +84,21 @@ function downloadSkippedRows(result) {
   URL.revokeObjectURL(url);
 }
 
+function skippedBreakdown(rows) {
+  const counts = new Map();
+  rows.forEach(row => {
+    const month = row.data?.RevenueMonth || row.data?.BillingMonth || row.data?.Month || "No month";
+    const key = [row.module, month, row.message].join("\u001f");
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .map(([key, count]) => {
+      const [module, month, reason] = key.split("\u001f");
+      return { module, month, reason, count };
+    })
+    .sort((a, b) => b.count - a.count || a.module.localeCompare(b.module) || a.month.localeCompare(b.month));
+}
+
 function SummaryCard({ title, summary }) {
   const imported = summary?.imported || 0;
   const skipped = summary?.skipped || 0;
@@ -118,6 +133,7 @@ export default function Imports() {
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
   const skipped = skippedRows(result);
+  const skippedGroups = skippedBreakdown(skipped);
 
   async function submit(e) {
     e.preventDefault();
@@ -212,16 +228,31 @@ export default function Imports() {
       {result && (
         <>
           {skipped.length > 0 && (
-            <div style={{ ...card, display:"flex", justifyContent:"space-between", alignItems:"center", gap:"1rem", flexWrap:"wrap" }}>
-              <div>
-                <div style={{ fontWeight:700 }}>Skipped rows found</div>
-                <div style={{ fontSize:".78rem", color:"var(--muted)", marginTop:".25rem" }}>
-                  Export {skipped.length} skipped rows with reasons and source values.
+            <div style={{ ...card, display:"flex", flexDirection:"column", gap:".9rem" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"1rem", flexWrap:"wrap" }}>
+                <div>
+                  <div style={{ fontWeight:700 }}>Skipped rows found</div>
+                  <div style={{ fontSize:".78rem", color:"var(--muted)", marginTop:".25rem" }}>
+                    Export {skipped.length} skipped rows with reasons and source values.
+                  </div>
                 </div>
+                <button type="button" style={btn()} onClick={() => downloadSkippedRows(result)}>
+                  Export skipped rows for Excel
+                </button>
               </div>
-              <button type="button" style={btn()} onClick={() => downloadSkippedRows(result)}>
-                Export skipped rows for Excel
-              </button>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:".45rem" }}>
+                {skippedGroups.slice(0, 8).map(group => (
+                  <div key={`${group.module}-${group.month}-${group.reason}`} style={{ fontSize:".75rem", color:"var(--muted)", border:"1px solid var(--border)", borderRadius:"6px", padding:".55rem .65rem" }}>
+                    <strong style={{ color:"var(--text)" }}>{group.count}</strong> skipped · {group.module} · {group.month}
+                    <div style={{ color:"var(--danger)", marginTop:".2rem" }}>{group.reason}</div>
+                  </div>
+                ))}
+                {skippedGroups.length > 8 && (
+                  <div style={{ fontSize:".75rem", color:"var(--muted)", padding:".55rem .65rem" }}>
+                    +{skippedGroups.length - 8} more groups in export
+                  </div>
+                )}
+              </div>
             </div>
           )}
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))", gap:"1rem" }}>
