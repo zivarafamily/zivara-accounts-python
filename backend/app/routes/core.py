@@ -19,6 +19,8 @@ from app.models import (
     NeoRevenue,
     Partner,
     Receipt,
+    Setting,
+    UploadedBill,
     User,
     Vendor,
 )
@@ -101,6 +103,16 @@ def _modules(value):
     return value or ""
 
 
+def _block_if_used(db: Session, checks: list[tuple[str, bool]]):
+    used = [label for label, exists in checks if exists]
+    if used:
+        raise HTTPException(status_code=409, detail=f"Cannot delete because it is used in: {', '.join(used)}")
+
+
+def _exists(q):
+    return q.first() is not None
+
+
 @router.get("/health")
 def health():
     return {"ok": True, "timestamp": datetime.now(timezone.utc).isoformat()}
@@ -156,6 +168,22 @@ def update_user(id: str, payload: dict, db: Session = Depends(get_db), user: Use
     return {"ok": True, "message": "User updated"}
 
 
+@router.delete("/users/{id}")
+def delete_user(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
+    item = db.get(User, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="User not found")
+    if item.id == user.id:
+        raise HTTPException(status_code=409, detail="Cannot delete your own logged-in user")
+    _block_if_used(db, [
+        ("LLP memberships", _exists(db.query(LLPPartner).filter(LLPPartner.user_id == id))),
+    ])
+    db.delete(item)
+    audit(db, user.email, "users", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "User deleted"}
+
+
 @router.get("/llps")
 def list_llps(db: Session = Depends(get_db), user: User = Depends(current_user)):
     rows = db.query(LLP).all()
@@ -195,6 +223,32 @@ def update_llp(id: str, payload: dict, db: Session = Depends(get_db), user: User
     audit(db, user.email, "llps", "update", id)
     db.commit()
     return {"ok": True}
+
+
+@router.delete("/llps/{id}")
+def delete_llp(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
+    item = db.get(LLP, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="LLP not found")
+    _block_if_used(db, [
+        ("LLP memberships", _exists(db.query(LLPPartner).filter(LLPPartner.llp_id == id))),
+        ("partners", _exists(db.query(Partner).filter(Partner.llp_id == id))),
+        ("vendors", _exists(db.query(Vendor).filter(Vendor.llp_id == id))),
+        ("payables", _exists(db.query(LLPPayable).filter(LLPPayable.llp_id == id))),
+        ("expenses", _exists(db.query(Expense).filter(Expense.llp_id == id))),
+        ("receipts", _exists(db.query(Receipt).filter(Receipt.llp_id == id))),
+        ("Neo invoices", _exists(db.query(NeoInvoice).filter(NeoInvoice.llp_id == id))),
+        ("bank accounts", _exists(db.query(BankAccount).filter(BankAccount.llp_id == id))),
+        ("cash book", _exists(db.query(CashBookEntry).filter(CashBookEntry.llp_id == id))),
+        ("uploaded bills", _exists(db.query(UploadedBill).filter(UploadedBill.llp_id == id))),
+        ("settings", _exists(db.query(Setting).filter(Setting.llp_id == id))),
+        ("clients", _exists(db.query(Client).filter(Client.llp_name == item.llp_name))),
+        ("Neo revenue", _exists(db.query(NeoRevenue).filter(NeoRevenue.llp_name == item.llp_name))),
+    ])
+    db.delete(item)
+    audit(db, user.email, "llps", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "LLP deleted"}
 
 
 @router.get("/vendors")
@@ -251,6 +305,23 @@ def update_partner(id: str, payload: dict, db: Session = Depends(get_db), user: 
     return {"ok": True}
 
 
+@router.delete("/partners/{id}")
+def delete_partner(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
+    item = db.get(Partner, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Partner not found")
+    _block_if_used(db, [
+        ("Neo revenue", _exists(db.query(NeoRevenue).filter(NeoRevenue.partner_name == item.partner_name))),
+        ("clients", _exists(db.query(Client).filter(Client.partner_name == item.partner_name))),
+        ("expenses paid by", _exists(db.query(Expense).filter(Expense.paid_by == item.partner_name))),
+        ("expense reimbursements", _exists(db.query(Expense).filter(Expense.reimburse_to == item.partner_name))),
+    ])
+    db.delete(item)
+    audit(db, user.email, "partners", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "Partner deleted"}
+
+
 @router.get("/llp-partners")
 def llp_partners(db: Session = Depends(get_db), _: User = Depends(current_user)):
     rows = db.query(LLPPartner).all()
@@ -300,6 +371,17 @@ def update_llp_partner(id: str, payload: dict, db: Session = Depends(get_db), us
     return {"ok": True}
 
 
+@router.delete("/llp-partners/{id}")
+def delete_llp_partner(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
+    item = db.get(LLPPartner, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+    db.delete(item)
+    audit(db, user.email, "llp_partners", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "LLP membership deleted"}
+
+
 @router.get("/clients")
 def clients(db: Session = Depends(get_db), _: User = Depends(current_user)):
     rows = db.query(Client).order_by(Client.client_name).all()
@@ -329,6 +411,21 @@ def update_client(id: str, payload: dict, db: Session = Depends(get_db), user: U
     return {"ok": True, "message": "Client updated", "data": serialize_client(item)}
 
 
+@router.delete("/clients/{id}")
+def delete_client(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
+    item = db.get(Client, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Client not found")
+    _block_if_used(db, [
+        ("Neo revenue", _exists(db.query(NeoRevenue).filter((NeoRevenue.pan == item.pan) | (NeoRevenue.client_name == item.client_name)))),
+        ("Neo invoices", _exists(db.query(NeoInvoice).filter(NeoInvoice.buyer_name == item.client_name))),
+    ])
+    db.delete(item)
+    audit(db, user.email, "clients", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "Client deleted"}
+
+
 @router.post("/vendors")
 def create_vendor(payload: dict, db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), user: User = Depends(current_user)):
     item = Vendor(id=payload.get("VendorID") or make_id("VND"), llp_id=_llp_or_default(db, llp_id), vendor_name=payload.get("VendorName") or "", category=payload.get("Category") or "", gstin=payload.get("GSTIN") or "", pan=payload.get("PAN") or "", state=payload.get("State") or "", notes=payload.get("Notes") or "", status=payload.get("Status") or "Active")
@@ -350,6 +447,21 @@ def update_vendor(id: str, payload: dict, db: Session = Depends(get_db), user: U
     audit(db, user.email, "vendors", "update", id)
     db.commit()
     return {"ok": True}
+
+
+@router.delete("/vendors/{id}")
+def delete_vendor(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
+    item = db.get(Vendor, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    _block_if_used(db, [
+        ("payables", _exists(db.query(LLPPayable).filter((LLPPayable.vendor_id == id) | (LLPPayable.vendor_name == item.vendor_name)))),
+        ("expenses", _exists(db.query(Expense).filter(Expense.vendor_or_person == item.vendor_name))),
+    ])
+    db.delete(item)
+    audit(db, user.email, "vendors", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "Vendor deleted"}
 
 
 @router.get("/payables")
@@ -460,6 +572,21 @@ def mark_paid(id: str, payload: dict, db: Session = Depends(get_db), user: User 
     return {"ok": True, "message": "Payable marked paid"}
 
 
+@router.delete("/payables/{id}")
+def delete_payable(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
+    item = db.get(LLPPayable, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Payable not found")
+    _block_if_used(db, [
+        ("payments", dec(item.paid_amount) > 0 or bool(item.payment_date or item.reference_no)),
+        ("uploaded bills", _exists(db.query(UploadedBill).filter(UploadedBill.source_type == "payable", UploadedBill.source_id == id))),
+    ])
+    db.delete(item)
+    audit(db, user.email, "payables", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "Payable deleted"}
+
+
 @router.get("/expenses")
 def expenses(db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), _: User = Depends(current_user)):
     q = db.query(Expense)
@@ -488,10 +615,14 @@ def update_expense(id: str, payload: dict, db: Session = Depends(get_db), user: 
 
 
 @router.delete("/expenses/{id}")
-def delete_expense(id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def delete_expense(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
     item = db.get(Expense, id)
     if not item:
         raise HTTPException(status_code=404, detail="Expense not found")
+    _block_if_used(db, [
+        ("uploaded bills", _exists(db.query(UploadedBill).filter(UploadedBill.source_type == "expense", UploadedBill.source_id == id))),
+        ("cash book reimbursement", _exists(db.query(CashBookEntry).filter(CashBookEntry.reference_id == id))),
+    ])
     db.delete(item)
     audit(db, user.email, "expenses", "delete", id)
     db.commit()
@@ -569,6 +700,21 @@ def update_neo_invoice(id: str, payload: dict, db: Session = Depends(get_db), us
     audit(db, user.email, "neoinvoices", "update", id)
     db.commit()
     return {"ok": True, "message": "NeoInvoice updated", "data": serialize_neo_invoice(item)}
+
+
+@router.delete("/neo-invoices/{id}")
+def delete_neo_invoice(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
+    item = db.get(NeoInvoice, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="NeoInvoice not found")
+    _block_if_used(db, [
+        ("Neo revenue", _exists(db.query(NeoRevenue).filter(NeoRevenue.invoice_no == item.invoice_no))),
+        ("receipts", _exists(db.query(Receipt).filter(Receipt.reference_no == item.invoice_no))),
+    ])
+    db.delete(item)
+    audit(db, user.email, "neoinvoices", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "NeoInvoice deleted"}
 
 
 @router.get("/neo-revenue")
@@ -847,7 +993,7 @@ def update_receipt(id: str, payload: dict, db: Session = Depends(get_db), user: 
 
 
 @router.delete("/receipts/{id}")
-def delete_receipt(id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def delete_receipt(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
     item = db.get(Receipt, id)
     if not item:
         raise HTTPException(status_code=404, detail="Receipt not found")
@@ -888,6 +1034,25 @@ def update_bank(id: str, payload: dict, db: Session = Depends(get_db), user: Use
     return {"ok": True}
 
 
+@router.delete("/bank-accounts/{id}")
+def delete_bank(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
+    item = db.get(BankAccount, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Bank account not found")
+    account_names = {item.account_name, item.bank_name, item.account_number}
+    account_names = {name for name in account_names if name}
+    _block_if_used(db, [
+        ("receipts", _exists(db.query(Receipt).filter(Receipt.bank_account.in_(account_names))) if account_names else False),
+        ("payables", _exists(db.query(LLPPayable).filter(LLPPayable.bank_account.in_(account_names))) if account_names else False),
+        ("expenses reimbursements", _exists(db.query(Expense).filter(Expense.reimburse_account.in_(account_names))) if account_names else False),
+        ("cash book", _exists(db.query(CashBookEntry).filter(CashBookEntry.reference_id == id))),
+    ])
+    db.delete(item)
+    audit(db, user.email, "bankaccounts", "delete", id)
+    db.commit()
+    return {"ok": True, "message": "Bank account deleted"}
+
+
 @router.get("/cash-book")
 def cash_book(db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), _: User = Depends(current_user)):
     q = db.query(CashBookEntry)
@@ -922,7 +1087,7 @@ def update_cash(id: str, payload: dict, db: Session = Depends(get_db), user: Use
 
 
 @router.delete("/cash-book/{id}")
-def delete_cash(id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def delete_cash(id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
     item = db.get(CashBookEntry, id)
     if not item:
         raise HTTPException(status_code=404, detail="Cash entry not found")

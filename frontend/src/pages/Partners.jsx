@@ -63,6 +63,16 @@ export default function Partners() {
     } finally { setSaving(false); }
   }
 
+  async function removePartner(row) {
+    if (!window.confirm(`Delete partner ${row.PartnerName}?`)) return;
+    try {
+      const r = await apiPost("deletePartner", { PartnerID:row.PartnerID });
+      if (r.ok) load();
+    } catch (err) {
+      alert(err.message || "Unable to delete partner");
+    }
+  }
+
   const active = rows.filter(r => r.Status !== "Inactive");
 
   return (
@@ -164,6 +174,8 @@ export default function Partners() {
                     </td>
                     <td style={{ padding: ".5rem .4rem", whiteSpace: "nowrap" }}>
                       <button style={{ ...btn("ghost"), padding: ".25rem .6rem", fontSize: ".78rem" }} onClick={() => openEdit(row)}>Edit</button>
+                      {" "}
+                      <button style={{ ...btn("ghost"), padding: ".25rem .6rem", fontSize: ".78rem", color: "var(--danger)" }} onClick={() => removePartner(row)}>Delete</button>
                     </td>
                   </tr>
                 ))}

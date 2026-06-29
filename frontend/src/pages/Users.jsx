@@ -201,6 +201,21 @@ export default function Users() {
     }
   }
 
+  async function removeUser(user) {
+    if (!window.confirm(`Delete user ${user.Username || user.Name}?`)) return;
+    setError("");
+    setMessage("");
+    try {
+      const r = await apiPost("deleteUser", { UserID:user.UserID });
+      if (r.ok) {
+        setMessage("User deleted");
+        await load();
+      }
+    } catch (err) {
+      setError(err.message || "Unable to delete user");
+    }
+  }
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:"1.25rem" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:".75rem" }}>
@@ -250,7 +265,11 @@ export default function Users() {
                           {user.Status || "Active"}
                         </span>
                       </td>
-                      <td><button style={{ ...btn("ghost"), padding:".3rem .65rem" }} onClick={() => openEdit(user)}>Edit</button></td>
+                      <td style={{ whiteSpace:"nowrap" }}>
+                        <button style={{ ...btn("ghost"), padding:".3rem .65rem" }} onClick={() => openEdit(user)}>Edit</button>
+                        {" "}
+                        <button style={{ ...btn("ghost"), padding:".3rem .65rem", color:"var(--danger)" }} onClick={() => removeUser(user)}>Delete</button>
+                      </td>
                     </tr>
                   );
                 })}

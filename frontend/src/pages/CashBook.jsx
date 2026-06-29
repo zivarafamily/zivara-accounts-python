@@ -66,6 +66,16 @@ export default function CashBook() {
     else alert(r.error || "Error saving");
   }
 
+  async function removeEntry(en) {
+    if (!window.confirm(`Delete cash entry ${en.ReferenceID || en.EntryID}?`)) return;
+    try {
+      const r = await apiPost("deleteCashEntry", { EntryID:en.EntryID });
+      if (r.ok) load();
+    } catch (err) {
+      alert(err.message || "Unable to delete cash entry");
+    }
+  }
+
   const closing = entries.length > 0 ? entries[entries.length-1].ClosingBalance : null;
 
   return (
@@ -138,12 +148,12 @@ export default function CashBook() {
                 <tr>
                   <th>Date</th><th>Type</th><th>Opening</th>
                   <th>In</th><th>Out</th><th>Closing</th>
-                  <th>Ref Type</th><th>Ref ID</th><th>Description</th>
+                  <th>Ref Type</th><th>Ref ID</th><th>Description</th><th></th>
                 </tr>
               </thead>
               <tbody>
                 {entries.length===0 ? (
-                  <tr><td colSpan="9" style={{ textAlign:"center", color:"var(--muted)", padding:"2.5rem" }}>No entries yet</td></tr>
+                  <tr><td colSpan="10" style={{ textAlign:"center", color:"var(--muted)", padding:"2.5rem" }}>No entries yet</td></tr>
                 ) : entries.map(en => (
                   <tr key={en.EntryID}>
                     <td style={{ whiteSpace:"nowrap" }}>{formatDate(en.Date)}</td>
@@ -155,6 +165,7 @@ export default function CashBook() {
                     <td style={{ color:"var(--muted)" }}>{en.ReferenceType}</td>
                     <td style={{ color:"var(--accent2)", fontSize:".8rem" }}>{en.ReferenceID}</td>
                     <td style={{ color:"var(--muted)", maxWidth:"180px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{en.Description}</td>
+                    <td><button onClick={()=>removeEntry(en)} style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--danger)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}>Delete</button></td>
                   </tr>
                 ))}
               </tbody>

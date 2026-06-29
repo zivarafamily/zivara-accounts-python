@@ -352,6 +352,20 @@ export default function PaymentTracker() {
     }
   }
 
+  async function removePayable(row) {
+    if (!window.confirm(`Delete payable bill ${row.BillNo || row.VendorName}?`)) return;
+    setSaving(true);
+    setError("");
+    try {
+      await apiPost("deleteLLPPayable", { PayableID:row.PayableID });
+      await load();
+    } catch (err) {
+      setError(err.message || "Unable to delete payable");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function applyBatchVendor(vendorKey) {
     setBatchForm(p => ({
       ...p,
@@ -473,6 +487,8 @@ export default function PaymentTracker() {
                     <td style={{ whiteSpace:"nowrap" }}>
                       <button style={{ ...btn("ghost"), padding:".3rem .6rem" }} onClick={()=>openEdit(row)}>Edit</button>{" "}
                       {row.Status !== "Paid" && row.Status !== "Cancelled" && <button style={{ ...btn("ghost"), padding:".3rem .6rem", color:"var(--success)" }} onClick={()=>markPaid(row)} disabled={saving}>Pay</button>}
+                      {" "}
+                      <button style={{ ...btn("ghost"), padding:".3rem .6rem", color:"var(--danger)" }} onClick={()=>removePayable(row)} disabled={saving}>Delete</button>
                     </td>
                   </tr>
                 ))}

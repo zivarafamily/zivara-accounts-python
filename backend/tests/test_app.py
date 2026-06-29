@@ -48,6 +48,33 @@ def test_duplicate_payable_rejection(client, auth_headers):
     assert client.post("/payables", headers=auth_headers, json=payload).status_code == 409
 
 
+def test_vendor_delete_is_blocked_when_payables_exist(client, auth_headers):
+    vendor = client.post("/vendors", headers=auth_headers, json={"VendorName": "Delete Block Vendor"})
+    assert vendor.status_code == 200
+    vendor_id = vendor.json()["data"]["VendorID"]
+    payable = client.post(
+        "/payables",
+        headers=auth_headers,
+        json={"VendorID": vendor_id, "VendorName": "Delete Block Vendor", "BillNo": "DEL-1", "BillDate": "2026-06-10", "GrossAmount": "1000"},
+    )
+    assert payable.status_code == 200
+
+    deleted = client.delete(f"/vendors/{vendor_id}", headers=auth_headers)
+    assert deleted.status_code == 409
+    assert "payables" in deleted.json()["detail"]
+
+
+def test_unused_vendor_can_be_deleted(client, auth_headers):
+    vendor = client.post("/vendors", headers=auth_headers, json={"VendorName": "Unused Delete Vendor"})
+    assert vendor.status_code == 200
+    vendor_id = vendor.json()["data"]["VendorID"]
+
+    deleted = client.delete(f"/vendors/{vendor_id}", headers=auth_headers)
+    assert deleted.status_code == 200
+    rows = client.get("/vendors", headers=auth_headers).json()["data"]
+    assert all(row["VendorID"] != vendor_id for row in rows)
+
+
 def test_payable_tds_section_is_normalized_and_editable(client, auth_headers):
     created = client.post(
         "/payables",

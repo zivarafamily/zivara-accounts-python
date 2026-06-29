@@ -84,6 +84,16 @@ export default function Clients({ role = "admin", employeeRef = "" }) {
     finally { setSaving(false); }
   }
 
+  async function removeClient(c) {
+    if (!window.confirm(`Delete client ${c.ClientName}?`)) return;
+    try {
+      const r = await apiPost("deleteClient", { ClientID:c.ClientID });
+      if (r.ok) load();
+    } catch (err) {
+      alert(err.message || "Unable to delete client");
+    }
+  }
+
   const filtered = useMemo(() => {
     // Partners only see their own clients (matched by RMName)
     const base = isPartner && employeeRef
@@ -233,6 +243,8 @@ export default function Clients({ role = "admin", employeeRef = "" }) {
                     <td style={{ padding: ".5rem .65rem", color: "var(--muted)", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.Notes || "—"}</td>
                     <td style={{ padding: ".5rem .4rem" }}>
                       <button style={{ ...btn("ghost"), padding: ".25rem .6rem", fontSize: ".78rem" }} onClick={() => openEdit(c)}>Edit</button>
+                      {" "}
+                      <button style={{ ...btn("ghost"), padding: ".25rem .6rem", fontSize: ".78rem", color: "var(--danger)" }} onClick={() => removeClient(c)}>Delete</button>
                     </td>
                   </tr>
                 ))}

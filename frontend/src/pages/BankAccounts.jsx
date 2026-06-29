@@ -75,6 +75,16 @@ export default function BankAccounts() {
     else alert(r.error || "Error saving");
   }
 
+  async function removeAccount(acc) {
+    if (!window.confirm(`Delete bank account ${acc.AccountName || acc.BankName}?`)) return;
+    try {
+      const r = await apiPost("deleteBankAccount", { AccountID:acc.AccountID });
+      if (r.ok) load();
+    } catch (err) {
+      alert(err.message || "Unable to delete bank account");
+    }
+  }
+
   const active   = accounts.filter(a => a.IsActive !== "No");
   const totalBal = active.reduce((s, a) => s + (Number(a.CurrentBalance)||0), 0);
 
@@ -188,6 +198,10 @@ export default function BankAccounts() {
                     <td>
                       <button onClick={()=>openEdit(acc)} style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--muted)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}>
                         Edit
+                      </button>
+                      {" "}
+                      <button onClick={()=>removeAccount(acc)} style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--danger)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}>
+                        Delete
                       </button>
                     </td>
                   </tr>

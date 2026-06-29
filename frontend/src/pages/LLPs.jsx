@@ -65,6 +65,16 @@ function LLPsSection({ llps, onRefresh }) {
     } finally { setSaving(false); }
   }
 
+  async function removeLLP(row) {
+    if (!window.confirm(`Delete LLP ${row.LLPName}?`)) return;
+    try {
+      const r = await apiPost("deleteLLP", { LLPID:row.LLPID });
+      if (r.ok) onRefresh();
+    } catch (err) {
+      alert(err.message || "Unable to delete LLP");
+    }
+  }
+
   const active = llps.filter(r => r.Status !== "Inactive");
 
   return (
@@ -158,6 +168,8 @@ function LLPsSection({ llps, onRefresh }) {
                     </td>
                     <td style={{ padding:".5rem .4rem" }}>
                       <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem" }} onClick={() => openEdit(row)}>Edit</button>
+                      {" "}
+                      <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem", color:"var(--danger)" }} onClick={() => removeLLP(row)}>Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -230,6 +242,16 @@ function MembershipsSection({ llps, users }) {
       if (r.ok) { setFormOpen(false); setEditId(null); setForm(mpInitial); setSelMods([]); load(); }
       else alert(r.error || "Error saving");
     } finally { setSaving(false); }
+  }
+
+  async function removeMembership(row) {
+    if (!window.confirm(`Delete membership for ${row.Username}?`)) return;
+    try {
+      const r = await apiPost("deleteLLPPartner", { MappingID:row.MappingID });
+      if (r.ok) load();
+    } catch (err) {
+      alert(err.message || "Unable to delete membership");
+    }
   }
 
   const llpMap = {};
@@ -386,6 +408,8 @@ function MembershipsSection({ llps, users }) {
                       </td>
                       <td style={{ padding:".5rem .4rem" }}>
                         <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem" }} onClick={() => openEdit(row)}>Edit</button>
+                        {" "}
+                        <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem", color:"var(--danger)" }} onClick={() => removeMembership(row)}>Delete</button>
                       </td>
                     </tr>
                   );

@@ -714,6 +714,16 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
     } finally { setSaving(false); }
   }
 
+  async function removeInvoice(inv) {
+    if (!window.confirm(`Delete invoice ${inv.InvoiceNo}?`)) return;
+    try {
+      const r = await apiPost("deleteNeoInvoice", { NeoInvoiceID:inv.NeoInvoiceID });
+      if (r.ok) load();
+    } catch (err) {
+      alert(err.message || "Unable to delete invoice");
+    }
+  }
+
   const filtered = useMemo(() => invoices.filter(inv => {
     // Partners only see their own invoices
     // Match on RaisedBy first; fall back to AuthorisedSignatory for invoices saved before RaisedBy column existed
@@ -1144,6 +1154,8 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
                       <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem" }} onClick={()=>openEdit(inv)}>Edit</button>
                       {" "}
                       <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem", border:"1px solid #6366f1", color:"#6366f1" }} onClick={()=>printInvoice(inv, signers)}>PDF</button>
+                      {" "}
+                      <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem", color:"var(--danger)" }} onClick={()=>removeInvoice(inv)}>Delete</button>
                     </td>
                   </tr>
                 ))}

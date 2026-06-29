@@ -131,6 +131,16 @@ export default function Expenses() {
     }
   }
 
+  async function removeExpense(e) {
+    if (!window.confirm(`Delete expense ${e.Description || e.ExpenseID}?`)) return;
+    try {
+      const r = await apiPost("deleteExpense", { ExpenseID:e.ExpenseID });
+      if (r.ok) load();
+    } catch (err) {
+      alert(err.message || "Unable to delete expense");
+    }
+  }
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:"1.25rem" }}>
 
@@ -268,7 +278,11 @@ export default function Expenses() {
                       <td>{e.PaidBy}</td><td>{e.PaymentMode}</td>
                       <td><Badge v={e.Status}/></td>
                       <td style={{ color:"var(--muted)", maxWidth:"200px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.Description}</td>
-                      <td><button style={{ ...btn("ghost"), padding:".2rem .55rem", fontSize:".78rem" }} onClick={()=>openEdit(e)}>Edit</button></td>
+                      <td style={{ whiteSpace:"nowrap" }}>
+                        <button style={{ ...btn("ghost"), padding:".2rem .55rem", fontSize:".78rem" }} onClick={()=>openEdit(e)}>Edit</button>
+                        {" "}
+                        <button style={{ ...btn("ghost"), padding:".2rem .55rem", fontSize:".78rem", color:"var(--danger)" }} onClick={()=>removeExpense(e)}>Delete</button>
+                      </td>
                     </tr>
                   ))
                 )}

@@ -59,6 +59,16 @@ export default function Receipts() {
     else alert(r.error || "Error saving");
   }
 
+  async function removeReceipt(r) {
+    if (!window.confirm(`Delete receipt ${r.ReferenceNo || r.ReceiptID}?`)) return;
+    try {
+      const res = await apiPost("deleteReceipt", { ReceiptID:r.ReceiptID });
+      if (res.ok) load();
+    } catch (err) {
+      alert(err.message || "Unable to delete receipt");
+    }
+  }
+
   const totalReceived = receipts.reduce((s,r) => s+Number(r.AmountReceived||0), 0);
   const thisMonth = new Date().toISOString().slice(0,7);
   const monthReceipts = receipts.filter(r => (r.Month||r.Date||"").startsWith(thisMonth));
@@ -143,7 +153,11 @@ export default function Receipts() {
                       <td style={{ color:"var(--muted)", fontSize:".8rem" }}>{r.BankAccount}</td>
                       <td style={{ fontFamily:"monospace", fontSize:".8rem", color:"var(--muted)" }}>{r.ReferenceNo}</td>
                       <td style={{ color:"var(--muted)", maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.Notes}</td>
-                      <td><button onClick={()=>openEdit(r)} style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--muted)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}>Edit</button></td>
+                      <td style={{ whiteSpace:"nowrap" }}>
+                        <button onClick={()=>openEdit(r)} style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--muted)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}>Edit</button>
+                        {" "}
+                        <button onClick={()=>removeReceipt(r)} style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--danger)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}>Delete</button>
+                      </td>
                     </tr>
                   ))
                 }

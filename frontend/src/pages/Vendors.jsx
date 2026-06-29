@@ -66,6 +66,16 @@ export default function Vendors() {
     } finally { setSaving(false); }
   }
 
+  async function removeVendor(v) {
+    if (!window.confirm(`Delete vendor ${v.VendorName}?`)) return;
+    try {
+      const r = await apiPost("deleteVendor", { VendorID:v.VendorID });
+      if (r.ok) load();
+    } catch (err) {
+      alert(err.message || "Unable to delete vendor");
+    }
+  }
+
   const filtered = vendors.filter(v => {
     const s = search.toLowerCase();
     return !s ||
@@ -183,6 +193,8 @@ export default function Vendors() {
                     <td style={{ padding: ".5rem .65rem", color: "var(--muted)", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.Notes || "—"}</td>
                     <td style={{ padding: ".5rem .4rem", whiteSpace: "nowrap" }}>
                       <button style={{ ...btn("ghost"), padding: ".25rem .6rem", fontSize: ".78rem" }} onClick={() => openEdit(v)}>Edit</button>
+                      {" "}
+                      <button style={{ ...btn("ghost"), padding: ".25rem .6rem", fontSize: ".78rem", color: "var(--danger)" }} onClick={() => removeVendor(v)}>Delete</button>
                     </td>
                   </tr>
                 ))}
