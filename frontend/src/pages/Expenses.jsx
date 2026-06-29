@@ -48,6 +48,9 @@ export default function Expenses() {
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState(null);
   const [formError, setFormError] = useState("");
+  const [filterMonth, setFilterMonth] = useState("");
+  const [filterPerson, setFilterPerson] = useState("");
+  const [filterSeller, setFilterSeller] = useState("");
 
   async function load() {
     setLoading(true);
@@ -113,6 +116,26 @@ export default function Expenses() {
   }
 
   const partnerNames = Array.from(new Set(partners.map(p => String(p.PartnerName || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const expenseMonths = Array.from(new Set(expenses.map(e => e.BillingMonth).filter(Boolean))).sort((a, b) => {
+    const order = billingMonthOptions(36, 12);
+    const ai = order.indexOf(a);
+    const bi = order.indexOf(b);
+    if (ai === -1 || bi === -1) return a.localeCompare(b);
+    return ai - bi;
+  });
+  const paidByOptions = Array.from(new Set(expenses.map(e => String(e.PaidBy || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const sellerOptions = Array.from(new Set(expenses.map(e => String(e.VendorOrPerson || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const filteredExpenses = expenses.filter(e =>
+    (!filterMonth || e.BillingMonth === filterMonth) &&
+    (!filterPerson || e.PaidBy === filterPerson) &&
+    (!filterSeller || e.VendorOrPerson === filterSeller)
+  );
+  const totals = filteredExpenses.reduce((acc, e) => ({
+    amount: acc.amount + Number(e.Amount || 0),
+    taxable: acc.taxable + Number(e.TaxableValue || 0),
+    gst: acc.gst + Number(e.GSTAmount || 0),
+  }), { amount:0, taxable:0, gst:0 });
+  const fmt = n => "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 });
 
   async function save(e) {
     e.preventDefault();
@@ -240,11 +263,49 @@ export default function Expenses() {
         </div>
       )}
 
+      <div style={{ ...card, display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:"1rem" }}>
+        <div>
+          <div style={{ fontSize:".72rem", color:"var(--muted)", fontWeight:700 }}>FILTERED TOTAL</div>
+          <div style={{ fontSize:"1.35rem", fontWeight:800, color:"var(--accent2)", marginTop:".25rem" }}>{fmt(totals.amount)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize:".72rem", color:"var(--muted)", fontWeight:700 }}>TAXABLE VALUE</div>
+          <div style={{ fontSize:"1.35rem", fontWeight:800, color:"var(--accent)", marginTop:".25rem" }}>{fmt(totals.taxable)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize:".72rem", color:"var(--muted)", fontWeight:700 }}>GST TOTAL</div>
+          <div style={{ fontSize:"1.35rem", fontWeight:800, color:"var(--warning)", marginTop:".25rem" }}>{fmt(totals.gst)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize:".72rem", color:"var(--muted)", fontWeight:700 }}>ROWS</div>
+          <div style={{ fontSize:"1.35rem", fontWeight:800, color:"var(--text)", marginTop:".25rem" }}>{filteredExpenses.length}</div>
+        </div>
+      </div>
+
+      <div style={{ ...card, display:"flex", gap:".75rem", alignItems:"center", flexWrap:"wrap" }}>
+        <select style={{ maxWidth:190 }} value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}>
+          <option value="">All months</option>
+          {expenseMonths.map(m => <option key={m}>{m}</option>)}
+        </select>
+        <select style={{ maxWidth:220 }} value={filterPerson} onChange={e=>setFilterPerson(e.target.value)}>
+          <option value="">All paid by</option>
+          {paidByOptions.map(name => <option key={name}>{name}</option>)}
+        </select>
+        <select style={{ maxWidth:260 }} value={filterSeller} onChange={e=>setFilterSeller(e.target.value)}>
+          <option value="">All vendors / sellers</option>
+          {sellerOptions.map(name => <option key={name}>{name}</option>)}
+        </select>
+        {(filterMonth || filterPerson || filterSeller) && (
+          <button style={btn("ghost")} onClick={()=>{ setFilterMonth(""); setFilterPerson(""); setFilterSeller(""); }}>Clear</button>
+        )}
+        <span style={{ marginLeft:"auto", fontSize:".8rem", color:"var(--muted)" }}>{filteredExpenses.length} of {expenses.length} record{expenses.length !== 1 ? "s" : ""}</span>
+      </div>
+
       {/* Table */}
       <div style={{ ...card, padding:0, overflow:"hidden" }}>
         <div style={{ padding:".9rem 1.25rem", borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <span style={{ fontWeight:600, fontSize:".875rem" }}>All Expenses</span>
-          <span style={{ fontSize:".75rem", color:"var(--muted)" }}>{expenses.length} record{expenses.length!==1?"s":""}</span>
+          <span style={{ fontSize:".75rem", color:"var(--muted)" }}>{filteredExpenses.length} record{filteredExpenses.length!==1?"s":""}</span>
         </div>
         <div style={{ overflowX:"auto" }}>
           {loading ? (
@@ -259,10 +320,10 @@ export default function Expenses() {
                 </tr>
               </thead>
               <tbody>
-                {expenses.length===0 ? (
+                {filteredExpenses.length===0 ? (
                   <tr><td colSpan="9" style={{ textAlign:"center", color:"var(--muted)", padding:"2.5rem" }}>No expenses yet</td></tr>
                 ) : (
-                  expenses.map(e => (
+                  filteredExpenses.map(e => (
                     <tr key={e.ExpenseID}>
                       <td style={{ whiteSpace:"nowrap" }}>{formatDate(e.Date)}</td>
                       <td>{e.ExpenseType}</td>
