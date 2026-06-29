@@ -125,6 +125,10 @@ export default function Expenses() {
   });
   const paidByOptions = Array.from(new Set(expenses.map(e => String(e.PaidBy || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const sellerOptions = Array.from(new Set(expenses.map(e => String(e.VendorOrPerson || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const vendorPersonOptions = Array.from(new Set([
+    ...sellerOptions,
+    ...vendors.map(v => String(v.VendorName || "").trim()).filter(Boolean),
+  ])).sort((a, b) => a.localeCompare(b));
   const filteredExpenses = expenses.filter(e =>
     (!filterMonth || e.BillingMonth === filterMonth) &&
     (!filterPerson || e.PaidBy === filterPerson) &&
@@ -171,6 +175,16 @@ export default function Expenses() {
     }
   }
 
+  function applyVendorPerson(value) {
+    const vendor = vendors.find(v => String(v.VendorName || "").trim() === value);
+    setForm(p => ({
+      ...p,
+      VendorOrPerson:value,
+      Category: vendor?.Category && !p.Category ? vendor.Category : p.Category,
+      Notes: vendor?.GSTIN && !p.Notes ? `GSTIN: ${vendor.GSTIN}` : p.Notes,
+    }));
+  }
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:"1.25rem" }}>
 
@@ -212,24 +226,13 @@ export default function Expenses() {
                 </select>
               </div>
               <div><label style={label}>Amount (₹)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={form.Amount} onChange={e=>set("Amount",e.target.value)} required /></div>
-              {vendors.length > 0 && (
-                <div>
-                  <label style={label}>Pick Vendor</label>
-                  <select style={{ width:"100%", padding:".5rem .65rem", background:"var(--input,#1e293b)", border:"1px solid var(--border)", borderRadius:"6px", color:"var(--text)", fontSize:".875rem" }}
-                    value=""
-                    onChange={e => {
-                      const v = vendors.find(x => x.VendorID === e.target.value);
-                      if (!v) return;
-                      set("VendorOrPerson", v.VendorName);
-                      if (v.Category && !form.Category) set("Category", v.Category);
-                      if (v.GSTIN) set("Notes", form.Notes ? form.Notes : "GSTIN: " + v.GSTIN);
-                    }}>
-                    <option value="">— Select from list —</option>
-                    {vendors.map(v => <option key={v.VendorID} value={v.VendorID}>{v.VendorName}{v.Category ? " · " + v.Category : ""}</option>)}
-                  </select>
-                </div>
-              )}
-              <div><label style={label}>Vendor / Person</label><input placeholder="Vendor name or type manually" value={form.VendorOrPerson} onChange={e=>set("VendorOrPerson",e.target.value)} /></div>
+              <div>
+                <label style={label}>Vendor / Person</label>
+                <input list="expense-vendor-person-options" placeholder="Select or type vendor/person" value={form.VendorOrPerson} onChange={e=>applyVendorPerson(e.target.value)} />
+                <datalist id="expense-vendor-person-options">
+                  {vendorPersonOptions.map(name => <option key={name} value={name} />)}
+                </datalist>
+              </div>
               <div><label style={label}>Description</label><input placeholder="Brief note" value={form.Description} onChange={e=>set("Description",e.target.value)} /></div>
               <div><label style={label}>Taxable Value (₹)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={form.TaxableValue} onChange={e=>set("TaxableValue",e.target.value)} /></div>
               <div><label style={label}>CGST (₹)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={form.CGSTAmount} onChange={e=>setGstPart("CGSTAmount",e.target.value)} /></div>
