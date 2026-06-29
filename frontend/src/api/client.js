@@ -1,6 +1,25 @@
 // api/client.js - compatibility helpers over the FastAPI backend.
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+function resolveBaseUrl() {
+  const configured = import.meta.env.VITE_API_BASE_URL || "";
+  if (typeof window !== "undefined") {
+    const pageHost = window.location.hostname;
+    const isLocalPage = ["localhost", "127.0.0.1", ""].includes(pageHost);
+    const configuredHost = (() => {
+      try {
+        return configured ? new URL(configured, window.location.origin).hostname : "";
+      } catch {
+        return "";
+      }
+    })();
+    if (!isLocalPage && (!configured || configuredHost === "zivara-accounts-api.onrender.com")) {
+      return "/api";
+    }
+  }
+  return configured || "http://127.0.0.1:8000";
+}
+
+const BASE_URL = resolveBaseUrl();
 
 function assertApiBaseReachableFromPage() {
   const pageHost = window.location.hostname;
