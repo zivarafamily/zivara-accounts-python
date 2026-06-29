@@ -148,6 +148,7 @@ const postRoutes = {
   savePayable: ["POST", "/payables"],
   updateLLPPayable: ["PUT", p => `/payables/${p.PayableID}`],
   updatePayable: ["PUT", p => `/payables/${p.PayableID || p.id}`],
+  batchPayLLPPayables: ["POST", "/payables/batch-payment"],
   markLLPPayablePaid: ["POST", p => `/payables/${p.PayableID}/mark-paid`],
   markPayablePaid: ["POST", p => `/payables/${p.PayableID || p.id}/mark-paid`],
   saveExpense: ["POST", "/expenses"],

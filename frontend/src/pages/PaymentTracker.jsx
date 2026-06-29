@@ -70,6 +70,10 @@ function normalizeKey(value) {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function payableVendorKey(row) {
+  return row.VendorID || normalizeKey(row.VendorName);
+}
+
 export default function PaymentTracker() {
   const { currentLLP } = useLLP();
   const [rows, setRows] = useState([]);
@@ -87,6 +91,15 @@ export default function PaymentTracker() {
   const [error, setError] = useState("");
   const [billFile, setBillFile] = useState(null);
   const [uploadMessage, setUploadMessage] = useState("");
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchForm, setBatchForm] = useState({
+    VendorKey:"",
+    PayableIDs:[],
+    PaymentDate:new Date().toISOString().slice(0, 10),
+    PaymentMode:"Bank",
+    BankAccount:"",
+    ReferenceNo:"",
+  });
 
   async function load() {
     setLoading(true);
@@ -121,6 +134,37 @@ export default function PaymentTracker() {
   }, [rows, search, status, category]);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const setBatch = (k, v) => setBatchForm(p => ({ ...p, [k]: v }));
+
+  const outstandingPayables = useMemo(
+    () => rows.filter(row => row.Status !== "Paid" && row.Status !== "Cancelled" && Number(row.BalanceAmount || row.NetPayable || 0) > 0),
+    [rows]
+  );
+
+  const vendorBatchOptions = useMemo(() => {
+    const map = new Map();
+    outstandingPayables.forEach(row => {
+      const key = payableVendorKey(row);
+      if (!key) return;
+      const current = map.get(key) || { key, name:row.VendorName || "Unknown Vendor", count:0, total:0 };
+      current.count += 1;
+      current.total += Number(row.BalanceAmount || row.NetPayable || 0);
+      map.set(key, current);
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [outstandingPayables]);
+
+  const batchVendorRows = useMemo(
+    () => outstandingPayables.filter(row => batchForm.VendorKey && payableVendorKey(row) === batchForm.VendorKey),
+    [outstandingPayables, batchForm.VendorKey]
+  );
+
+  const selectedBatchTotal = useMemo(
+    () => batchVendorRows
+      .filter(row => batchForm.PayableIDs.includes(row.PayableID))
+      .reduce((sum, row) => sum + Number(row.BalanceAmount || row.NetPayable || 0), 0),
+    [batchVendorRows, batchForm.PayableIDs]
+  );
 
   function openAdd() {
     setForm(initial);
@@ -129,6 +173,19 @@ export default function PaymentTracker() {
     setUploadMessage("");
     setEditId(null);
     setOpen(true);
+  }
+
+  function openBatchPay() {
+    const first = vendorBatchOptions[0];
+    setBatchForm({
+      VendorKey:first?.key || "",
+      PayableIDs:first ? outstandingPayables.filter(row => payableVendorKey(row) === first.key).map(row => row.PayableID) : [],
+      PaymentDate:new Date().toISOString().slice(0, 10),
+      PaymentMode:"Bank",
+      BankAccount:"",
+      ReferenceNo:"",
+    });
+    setBatchOpen(true);
   }
 
   function openEdit(row) {
@@ -295,6 +352,52 @@ export default function PaymentTracker() {
     }
   }
 
+  function applyBatchVendor(vendorKey) {
+    setBatchForm(p => ({
+      ...p,
+      VendorKey:vendorKey,
+      PayableIDs:outstandingPayables.filter(row => payableVendorKey(row) === vendorKey).map(row => row.PayableID),
+    }));
+  }
+
+  function toggleBatchBill(payableId) {
+    setBatchForm(p => ({
+      ...p,
+      PayableIDs:p.PayableIDs.includes(payableId)
+        ? p.PayableIDs.filter(id => id !== payableId)
+        : [...p.PayableIDs, payableId],
+    }));
+  }
+
+  function setAllBatchBills(checked) {
+    setBatch("PayableIDs", checked ? batchVendorRows.map(row => row.PayableID) : []);
+  }
+
+  async function saveBatchPayment(e) {
+    e.preventDefault();
+    if (!batchForm.PayableIDs.length) {
+      setError("Select at least one bill for batch payment");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await apiPost("batchPayLLPPayables", {
+        PayableIDs:batchForm.PayableIDs,
+        PaymentDate:batchForm.PaymentDate,
+        PaymentMode:batchForm.PaymentMode,
+        BankAccount:batchForm.BankAccount,
+        ReferenceNo:batchForm.ReferenceNo,
+      });
+      setBatchOpen(false);
+      await load();
+    } catch (err) {
+      setError(err.message || "Unable to save batch payment");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const amounts = calc(form);
   const kpis = [
     { label:"Gross Bills", value:fmt(summary.grossAmount), color:"var(--accent2)" },
@@ -310,7 +413,10 @@ export default function PaymentTracker() {
           <h2 style={{ fontWeight:700, fontSize:"1.25rem", color:"var(--text)" }}>Payment Tracker</h2>
           <p style={{ color:"var(--muted)", fontSize:".8rem", marginTop:".2rem" }}>LLP vendor bills, TDS deduction, net payable, and payment status</p>
         </div>
-        <button style={btn()} onClick={openAdd}>+ Add Bill</button>
+        <div style={{ display:"flex", gap:".6rem", flexWrap:"wrap" }}>
+          <button style={btn("ghost")} onClick={openBatchPay} disabled={!vendorBatchOptions.length}>Batch Pay Vendor</button>
+          <button style={btn()} onClick={openAdd}>+ Add Bill</button>
+        </div>
       </div>
 
       {error && <div style={{ ...card, borderColor:"var(--danger)", color:"var(--danger)" }}>{error}</div>}
@@ -375,6 +481,65 @@ export default function PaymentTracker() {
           )}
         </div>
       </div>
+
+      {batchOpen && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.65)", zIndex:90, padding:"2rem 1rem", overflowY:"auto" }}>
+          <div style={{ ...card, maxWidth:900, margin:"0 auto" }}>
+            <h3 style={{ fontWeight:700, marginBottom:"1rem" }}>Batch Vendor Payment</h3>
+            <form onSubmit={saveBatchPayment}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:".85rem", marginBottom:"1rem" }}>
+                <div>
+                  <label style={label}>Vendor</label>
+                  <select value={batchForm.VendorKey} onChange={e=>applyBatchVendor(e.target.value)} required>
+                    <option value="">— Select vendor —</option>
+                    {vendorBatchOptions.map(v => <option key={v.key} value={v.key}>{v.name} · {v.count} bill{v.count !== 1 ? "s" : ""} · {fmt(v.total)}</option>)}
+                  </select>
+                </div>
+                <div><label style={label}>Payment Date</label><input type="date" value={batchForm.PaymentDate} onChange={e=>setBatch("PaymentDate", e.target.value)} required /></div>
+                <div><label style={label}>Payment Mode</label><select value={batchForm.PaymentMode} onChange={e=>setBatch("PaymentMode", e.target.value)}>{["Bank","NEFT","RTGS","IMPS","UPI","Cheque","Cash"].map(o => <option key={o}>{o}</option>)}</select></div>
+                <div><label style={label}>Bank Account</label><input value={batchForm.BankAccount} onChange={e=>setBatch("BankAccount", e.target.value)} /></div>
+                <div><label style={label}>Reference / UTR</label><input value={batchForm.ReferenceNo} onChange={e=>setBatch("ReferenceNo", e.target.value)} /></div>
+              </div>
+
+              <div style={{ border:"1px solid var(--border)", borderRadius:"6px", overflow:"hidden" }}>
+                <div style={{ padding:".75rem 1rem", display:"flex", alignItems:"center", justifyContent:"space-between", gap:"1rem", flexWrap:"wrap", borderBottom:"1px solid var(--border)" }}>
+                  <label style={{ display:"flex", alignItems:"center", gap:".5rem", color:"var(--text)", fontSize:".85rem", fontWeight:700 }}>
+                    <input type="checkbox" checked={batchVendorRows.length > 0 && batchForm.PayableIDs.length === batchVendorRows.length} onChange={e=>setAllBatchBills(e.target.checked)} />
+                    Select all bills
+                  </label>
+                  <span style={{ color:"var(--accent)", fontWeight:800 }}>{batchForm.PayableIDs.length} selected · {fmt(selectedBatchTotal)}</span>
+                </div>
+                <div style={{ maxHeight:320, overflowY:"auto" }}>
+                  {batchVendorRows.length === 0 ? (
+                    <p style={{ padding:"1.5rem", color:"var(--muted)", textAlign:"center" }}>No outstanding bills for this vendor.</p>
+                  ) : (
+                    <table>
+                      <thead><tr><th></th><th>Bill</th><th>Bill Date</th><th>Gross</th><th>Balance</th><th>Status</th></tr></thead>
+                      <tbody>
+                        {batchVendorRows.map(row => (
+                          <tr key={row.PayableID}>
+                            <td><input type="checkbox" checked={batchForm.PayableIDs.includes(row.PayableID)} onChange={()=>toggleBatchBill(row.PayableID)} /></td>
+                            <td style={{ color:"var(--accent2)", whiteSpace:"nowrap" }}>{row.BillNo || "—"}</td>
+                            <td style={{ whiteSpace:"nowrap" }}>{formatDate(row.BillDate)}</td>
+                            <td style={{ whiteSpace:"nowrap" }}>{fmt(row.GrossAmount)}</td>
+                            <td style={{ color:"var(--danger)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.BalanceAmount || row.NetPayable)}</td>
+                            <td><Badge value={row.Status} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ display:"flex", justifyContent:"flex-end", gap:".75rem", marginTop:"1.25rem", flexWrap:"wrap" }}>
+                <button type="button" style={btn("ghost")} onClick={()=>setBatchOpen(false)}>Cancel</button>
+                <button type="submit" style={btn()} disabled={saving || !batchForm.PayableIDs.length}>{saving ? "Saving..." : "Mark Selected Paid"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {open && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.65)", zIndex:90, padding:"2rem 1rem", overflowY:"auto" }}>

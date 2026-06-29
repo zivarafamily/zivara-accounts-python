@@ -403,6 +403,47 @@ def update_payable(id: str, payload: dict, db: Session = Depends(get_db), user: 
     return {"ok": True, "message": "Payable updated"}
 
 
+@router.post("/payables/batch-payment")
+def batch_payables(payload: dict, db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), user: User = Depends(current_user)):
+    payable_ids = payload.get("PayableIDs") or []
+    if not isinstance(payable_ids, list) or not payable_ids:
+        raise HTTPException(status_code=400, detail="PayableIDs are required")
+    q = db.query(LLPPayable).filter(LLPPayable.id.in_(payable_ids))
+    if llp_id:
+        q = q.filter(LLPPayable.llp_id == llp_id)
+    rows = q.all()
+    if len(rows) != len(set(payable_ids)):
+        raise HTTPException(status_code=404, detail="One or more payable bills were not found")
+    vendor_keys = {(item.vendor_id or normalize_key(item.vendor_name)) for item in rows}
+    if len(vendor_keys) > 1:
+        raise HTTPException(status_code=400, detail="Batch payment can include only one vendor")
+
+    paid_rows = []
+    payment_date = parse_date(payload.get("PaymentDate")) or datetime.now(timezone.utc).date()
+    payment_mode = payload.get("PaymentMode") or "Bank"
+    bank_account = payload.get("BankAccount") or ""
+    reference_no = payload.get("ReferenceNo") or ""
+    for item in rows:
+        if item.status == "Cancelled":
+            continue
+        item.paid_amount = dec(item.net_payable)
+        item.payment_date = payment_date
+        item.payment_mode = payment_mode
+        item.bank_account = bank_account
+        item.reference_no = reference_no
+        item.status = payable_status(item.net_payable, item.paid_amount)
+        audit(db, user.email, "payables", "batch-payment", item.id)
+        paid_rows.append(item)
+    db.commit()
+    return {
+        "ok": True,
+        "message": f"{len(paid_rows)} payable bill(s) marked paid",
+        "paidCount": len(paid_rows),
+        "paidAmount": money(sum(dec(item.net_payable) for item in paid_rows)),
+        "data": [serialize_payable(db, item) for item in paid_rows],
+    }
+
+
 @router.post("/payables/{id}/mark-paid")
 def mark_paid(id: str, payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
     item = db.get(LLPPayable, id)

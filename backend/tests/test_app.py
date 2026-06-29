@@ -81,6 +81,44 @@ def test_payable_tds_section_is_normalized_and_editable(client, auth_headers):
     assert row["TDSRate"] == 0.1
 
 
+def test_vendor_payables_can_be_marked_paid_in_batch(client, auth_headers):
+    ids = []
+    for bill_no, amount in [("BATCH-1", "1000"), ("BATCH-2", "2500")]:
+        created = client.post(
+            "/payables",
+            headers=auth_headers,
+            json={
+                "VendorName": "Batch Vendor",
+                "VendorCategory": "Travel Agency",
+                "BillNo": bill_no,
+                "BillDate": "2026-05-18",
+                "GrossAmount": amount,
+            },
+        )
+        assert created.status_code == 200
+        ids.append(created.json()["data"]["PayableID"])
+
+    paid = client.post(
+        "/payables/batch-payment",
+        headers=auth_headers,
+        json={
+            "PayableIDs": ids,
+            "PaymentDate": "2026-05-20",
+            "PaymentMode": "NEFT",
+            "BankAccount": "HDFC",
+            "ReferenceNo": "UTR-BATCH",
+        },
+    )
+    assert paid.status_code == 200
+    body = paid.json()
+    assert body["paidCount"] == 2
+    assert body["paidAmount"] == 3500.0
+
+    rows = [r for r in client.get("/payables", headers=auth_headers).json()["data"] if r["PayableID"] in ids]
+    assert {r["Status"] for r in rows} == {"Paid"}
+    assert {r["ReferenceNo"] for r in rows} == {"UTR-BATCH"}
+
+
 def test_expense_duplicate_warning(client, auth_headers):
     payload = {"Date": "2026-06-10", "Amount": "500", "PaidBy": "Dinu", "Description": "Cab"}
     assert client.post("/expenses", headers=auth_headers, json=payload).status_code == 200
