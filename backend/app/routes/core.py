@@ -425,7 +425,7 @@ def update_expense(id: str, payload: dict, db: Session = Depends(get_db), user: 
     item = db.get(Expense, id)
     if not item:
         raise HTTPException(status_code=404, detail="Expense not found")
-    mapping = {"Date": ("expense_date", parse_date), "ExpenseType": ("expense_type", str), "Category": ("category", str), "PaidBy": ("paid_by", str), "PaymentMode": ("payment_mode", str), "Amount": ("amount", dec), "Description": ("description", str), "Status": ("status", str)}
+    mapping = {"Date": ("expense_date", parse_date), "ExpenseType": ("expense_type", str), "Category": ("category", str), "PaidBy": ("paid_by", str), "ChargeTo": ("charge_to", str), "ReimburseTo": ("reimburse_to", str), "EmployeeName": ("employee_name", str), "PaymentMode": ("payment_mode", str), "Amount": ("amount", dec), "Description": ("description", str), "Status": ("status", str)}
     for key, (attr, fn) in mapping.items():
         if key in payload:
             setattr(item, attr, fn(payload[key]))

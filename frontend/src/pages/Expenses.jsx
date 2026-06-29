@@ -7,7 +7,7 @@ const initial = {
   PaymentMode:"Cash", Amount:"", VendorOrPerson:"", Description:"",
   BillAvailable:"No", BillLink:"",
   TaxableValue:"", CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", GSTAmount:"",
-  EmployeeName:"", BillingMonth:"", Notes:"", Status:"Draft"
+  EmployeeName:"", ReimburseTo:"", BillingMonth:"", Notes:"", Status:"Draft"
 };
 
 const card  = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
@@ -36,6 +36,7 @@ function Badge({ v }) {
 export default function Expenses() {
   const [expenses, setExpenses] = useState([]);
   const [vendors,  setVendors]  = useState([]);
+  const [partners, setPartners] = useState([]);
   const [form, setForm] = useState(initial);
   const [loading, setLoading] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -47,12 +48,16 @@ export default function Expenses() {
   async function load() {
     setLoading(true);
     try {
-      const [expRes, vndRes] = await Promise.allSettled([
+      const [expRes, vndRes, partnerRes] = await Promise.allSettled([
         apiGet("getExpenses"),
         apiGet("getVendors"),
+        apiGet("getPartners"),
       ]);
       if (expRes.status === "fulfilled" && expRes.value.ok) setExpenses(expRes.value.data || []);
       if (vndRes.status === "fulfilled" && vndRes.value.ok) setVendors((vndRes.value.data || []).filter(v => v.Status !== "Inactive"));
+      if (partnerRes.status === "fulfilled" && partnerRes.value.ok) {
+        setPartners((partnerRes.value.data || []).filter(p => p.Status !== "Inactive"));
+      }
     } catch {}
     finally { setLoading(false); }
   }
@@ -80,6 +85,7 @@ export default function Expenses() {
       IGSTAmount: e.IGSTAmount || "",
       GSTAmount: e.GSTAmount || "",
       EmployeeName: e.EmployeeName || "",
+      ReimburseTo: e.ReimburseTo || e.EmployeeName || "",
       BillingMonth: e.BillingMonth || "",
       Notes: e.Notes || "",
       Status: e.Status || "Draft",
@@ -91,10 +97,17 @@ export default function Expenses() {
     setFormOpen(true);
   }
 
+  const partnerNames = Array.from(new Set(partners.map(p => String(p.PartnerName || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
   async function save(e) {
     e.preventDefault();
     const action  = editId ? "updateExpense" : "saveExpense";
-    const payload = editId ? { ...form, ExpenseID: editId } : form;
+    const payload = {
+      ...form,
+      EmployeeName: form.ReimburseTo || form.EmployeeName || "",
+      ReimburseTo: form.ReimburseTo || "",
+      ...(editId ? { ExpenseID: editId } : {}),
+    };
     setUploadError("");
     setUploadMessage("");
     try {
@@ -147,7 +160,12 @@ export default function Expenses() {
                 </select>
               </div>
               <div><label style={label}>Category</label><input placeholder="e.g. Cab" value={form.Category} onChange={e=>set("Category",e.target.value)} /></div>
-              <div><label style={label}>Paid By</label><input placeholder="Name" value={form.PaidBy} onChange={e=>set("PaidBy",e.target.value)} /></div>
+              <div><label style={label}>Paid By</label>
+                <select value={form.PaidBy} onChange={e=>set("PaidBy",e.target.value)} required>
+                  <option value="">Select partner</option>
+                  {partnerNames.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>
               <div><label style={label}>Payment Mode</label>
                 <select value={form.PaymentMode} onChange={e=>set("PaymentMode",e.target.value)}>
                   {["Cash","Bank","UPI","Card"].map(o=><option key={o}>{o}</option>)}
@@ -195,7 +213,12 @@ export default function Expenses() {
               <div><label style={label}>SGST (₹)</label><input type="number" min="0" placeholder="0.00" value={form.SGSTAmount} onChange={e=>set("SGSTAmount",e.target.value)} /></div>
               <div><label style={label}>IGST (₹)</label><input type="number" min="0" placeholder="0.00" value={form.IGSTAmount} onChange={e=>set("IGSTAmount",e.target.value)} /></div>
               <div><label style={label}>GST Total (₹)</label><input type="number" min="0" placeholder="auto" value={form.GSTAmount} onChange={e=>set("GSTAmount",e.target.value)} /></div>
-              <div><label style={label}>Employee Name</label><input placeholder="Name" value={form.EmployeeName} onChange={e=>set("EmployeeName",e.target.value)} /></div>
+              <div><label style={label}>Reimburse To</label>
+                <select value={form.ReimburseTo} onChange={e=>set("ReimburseTo",e.target.value)}>
+                  <option value="">Same / not applicable</option>
+                  {partnerNames.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>
               <div><label style={label}>Billing Month</label><input placeholder="YYYY-MM" value={form.BillingMonth} onChange={e=>set("BillingMonth",e.target.value)} /></div>
               <div><label style={label}>Notes</label><input placeholder="Notes" value={form.Notes} onChange={e=>set("Notes",e.target.value)} /></div>
               <div><label style={label}>Status</label>
