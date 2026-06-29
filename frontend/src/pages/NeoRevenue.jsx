@@ -345,14 +345,14 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     } finally { setSaving(false); }
   }
 
-  // Unique months for filter dropdown — sorted in FY order (Apr → Mar).
+  // Unique months for filter dropdown, sorted by calendar month (Jan -> Dec).
   // Use metadata because rows only contains the current paginated data page.
   const months = useMemo(() => {
-    const FY_ORDER = ["Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar"];
+    const MONTH_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     const moSort = mo => {
       if (!mo) return 99999;
       const [m, y] = mo.split("-");
-      const mi = FY_ORDER.indexOf(m);
+      const mi = MONTH_ORDER.indexOf(m);
       const yr = parseInt(y, 10) || 0;
       return yr * 100 + (mi === -1 ? 99 : mi);
     };
