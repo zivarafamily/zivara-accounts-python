@@ -7,6 +7,38 @@ from app.models import LLPPayable, Vendor
 from app.services.common import audit, dec, iso, llp_name, make_id, money, normalize_key, parse_date
 
 
+TDS_SECTION_LABELS = {
+    "393(1)-6(i)-1": "393(1) Table 6(i) - Contractor, individual/HUF payee (old 194C) - 1%",
+    "393(1)-6(i)-2": "393(1) Table 6(i) - Contractor / travel operator, other payee (old 194C) - 2%",
+    "393(1)-6(iii)-10": "393(1) Table 6(iii) - Professional fees / CA / consultancy (old 194J) - 10%",
+    "393(1)-6(iii)-2": "393(1) Table 6(iii) - Technical fees / call centre / certain royalty (old 194J) - 2%",
+    "393(1)-2(ii)-10": "393(1) Table 2(ii) - Rent: land/building/furniture/fittings (old 194I) - 10%",
+    "393(1)-2(ii)-2": "393(1) Table 2(ii) - Rent: plant/machinery/equipment (old 194I) - 2%",
+    "393(1)-8(ii)": "393(1) Table 8(ii) - Purchase of goods over threshold (old 194Q) - 0.1%",
+}
+
+
+def normalize_tds_section(section: object, tds_rate: object = None, category: str = "") -> str:
+    raw = str(section or "").strip()
+    if not raw:
+        return ""
+    if raw in TDS_SECTION_LABELS:
+        return raw
+
+    key = raw.upper().replace(" ", "").replace("-", "")
+    rate = dec(tds_rate)
+    category_key = normalize_key(category)
+    if key.startswith("194C"):
+        return "393(1)-6(i)-1" if rate == Decimal("1") else "393(1)-6(i)-2"
+    if key.startswith("194J"):
+        return "393(1)-6(iii)-2" if rate == Decimal("2") else "393(1)-6(iii)-10"
+    if key.startswith("194I"):
+        return "393(1)-2(ii)-2" if "machinery" in category_key or "equipment" in category_key else "393(1)-2(ii)-10"
+    if key.startswith("194Q"):
+        return "393(1)-8(ii)"
+    return raw
+
+
 def calculate_amounts(payload: dict):
     taxable = dec(payload.get("TaxableAmount") or payload.get("taxable_amount"))
     gst = dec(payload.get("GSTAmount") or payload.get("gst_amount"))
@@ -37,6 +69,7 @@ def payable_status(net, paid, current=""):
 
 def serialize_payable(db: Session, p: LLPPayable):
     balance = max(dec(p.net_payable) - dec(p.paid_amount), Decimal("0.00"))
+    tds_section = normalize_tds_section(p.tds_section, p.tds_rate, p.vendor_category)
     return {
         "PayableID": p.id,
         "LLPID": p.llp_id,
@@ -54,7 +87,9 @@ def serialize_payable(db: Session, p: LLPPayable):
         "TaxableAmount": money(p.taxable_amount),
         "GSTAmount": money(p.gst_amount),
         "GrossAmount": money(p.gross_amount),
-        "TDSSection": p.tds_section,
+        "TDSSection": tds_section,
+        "TDSSectionRaw": p.tds_section,
+        "TDSSectionLabel": TDS_SECTION_LABELS.get(tds_section, tds_section),
         "TDSRate": money(p.tds_rate),
         "TDSAmount": money(p.tds_amount),
         "NetPayable": money(p.net_payable),
@@ -107,7 +142,7 @@ def create_payable(db: Session, payload: dict, llp_id: str, user_email: str):
         taxable_amount=taxable,
         gst_amount=gst,
         gross_amount=gross,
-        tds_section=payload.get("TDSSection") or "",
+        tds_section=normalize_tds_section(payload.get("TDSSection"), tds_rate, payload.get("VendorCategory") or ""),
         tds_rate=tds_rate,
         tds_amount=tds,
         net_payable=net,

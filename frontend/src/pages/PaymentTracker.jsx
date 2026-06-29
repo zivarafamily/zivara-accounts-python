@@ -39,6 +39,14 @@ const fmt = n => n != null && n !== "" && !isNaN(Number(n))
   ? "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 })
   : "—";
 
+const tdsDisplay = row => {
+  const parts = [];
+  if (row.TDSSection) parts.push(row.TDSSection);
+  if (Number(row.TDSRate) > 0) parts.push(`${Number(row.TDSRate).toLocaleString("en-IN")}%`);
+  parts.push(fmt(row.TDSAmount));
+  return parts.join(" · ");
+};
+
 function calc(form) {
   const taxable = Number(form.TaxableAmount || 0);
   const gst = Number(form.GSTAmount || 0);
@@ -351,7 +359,7 @@ export default function PaymentTracker() {
                     <td style={{ color:"var(--accent2)", whiteSpace:"nowrap" }}>{row.BillNo || "—"}</td>
                     <td style={{ whiteSpace:"nowrap" }}>{formatDate(row.BillDate)}</td>
                     <td style={{ fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.GrossAmount)}</td>
-                    <td style={{ color:"var(--warning)", whiteSpace:"nowrap" }}>{row.TDSSection ? `${row.TDSSection} ` : ""}{fmt(row.TDSAmount)}</td>
+                    <td title={row.TDSSectionLabel || row.TDSSection || ""} style={{ color:"var(--warning)", whiteSpace:"nowrap" }}>{tdsDisplay(row)}</td>
                     <td style={{ color:"var(--accent)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.NetPayable)}</td>
                     <td style={{ color:"var(--success)", whiteSpace:"nowrap" }}>{fmt(row.PaidAmount)}</td>
                     <td style={{ color:Number(row.BalanceAmount) > 0 ? "var(--danger)" : "var(--muted)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.BalanceAmount)}</td>

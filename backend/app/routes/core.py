@@ -36,7 +36,7 @@ from app.services.neo_revenue import (
     serialize_client,
     serialize_revenue,
 )
-from app.services.payables import calculate_amounts, create_payable, payable_status, serialize_payable
+from app.services.payables import calculate_amounts, create_payable, normalize_tds_section, payable_status, serialize_payable
 
 router = APIRouter(tags=["core"])
 
@@ -379,12 +379,24 @@ def update_payable(id: str, payload: dict, db: Session = Depends(get_db), user: 
     item.normalized_bill_no = normalize_key(item.bill_no)
     item.bill_date = parse_date(merged.get("BillDate"))
     item.due_date = parse_date(merged.get("DueDate"))
+    item.vendor_id = merged.get("VendorID") or item.vendor_id
+    item.vendor_category = merged.get("VendorCategory") or item.vendor_category
+    item.vendor_gstin = merged.get("VendorGSTIN") or item.vendor_gstin
+    item.vendor_pan = merged.get("VendorPAN") or item.vendor_pan
+    item.expense_type = merged.get("ExpenseType") or item.expense_type
+    item.description = merged.get("Description") or item.description
     item.taxable_amount, item.gst_amount, item.gross_amount = taxable, gst, gross
+    item.tds_section = normalize_tds_section(merged.get("TDSSection"), tds_rate, merged.get("VendorCategory") or item.vendor_category)
     item.tds_rate, item.tds_amount, item.net_payable = tds_rate, tds, net
     item.paid_amount = dec(merged.get("PaidAmount"))
     item.status = payable_status(net, item.paid_amount, merged.get("Status"))
     item.payment_date = parse_date(merged.get("PaymentDate"))
+    item.payment_mode = merged.get("PaymentMode") or item.payment_mode
+    item.bank_account = merged.get("BankAccount") or item.bank_account
     item.reference_no = merged.get("ReferenceNo") or ""
+    item.challan_no = merged.get("ChallanNo") or ""
+    item.challan_date = parse_date(merged.get("ChallanDate"))
+    item.interest_amount = dec(merged.get("InterestAmount"))
     item.notes = merged.get("Notes") or ""
     audit(db, user.email, "payables", "update", id)
     db.commit()

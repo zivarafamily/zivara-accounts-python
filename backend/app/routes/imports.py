@@ -31,7 +31,7 @@ from app.security import hash_password
 from app.services.common import audit, make_id, normalize_key, parse_date
 from app.services.neo_invoices import apply_neo_invoice_payload, create_neo_invoice
 from app.services.neo_revenue import apply_client_payload, apply_revenue_payload, create_revenue, duplicate_key, serialize_revenue
-from app.services.payables import calculate_amounts, payable_status
+from app.services.payables import calculate_amounts, normalize_tds_section, payable_status
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -677,7 +677,7 @@ async def import_accounts_workbook(
         item.expense_type = _text(row.get("ExpenseType")) or "Vendor Bill"
         item.description = _text(row.get("Description"))
         item.taxable_amount, item.gst_amount, item.gross_amount = taxable, gst, gross
-        item.tds_section = _text(row.get("TDSSection"))
+        item.tds_section = normalize_tds_section(row.get("TDSSection"), tds_rate, item.vendor_category)
         item.tds_rate, item.tds_amount, item.net_payable = tds_rate, tds, net
         item.paid_amount = _money(row.get("PaidAmount"))
         item.payment_date = parse_date(row.get("PaymentDate"))

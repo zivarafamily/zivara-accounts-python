@@ -5,7 +5,7 @@ from openpyxl import Workbook
 from app.database import SessionLocal
 from app.models import CashBookEntry, Expense, LLP, LLPPartner, LLPPayable, NeoRevenue, UploadedBill, User
 from app.security import hash_password
-from app.services.payables import calculate_amounts
+from app.services.payables import calculate_amounts, normalize_tds_section
 
 
 def test_auth(client):
@@ -34,12 +34,51 @@ def test_payable_calculations():
     assert net == Decimal("1080.00")
 
 
+def test_legacy_tds_sections_normalize_to_section_393():
+    assert normalize_tds_section("194C", "2", "Travel Agency") == "393(1)-6(i)-2"
+    assert normalize_tds_section("194J", "10", "Software") == "393(1)-6(iii)-10"
+    assert normalize_tds_section("194Q", "0.1", "Office Purchase") == "393(1)-8(ii)"
+
+
 def test_duplicate_payable_rejection(client, auth_headers):
     v = client.post("/vendors", headers=auth_headers, json={"VendorName": "ABC Co"})
     vendor_id = v.json()["data"]["VendorID"]
     payload = {"VendorID": vendor_id, "VendorName": "ABC Co", "BillNo": "INV-1", "BillDate": "2026-06-10", "TaxableAmount": "1000", "GSTAmount": "180", "TDSRate": "10"}
     assert client.post("/payables", headers=auth_headers, json=payload).status_code == 200
     assert client.post("/payables", headers=auth_headers, json=payload).status_code == 409
+
+
+def test_payable_tds_section_is_normalized_and_editable(client, auth_headers):
+    created = client.post(
+        "/payables",
+        headers=auth_headers,
+        json={
+            "VendorName": "Travel Co",
+            "VendorCategory": "Travel Agency",
+            "BillNo": "TDS-1",
+            "BillDate": "2026-05-18",
+            "GrossAmount": "7167",
+            "TDSSection": "194C",
+            "TDSAmount": "2",
+        },
+    )
+    assert created.status_code == 200
+    payable_id = created.json()["data"]["PayableID"]
+
+    rows = client.get("/payables", headers=auth_headers).json()["data"]
+    row = next(r for r in rows if r["PayableID"] == payable_id)
+    assert row["TDSSection"] == "393(1)-6(i)-2"
+    assert row["TDSSectionRaw"] == "393(1)-6(i)-2"
+
+    updated = client.put(
+        f"/payables/{payable_id}",
+        headers=auth_headers,
+        json={"TDSSection": "393(1)-8(ii)", "TDSRate": "0.1", "TDSAmount": "7.17"},
+    )
+    assert updated.status_code == 200
+    row = next(r for r in client.get("/payables", headers=auth_headers).json()["data"] if r["PayableID"] == payable_id)
+    assert row["TDSSection"] == "393(1)-8(ii)"
+    assert row["TDSRate"] == 0.1
 
 
 def test_expense_duplicate_warning(client, auth_headers):
