@@ -154,6 +154,37 @@ def test_expense_duplicate_warning(client, auth_headers):
     assert res.json()["duplicateWarning"] is True
 
 
+def test_expense_decimal_gst_and_billing_month_update(client, auth_headers):
+    created = client.post(
+        "/expenses",
+        headers=auth_headers,
+        json={
+            "Date": "2026-06-10",
+            "TaxableValue": "100.50",
+            "CGSTAmount": "9.04",
+            "SGSTAmount": "9.05",
+            "Amount": "118.59",
+            "PaidBy": "Dinu",
+            "BillingMonth": "Jun-2026",
+        },
+    )
+    assert created.status_code == 200
+    expense_id = created.json()["data"]["ExpenseID"]
+    row = next(r for r in client.get("/expenses", headers=auth_headers).json()["data"] if r["ExpenseID"] == expense_id)
+    assert row["GSTAmount"] == 18.09
+    assert row["BillingMonth"] == "Jun-2026"
+
+    updated = client.put(
+        f"/expenses/{expense_id}",
+        headers=auth_headers,
+        json={"CGSTAmount": "1.25", "SGSTAmount": "1.75", "IGSTAmount": "0", "BillingMonth": "Jul-2026"},
+    )
+    assert updated.status_code == 200
+    row = next(r for r in client.get("/expenses", headers=auth_headers).json()["data"] if r["ExpenseID"] == expense_id)
+    assert row["GSTAmount"] == 3.0
+    assert row["BillingMonth"] == "Jul-2026"
+
+
 def test_expense_approval_and_petty_cash_reimbursement(client, auth_headers):
     created = client.post("/expenses", headers=auth_headers, json={"Date": "2026-06-10", "Amount": "750", "PaidBy": "Dinu", "Description": "Fuel"}).json()
     expense_id = created["data"]["ExpenseID"]

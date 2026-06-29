@@ -605,10 +605,37 @@ def update_expense(id: str, payload: dict, db: Session = Depends(get_db), user: 
     item = db.get(Expense, id)
     if not item:
         raise HTTPException(status_code=404, detail="Expense not found")
-    mapping = {"Date": ("expense_date", parse_date), "ExpenseType": ("expense_type", str), "Category": ("category", str), "PaidBy": ("paid_by", str), "ChargeTo": ("charge_to", str), "ReimburseTo": ("reimburse_to", str), "EmployeeName": ("employee_name", str), "PaymentMode": ("payment_mode", str), "Amount": ("amount", dec), "Description": ("description", str), "Status": ("status", str)}
+    mapping = {
+        "Date": ("expense_date", parse_date),
+        "ExpenseType": ("expense_type", str),
+        "Category": ("category", str),
+        "PaidBy": ("paid_by", str),
+        "ChargeTo": ("charge_to", str),
+        "ReimburseTo": ("reimburse_to", str),
+        "EmployeeName": ("employee_name", str),
+        "PaymentMode": ("payment_mode", str),
+        "TaxableValue": ("taxable_value", dec),
+        "CGSTAmount": ("cgst_amount", dec),
+        "SGSTAmount": ("sgst_amount", dec),
+        "IGSTAmount": ("igst_amount", dec),
+        "Amount": ("amount", dec),
+        "VendorOrPerson": ("vendor_or_person", str),
+        "Description": ("description", str),
+        "BillAvailable": ("bill_available", yes_no),
+        "BillLink": ("bill_link", str),
+        "BillingMonth": ("billing_month", str),
+        "Notes": ("notes", str),
+        "Status": ("status", str),
+    }
     for key, (attr, fn) in mapping.items():
         if key in payload:
             setattr(item, attr, fn(payload[key]))
+    if "GSTAmount" in payload:
+        item.gst_amount = dec(payload["GSTAmount"])
+    elif any(key in payload for key in ("CGSTAmount", "SGSTAmount", "IGSTAmount")):
+        item.gst_amount = dec(item.cgst_amount) + dec(item.sgst_amount) + dec(item.igst_amount)
+    if "Amount" not in payload and any(key in payload for key in ("TaxableValue", "CGSTAmount", "SGSTAmount", "IGSTAmount", "GSTAmount")):
+        item.amount = dec(item.taxable_value) + dec(item.gst_amount)
     audit(db, user.email, "expenses", "update", id)
     db.commit()
     return {"ok": True, "message": "Expense updated"}

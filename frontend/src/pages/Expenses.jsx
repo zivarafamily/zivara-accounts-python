@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiPost, uploadBill } from "../api/client";
-import { formatDate } from "../utils/format";
+import { apiGet, apiPost } from "../api/client";
+import { billingMonthOptions, formatDate } from "../utils/format";
+
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const currentBillingMonth = () => {
+  const d = new Date();
+  return `${MONTHS[d.getMonth()]}-${d.getFullYear()}`;
+};
 
 const initial = {
   Date:"", ExpenseType:"Travel", Category:"", PaidBy:"",
   PaymentMode:"Cash", Amount:"", VendorOrPerson:"", Description:"",
   BillAvailable:"No", BillLink:"",
   TaxableValue:"", CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", GSTAmount:"",
-  EmployeeName:"", ReimburseTo:"", BillingMonth:"", Notes:"", Status:"Draft"
+  EmployeeName:"", ReimburseTo:"", BillingMonth:currentBillingMonth(), Notes:"", Status:"Draft"
 };
 
 const card  = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
@@ -41,9 +47,7 @@ export default function Expenses() {
   const [loading, setLoading] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [billFile, setBillFile] = useState(null);
-  const [uploadMessage, setUploadMessage] = useState("");
-  const [uploadError, setUploadError] = useState("");
+  const [formError, setFormError] = useState("");
 
   async function load() {
     setLoading(true);
@@ -65,9 +69,22 @@ export default function Expenses() {
   useEffect(() => { load(); }, []);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const gstTotal = Number(form.CGSTAmount || 0) + Number(form.SGSTAmount || 0) + Number(form.IGSTAmount || 0);
 
-  function openAdd() { setForm(initial); setEditId(null); setBillFile(null); setUploadMessage(""); setUploadError(""); setFormOpen(true); }
+  function setGstPart(key, value) {
+    setForm(p => {
+      const next = { ...p, [key]: value };
+      const total = Number(next.CGSTAmount || 0) + Number(next.SGSTAmount || 0) + Number(next.IGSTAmount || 0);
+      return { ...next, GSTAmount: total ? total.toFixed(2) : "" };
+    });
+  }
+
+  function openAdd() { setForm({ ...initial, BillingMonth:currentBillingMonth() }); setEditId(null); setFormError(""); setFormOpen(true); }
   function openEdit(e) {
+    const cgst = e.CGSTAmount || "";
+    const sgst = e.SGSTAmount || "";
+    const igst = e.IGSTAmount || "";
+    const gst = Number(cgst || 0) + Number(sgst || 0) + Number(igst || 0);
     setForm({
       Date: e.Date?.toString().slice(0,10) || "",
       ExpenseType: e.ExpenseType || "Misc",
@@ -80,20 +97,18 @@ export default function Expenses() {
       BillAvailable: e.BillAvailable || "No",
       BillLink: e.BillLink || "",
       TaxableValue: e.TaxableValue || "",
-      CGSTAmount: e.CGSTAmount || "",
-      SGSTAmount: e.SGSTAmount || "",
-      IGSTAmount: e.IGSTAmount || "",
-      GSTAmount: e.GSTAmount || "",
+      CGSTAmount: cgst,
+      SGSTAmount: sgst,
+      IGSTAmount: igst,
+      GSTAmount: gst ? gst.toFixed(2) : e.GSTAmount || "",
       EmployeeName: e.EmployeeName || "",
       ReimburseTo: e.ReimburseTo || e.EmployeeName || "",
-      BillingMonth: e.BillingMonth || "",
+      BillingMonth: e.BillingMonth || currentBillingMonth(),
       Notes: e.Notes || "",
       Status: e.Status || "Draft",
     });
     setEditId(e.ExpenseID);
-    setBillFile(null);
-    setUploadMessage("");
-    setUploadError("");
+    setFormError("");
     setFormOpen(true);
   }
 
@@ -104,30 +119,22 @@ export default function Expenses() {
     const action  = editId ? "updateExpense" : "saveExpense";
     const payload = {
       ...form,
+      GSTAmount: gstTotal ? gstTotal.toFixed(2) : "",
+      BillAvailable: "No",
+      BillLink: "",
       EmployeeName: form.ReimburseTo || form.EmployeeName || "",
       ReimburseTo: form.ReimburseTo || "",
       ...(editId ? { ExpenseID: editId } : {}),
     };
-    setUploadError("");
-    setUploadMessage("");
+    setFormError("");
     try {
       const r = await apiPost(action, payload);
       if (r.ok) {
-        const expenseId = editId || r.data?.ExpenseID;
-        if (billFile && expenseId) {
-          const uploaded = await uploadBill(billFile, {
-            expense_id: expenseId,
-            source_type: "expense",
-            source_id: expenseId,
-          });
-          setUploadMessage(uploaded.message || "Bill uploaded");
-          setBillFile(null);
-        }
-        setForm(initial); setEditId(null); setFormOpen(false); load();
+        setForm({ ...initial, BillingMonth:currentBillingMonth() }); setEditId(null); setFormOpen(false); load();
       }
       else alert(r.error || "Error saving");
     } catch (err) {
-      setUploadError(err.message || "Unable to save expense or upload bill");
+      setFormError(err.message || "Unable to save expense");
     }
   }
 
@@ -181,7 +188,7 @@ export default function Expenses() {
                   {["Cash","Bank","UPI","Card"].map(o=><option key={o}>{o}</option>)}
                 </select>
               </div>
-              <div><label style={label}>Amount (₹)</label><input type="number" min="0" placeholder="0.00" value={form.Amount} onChange={e=>set("Amount",e.target.value)} required /></div>
+              <div><label style={label}>Amount (₹)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={form.Amount} onChange={e=>set("Amount",e.target.value)} required /></div>
               {vendors.length > 0 && (
                 <div>
                   <label style={label}>Pick Vendor</label>
@@ -201,35 +208,22 @@ export default function Expenses() {
               )}
               <div><label style={label}>Vendor / Person</label><input placeholder="Vendor name or type manually" value={form.VendorOrPerson} onChange={e=>set("VendorOrPerson",e.target.value)} /></div>
               <div><label style={label}>Description</label><input placeholder="Brief note" value={form.Description} onChange={e=>set("Description",e.target.value)} /></div>
-              <div><label style={label}>Bill Available</label>
-                <select value={form.BillAvailable} onChange={e=>set("BillAvailable",e.target.value)}>
-                  <option>Yes</option><option>No</option>
-                </select>
-              </div>
-              <div><label style={label}>Bill Link</label><input placeholder="URL" value={form.BillLink} onChange={e=>set("BillLink",e.target.value)} /></div>
-              <div>
-                <label style={label}>Upload Bill</label>
-                <input
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.xls,.xlsx,.csv"
-                  onChange={e => setBillFile(e.target.files?.[0] || null)}
-                />
-                <div style={{ fontSize:".7rem", color:"var(--muted)", marginTop:".25rem" }}>
-                  PDF, PNG, JPG, JPEG, XLS, XLSX, CSV
-                </div>
-              </div>
-              <div><label style={label}>Taxable Value (₹)</label><input type="number" min="0" placeholder="0.00" value={form.TaxableValue} onChange={e=>set("TaxableValue",e.target.value)} /></div>
-              <div><label style={label}>CGST (₹)</label><input type="number" min="0" placeholder="0.00" value={form.CGSTAmount} onChange={e=>set("CGSTAmount",e.target.value)} /></div>
-              <div><label style={label}>SGST (₹)</label><input type="number" min="0" placeholder="0.00" value={form.SGSTAmount} onChange={e=>set("SGSTAmount",e.target.value)} /></div>
-              <div><label style={label}>IGST (₹)</label><input type="number" min="0" placeholder="0.00" value={form.IGSTAmount} onChange={e=>set("IGSTAmount",e.target.value)} /></div>
-              <div><label style={label}>GST Total (₹)</label><input type="number" min="0" placeholder="auto" value={form.GSTAmount} onChange={e=>set("GSTAmount",e.target.value)} /></div>
+              <div><label style={label}>Taxable Value (₹)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={form.TaxableValue} onChange={e=>set("TaxableValue",e.target.value)} /></div>
+              <div><label style={label}>CGST (₹)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={form.CGSTAmount} onChange={e=>setGstPart("CGSTAmount",e.target.value)} /></div>
+              <div><label style={label}>SGST (₹)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={form.SGSTAmount} onChange={e=>setGstPart("SGSTAmount",e.target.value)} /></div>
+              <div><label style={label}>IGST (₹)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={form.IGSTAmount} onChange={e=>setGstPart("IGSTAmount",e.target.value)} /></div>
+              <div><label style={label}>GST Total (₹)</label><input type="number" min="0" step="0.01" placeholder="auto" value={gstTotal ? gstTotal.toFixed(2) : ""} readOnly /></div>
               <div><label style={label}>Reimburse To</label>
                 <select value={form.ReimburseTo} onChange={e=>set("ReimburseTo",e.target.value)}>
                   <option value="">Same / not applicable</option>
                   {partnerNames.map(name => <option key={name} value={name}>{name}</option>)}
                 </select>
               </div>
-              <div><label style={label}>Billing Month</label><input placeholder="YYYY-MM" value={form.BillingMonth} onChange={e=>set("BillingMonth",e.target.value)} /></div>
+              <div><label style={label}>Billing Month</label>
+                <select value={form.BillingMonth} onChange={e=>set("BillingMonth",e.target.value)}>
+                  {billingMonthOptions().map(m => <option key={m}>{m}</option>)}
+                </select>
+              </div>
               <div><label style={label}>Notes</label><input placeholder="Notes" value={form.Notes} onChange={e=>set("Notes",e.target.value)} /></div>
               <div><label style={label}>Status</label>
                 <select value={form.Status} onChange={e=>set("Status",e.target.value)}>
@@ -241,8 +235,7 @@ export default function Expenses() {
               <button type="submit" style={btn()}>{editId ? "Update Expense" : "Save Expense"}</button>
               <button type="button" style={btn("ghost")} onClick={()=>setFormOpen(false)}>Cancel</button>
             </div>
-            {uploadMessage && <div style={{ color:"var(--success)", fontSize:".8rem", marginTop:".75rem" }}>{uploadMessage}</div>}
-            {uploadError && <div style={{ color:"var(--danger)", fontSize:".8rem", marginTop:".75rem" }}>{uploadError}</div>}
+            {formError && <div style={{ color:"var(--danger)", fontSize:".8rem", marginTop:".75rem" }}>{formError}</div>}
           </form>
         </div>
       )}
