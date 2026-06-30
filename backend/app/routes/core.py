@@ -1193,6 +1193,15 @@ def vendor_ledger(vendor: str = "", format: str = Query("json"), db: Session = D
         if dec(r["PaidAmount"]) > 0:
             balance -= dec(r["PaidAmount"])
             data.append({"Date": r["PaymentDate"], "VendorName": r["VendorName"], "Particulars": f"Payment against {r['BillNo']}", "BillNo": r["BillNo"], "Debit": 0, "Credit": r["PaidAmount"], "GrossAmount": 0, "TDSAmount": 0, "PaidAmount": r["PaidAmount"], "Balance": money(balance), "ReferenceNo": r["ReferenceNo"], "Status": r["Status"], "Notes": r["PaymentMode"]})
+    if format == "json":
+        headers = ["Date", "VendorName", "Particulars", "BillNo", "Debit", "Credit", "GrossAmount", "TDSAmount", "PaidAmount", "Balance", "ReferenceNo", "Status", "Notes"]
+        summary = {
+            "Debit": money(sum(dec(r["Debit"]) for r in data)),
+            "Credit": money(sum(dec(r["Credit"]) for r in data)),
+            "TDSAmount": money(sum(dec(r["TDSAmount"]) for r in data)),
+            "ClosingBalance": money(balance),
+        }
+        return {"ok": True, "headers": headers, "data": data, "summary": summary}
     return export_rows(data, format, "vendor-ledger")
 
 

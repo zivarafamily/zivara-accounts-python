@@ -195,6 +195,34 @@ def test_vendor_payables_can_be_marked_paid_in_batch(client, auth_headers):
     assert {r["ReferenceNo"] for r in rows} == {"UTR-BATCH"}
 
 
+def test_vendor_ledger_returns_headers_rows_and_summary(client, auth_headers):
+    created = client.post(
+        "/payables",
+        headers=auth_headers,
+        json={
+            "VendorName": "Ledger Vendor",
+            "VendorCategory": "Office Purchase",
+            "BillNo": "LED-1",
+            "BillDate": "2026-06-10",
+            "GrossAmount": "1000",
+            "TDSAmount": "100",
+            "PaidAmount": "400",
+            "PaymentDate": "2026-06-15",
+            "ReferenceNo": "UTR-LED",
+        },
+    )
+    assert created.status_code == 200
+    res = client.get("/reports/vendor-ledger", headers=auth_headers, params={"vendor": "Ledger Vendor"})
+    assert res.status_code == 200
+    body = res.json()
+    assert "Date" in body["headers"]
+    assert len(body["data"]) == 2
+    assert body["summary"]["Debit"] == 900.0
+    assert body["summary"]["Credit"] == 400.0
+    assert body["summary"]["TDSAmount"] == 100.0
+    assert body["summary"]["ClosingBalance"] == 500.0
+
+
 def test_expense_duplicate_warning(client, auth_headers):
     payload = {"Date": "2026-06-10", "Amount": "500", "PaidBy": "Dinu", "Description": "Cab"}
     assert client.post("/expenses", headers=auth_headers, json=payload).status_code == 200
