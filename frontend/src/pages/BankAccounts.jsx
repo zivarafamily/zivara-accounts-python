@@ -68,11 +68,15 @@ export default function BankAccounts() {
 
   async function save(e) {
     e.preventDefault();
-    const action  = editId ? "updateBankAccount" : "saveBankAccount";
-    const payload = editId ? { ...form, AccountID: editId } : form;
-    const r = await apiPost(action, payload);
-    if (r.ok) { setFormOpen(false); setEditId(null); setForm(initial); load(); }
-    else alert(r.error || "Error saving");
+    try {
+      const action  = editId ? "updateBankAccount" : "saveBankAccount";
+      const payload = editId ? { ...form, AccountID: editId } : form;
+      const r = await apiPost(action, payload);
+      if (r.ok) { setFormOpen(false); setEditId(null); setForm(initial); load(); }
+      else alert(r.error || "Error saving");
+    } catch (err) {
+      alert(err.message || "Error saving bank account");
+    }
   }
 
   async function removeAccount(acc) {

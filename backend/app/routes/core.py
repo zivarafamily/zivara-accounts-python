@@ -152,6 +152,37 @@ def _unique_llp_short_code(db: Session, name: str, exclude_id: str | None = None
     return candidate
 
 
+def _bank_account_number_exists(db: Session, llp_id: str, account_number: str, exclude_id: str | None = None) -> bool:
+    account_number = str(account_number or "").strip()
+    if not account_number:
+        return False
+    return db.query(BankAccount).filter(
+        BankAccount.llp_id == llp_id,
+        BankAccount.account_number == account_number,
+        BankAccount.id != exclude_id,
+    ).first() is not None
+
+
+def serialize_bank_account(db: Session, a: BankAccount):
+    return {
+        "AccountID": a.id,
+        "LLPID": a.llp_id,
+        "LLPName": llp_name(db, a.llp_id),
+        "AccountName": a.account_name,
+        "BankName": a.bank_name,
+        "AccountNumber": a.account_number,
+        "IFSC": a.ifsc,
+        "AccountType": a.account_type,
+        "Branch": a.branch,
+        "OpeningBalance": money(a.opening_balance),
+        "CurrentBalance": money(a.current_balance),
+        "IsActive": "Yes" if a.is_active else "No",
+        "Notes": a.notes,
+        "CreatedAt": iso(a.created_at),
+        "UpdatedAt": iso(a.updated_at),
+    }
+
+
 @router.get("/health")
 def health():
     return {"ok": True, "timestamp": datetime.now(timezone.utc).isoformat()}
@@ -1112,30 +1143,64 @@ def bank_accounts(db: Session = Depends(get_db), llp_id: str | None = Depends(ge
     q = db.query(BankAccount)
     if llp_id:
         q = q.filter(BankAccount.llp_id == llp_id)
-    return {"ok": True, "data": [{"AccountID": a.id, "LLPID": a.llp_id, "LLPName": llp_name(db, a.llp_id), "AccountName": a.account_name, "BankName": a.bank_name, "AccountNumber": a.account_number, "IFSC": a.ifsc, "AccountType": a.account_type, "Branch": a.branch, "OpeningBalance": money(a.opening_balance), "CurrentBalance": money(a.current_balance), "IsActive": "Yes" if a.is_active else "No", "Notes": a.notes, "CreatedAt": iso(a.created_at), "UpdatedAt": iso(a.updated_at)} for a in q.all()]}
+    return {"ok": True, "data": [serialize_bank_account(db, a) for a in q.all()]}
 
 
 @router.post("/bank-accounts")
 def add_bank(payload: dict, db: Session = Depends(get_db), llp_id: str = Depends(require_llp_id), user: User = Depends(current_user)):
-    item = BankAccount(id=payload.get("AccountID") or make_id("BANK"), llp_id=llp_id, account_name=payload.get("AccountName") or "", bank_name=payload.get("BankName") or "", account_number=str(payload.get("AccountNumber") or ""), ifsc=payload.get("IFSC") or "", account_type=payload.get("AccountType") or "Current", branch=payload.get("Branch") or "", opening_balance=dec(payload.get("OpeningBalance")), current_balance=dec(payload.get("CurrentBalance") or payload.get("OpeningBalance")), is_active=not str(payload.get("IsActive", "Yes")).lower().startswith("n"), notes=payload.get("Notes") or "")
+    account_number = str(payload.get("AccountNumber") or "").strip()
+    if not payload.get("AccountName"):
+        raise HTTPException(status_code=400, detail="Account Name is required")
+    if not payload.get("BankName"):
+        raise HTTPException(status_code=400, detail="Bank Name is required")
+    if not account_number:
+        raise HTTPException(status_code=400, detail="Account Number is required")
+    if _bank_account_number_exists(db, llp_id, account_number):
+        raise HTTPException(status_code=409, detail="Account number already exists for this LLP")
+    item = BankAccount(id=payload.get("AccountID") or make_id("BANK"), llp_id=llp_id, account_name=payload.get("AccountName") or "", bank_name=payload.get("BankName") or "", account_number=account_number, ifsc=payload.get("IFSC") or "", account_type=payload.get("AccountType") or "Current", branch=payload.get("Branch") or "", opening_balance=dec(payload.get("OpeningBalance")), current_balance=dec(payload.get("CurrentBalance") or payload.get("OpeningBalance")), is_active=not str(payload.get("IsActive", "Yes")).lower().startswith("n"), notes=payload.get("Notes") or "")
     db.add(item)
     audit(db, user.email, "bankaccounts", "create", item.id)
     db.commit()
-    return {"ok": True, "data": {"AccountID": item.id}}
+    return {"ok": True, "data": serialize_bank_account(db, item)}
 
 
 @router.put("/bank-accounts/{id}")
-def update_bank(id: str, payload: dict, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def update_bank(id: str, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
     item = db.get(BankAccount, id)
     if not item:
         raise HTTPException(status_code=404, detail="Bank account not found")
+    if "AccountName" in payload and not str(payload.get("AccountName") or "").strip():
+        raise HTTPException(status_code=400, detail="Account Name is required")
+    if "BankName" in payload and not str(payload.get("BankName") or "").strip():
+        raise HTTPException(status_code=400, detail="Bank Name is required")
+    if "AccountNumber" in payload:
+        account_number = str(payload.get("AccountNumber") or "").strip()
+        if not account_number:
+            raise HTTPException(status_code=400, detail="Account Number is required")
+        if _bank_account_number_exists(db, item.llp_id, account_number, exclude_id=id):
+            raise HTTPException(status_code=409, detail="Account number already exists for this LLP")
+        item.account_number = account_number
+    if "AccountName" in payload:
+        item.account_name = str(payload.get("AccountName") or "").strip()
+    if "BankName" in payload:
+        item.bank_name = str(payload.get("BankName") or "").strip()
+    if "IFSC" in payload:
+        item.ifsc = str(payload.get("IFSC") or "").strip().upper()
+    if "AccountType" in payload:
+        item.account_type = payload.get("AccountType") or "Current"
+    if "Branch" in payload:
+        item.branch = payload.get("Branch") or ""
+    if "OpeningBalance" in payload:
+        item.opening_balance = dec(payload["OpeningBalance"])
     if "CurrentBalance" in payload:
         item.current_balance = dec(payload["CurrentBalance"])
+    if "IsActive" in payload:
+        item.is_active = not str(payload.get("IsActive", "Yes")).lower().startswith("n")
     if "Notes" in payload:
-        item.notes = payload["Notes"]
+        item.notes = payload["Notes"] or ""
     audit(db, user.email, "bankaccounts", "update", id)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "message": "Bank account updated", "data": serialize_bank_account(db, item)}
 
 
 @router.delete("/bank-accounts/{id}")

@@ -50,6 +50,84 @@ def test_llp_save_rejects_duplicate_name_and_short_code(client, auth_headers):
     assert duplicate_code.json()["detail"] == "Short Code already exists"
 
 
+def test_bank_account_update_persists_all_fields(client, auth_headers):
+    created = client.post(
+        "/bank-accounts",
+        headers=auth_headers,
+        json={
+            "AccountName": "Old Current",
+            "BankName": "Old Bank",
+            "AccountNumber": "1111",
+            "IFSC": "old0001",
+            "AccountType": "Current",
+            "Branch": "Old Branch",
+            "OpeningBalance": "100",
+            "CurrentBalance": "125",
+            "IsActive": "Yes",
+            "Notes": "Old note",
+        },
+    )
+    assert created.status_code == 200
+    account_id = created.json()["data"]["AccountID"]
+
+    updated = client.put(
+        f"/bank-accounts/{account_id}",
+        headers=auth_headers,
+        json={
+            "AccountName": "New Savings",
+            "BankName": "New Bank",
+            "AccountNumber": "2222",
+            "IFSC": "new0002",
+            "AccountType": "Savings",
+            "Branch": "New Branch",
+            "OpeningBalance": "200",
+            "CurrentBalance": "250",
+            "IsActive": "No",
+            "Notes": "New note",
+        },
+    )
+    assert updated.status_code == 200
+    data = updated.json()["data"]
+    assert data["AccountName"] == "New Savings"
+    assert data["BankName"] == "New Bank"
+    assert data["AccountNumber"] == "2222"
+    assert data["IFSC"] == "NEW0002"
+    assert data["AccountType"] == "Savings"
+    assert data["Branch"] == "New Branch"
+    assert data["OpeningBalance"] == 200.0
+    assert data["CurrentBalance"] == 250.0
+    assert data["IsActive"] == "No"
+    assert data["Notes"] == "New note"
+
+    rows = client.get("/bank-accounts", headers=auth_headers).json()["data"]
+    row = next(r for r in rows if r["AccountID"] == account_id)
+    assert row["AccountName"] == "New Savings"
+    assert row["AccountNumber"] == "2222"
+
+
+def test_bank_account_update_rejects_duplicate_account_number(client, auth_headers):
+    first = client.post(
+        "/bank-accounts",
+        headers=auth_headers,
+        json={"AccountName": "First", "BankName": "Bank", "AccountNumber": "1111"},
+    )
+    second = client.post(
+        "/bank-accounts",
+        headers=auth_headers,
+        json={"AccountName": "Second", "BankName": "Bank", "AccountNumber": "2222"},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    duplicate = client.put(
+        f"/bank-accounts/{second.json()['data']['AccountID']}",
+        headers=auth_headers,
+        json={"AccountNumber": "1111"},
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "Account number already exists for this LLP"
+
+
 def test_payable_calculations():
     taxable, gst, gross, rate, tds, net = calculate_amounts({"TaxableAmount": "1000", "GSTAmount": "180", "TDSRate": "10"})
     assert taxable == Decimal("1000.00")
