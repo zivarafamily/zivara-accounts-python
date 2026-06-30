@@ -62,6 +62,8 @@ function LLPsSection({ llps, onRefresh }) {
       const r = await apiPost(action, payload);
       if (r.ok) { setFormOpen(false); setEditId(null); setForm(llpInitial); onRefresh(); }
       else alert(r.error || "Error saving");
+    } catch (err) {
+      alert(err.message || "Error saving LLP");
     } finally { setSaving(false); }
   }
 

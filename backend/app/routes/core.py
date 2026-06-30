@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -113,6 +114,44 @@ def _exists(q):
     return q.first() is not None
 
 
+def _normalize_llp_code(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())[:10]
+
+
+def _llp_name_exists(db: Session, name: str, exclude_id: str | None = None) -> bool:
+    key = normalize_key(name)
+    if not key:
+        return False
+    rows = db.query(LLP).all()
+    return any(normalize_key(row.llp_name) == key and row.id != exclude_id for row in rows)
+
+
+def _llp_code_exists(db: Session, code: str, exclude_id: str | None = None) -> bool:
+    key = _normalize_llp_code(code)
+    if not key:
+        return False
+    rows = db.query(LLP).all()
+    return any(_normalize_llp_code(row.short_code) == key and row.id != exclude_id for row in rows)
+
+
+def _derive_llp_short_code(name: str) -> str:
+    words = re.findall(r"[A-Za-z0-9]+", name or "")
+    initials = "".join(word[0] for word in words[:4]).upper()
+    compact = _normalize_llp_code("".join(words))
+    return (initials or compact or "LLP")[:10]
+
+
+def _unique_llp_short_code(db: Session, name: str, exclude_id: str | None = None) -> str:
+    base = _derive_llp_short_code(name)
+    candidate = base
+    index = 2
+    while _llp_code_exists(db, candidate, exclude_id):
+        suffix = str(index)
+        candidate = f"{base[:10 - len(suffix)]}{suffix}"
+        index += 1
+    return candidate
+
+
 @router.get("/health")
 def health():
     return {"ok": True, "timestamp": datetime.now(timezone.utc).isoformat()}
@@ -204,7 +243,17 @@ def llps_for_user(username: str = "", db: Session = Depends(get_db), user: User 
 
 @router.post("/llps")
 def create_llp(payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "admin", "managing_partner"))):
-    item = LLP(id=payload.get("LLPID") or make_id("LLP"), llp_name=payload.get("LLPName") or "", short_code=payload.get("ShortCode") or "", gstin=payload.get("GSTIN") or "", pan=payload.get("PAN") or "", address=payload.get("Address") or "", status=payload.get("Status") or "Active")
+    name = str(payload.get("LLPName") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="LLP Name is required")
+    if _llp_name_exists(db, name):
+        raise HTTPException(status_code=409, detail="LLP name already exists")
+    short_code = _normalize_llp_code(payload.get("ShortCode") or "")
+    if short_code and _llp_code_exists(db, short_code):
+        raise HTTPException(status_code=409, detail="Short Code already exists")
+    if not short_code:
+        short_code = _unique_llp_short_code(db, name)
+    item = LLP(id=payload.get("LLPID") or make_id("LLP"), llp_name=name, short_code=short_code, gstin=payload.get("GSTIN") or "", pan=payload.get("PAN") or "", address=payload.get("Address") or "", status=payload.get("Status") or "Active")
     db.add(item)
     audit(db, user.email, "llps", "create", item.id)
     db.commit()
@@ -216,6 +265,16 @@ def update_llp(id: str, payload: dict, db: Session = Depends(get_db), user: User
     item = db.get(LLP, id)
     if not item:
         raise HTTPException(status_code=404, detail="LLP not found")
+    next_name = str(payload.get("LLPName") if "LLPName" in payload else item.llp_name or "").strip()
+    if not next_name:
+        raise HTTPException(status_code=400, detail="LLP Name is required")
+    if _llp_name_exists(db, next_name, exclude_id=id):
+        raise HTTPException(status_code=409, detail="LLP name already exists")
+    if "ShortCode" in payload:
+        next_code = _normalize_llp_code(payload.get("ShortCode") or "")
+        if next_code and _llp_code_exists(db, next_code, exclude_id=id):
+            raise HTTPException(status_code=409, detail="Short Code already exists")
+        payload["ShortCode"] = next_code or _unique_llp_short_code(db, next_name, exclude_id=id)
     mapping = {"LLPName": "llp_name", "ShortCode": "short_code", "GSTIN": "gstin", "PAN": "pan", "Address": "address", "Status": "status"}
     for key, attr in mapping.items():
         if key in payload:

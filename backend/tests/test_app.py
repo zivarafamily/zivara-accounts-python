@@ -25,6 +25,31 @@ def test_auth_me_works_with_token(client):
     assert res.json()["user"] == "admin"
 
 
+def test_admin_can_save_multiple_llps_without_short_code(client, auth_headers):
+    first = client.post("/llps", headers=auth_headers, json={"LLPName": "Alpha Family Office LLP"})
+    second = client.post("/llps", headers=auth_headers, json={"LLPName": "Alpha Finance LLP"})
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    rows = client.get("/llps", headers=auth_headers).json()["data"]
+    created = [row for row in rows if row["LLPName"].startswith("Alpha")]
+    assert len(created) == 2
+    assert all(row["ShortCode"] for row in created)
+    assert len({row["ShortCode"] for row in created}) == 2
+
+
+def test_llp_save_rejects_duplicate_name_and_short_code(client, auth_headers):
+    first = client.post("/llps", headers=auth_headers, json={"LLPName": "Beta LLP", "ShortCode": "BETA"})
+    assert first.status_code == 200
+
+    duplicate_name = client.post("/llps", headers=auth_headers, json={"LLPName": " beta llp ", "ShortCode": "BETA2"})
+    duplicate_code = client.post("/llps", headers=auth_headers, json={"LLPName": "Beta Two LLP", "ShortCode": "beta"})
+    assert duplicate_name.status_code == 409
+    assert duplicate_name.json()["detail"] == "LLP name already exists"
+    assert duplicate_code.status_code == 409
+    assert duplicate_code.json()["detail"] == "Short Code already exists"
+
+
 def test_payable_calculations():
     taxable, gst, gross, rate, tds, net = calculate_amounts({"TaxableAmount": "1000", "GSTAmount": "180", "TDSRate": "10"})
     assert taxable == Decimal("1000.00")
