@@ -70,6 +70,19 @@ function uniqueSigners(signers) {
   });
 }
 
+function signerMatches(signer, name) {
+  const target = normalizePersonName(name);
+  if (!target || !signer) return false;
+  return normalizePersonName(signer.label) === target || normalizePersonName(signer.signatory) === target;
+}
+
+function findInvoiceSigner(inv, signersList) {
+  const list = signersList || [ZIVARA_SIGNER];
+  return list.find(s => signerMatches(s, inv.RaisedBy)) ||
+    list.find(s => signerMatches(s, inv.AuthorisedSignatory)) ||
+    list[0];
+}
+
 const GST_STATE_NAMES = {
   "01":"Jammu & Kashmir","02":"Himachal Pradesh","03":"Punjab","04":"Chandigarh",
   "05":"Uttarakhand","06":"Haryana","07":"Delhi","08":"Rajasthan","09":"Uttar Pradesh",
@@ -81,12 +94,32 @@ const GST_STATE_NAMES = {
   "33":"Tamil Nadu","34":"Puducherry","35":"Andaman & Nicobar Islands","36":"Telangana",
   "37":"Andhra Pradesh","38":"Ladakh",
 };
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+function resolveApiBaseUrl() {
+  const configured = import.meta.env.VITE_API_BASE_URL || "";
+  if (typeof window !== "undefined") {
+    const pageHost = window.location.hostname;
+    const isLocalPage = ["localhost", "127.0.0.1", ""].includes(pageHost);
+    const configuredHost = (() => {
+      try {
+        return configured ? new URL(configured, window.location.origin).hostname : "";
+      } catch {
+        return "";
+      }
+    })();
+    if (!isLocalPage && (!configured || configuredHost === "zivara-accounts-api.onrender.com")) {
+      return "/api";
+    }
+  }
+  return configured || "http://127.0.0.1:8000";
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 function resolveAssetUrl(url) {
   if (!url) return "";
   const value = String(url);
   if (/^https?:\/\//i.test(value) || value.startsWith("data:")) return value;
+  if (value.startsWith("/api/")) return value;
   return value.startsWith("/") ? `${API_BASE_URL}${value}` : value;
 }
 
@@ -389,7 +422,7 @@ ${taxTable}
 </tr>
 <tr><td colspan="2" class="y b" style="padding:5px 7px">${esc(inv.AuthorisedSignatory||'')}</td><td colspan="3" style="text-align:right;padding:5px 7px">${
   (() => {
-    const signer = (signersList||[ZIVARA_SIGNER]).find(s => s.label === (inv.RaisedBy || inv.AuthorisedSignatory));
+    const signer = findInvoiceSigner(inv, signersList);
     const sigUrl = signer && signer.signatureUrl ? signer.signatureUrl : '';
     return sigUrl
       ? `<img src="${sigUrl}" alt="signature" style="max-height:48px;max-width:140px;display:block;margin-left:auto;margin-bottom:2px">`
@@ -456,8 +489,12 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
   const signers = useMemo(() => {
     const loggedInPartnerSigner = knownSignerForName(employeeRef);
     const signedInSignature = signatureOverrides[employeeRef] || authSignatureUrl;
+    const defaultSigner = llpDefaults.signer || ZIVARA_SIGNER;
+    const defaultSignature = signatureOverrides[defaultSigner.label] ||
+      signatureOverrides[defaultSigner.signatory] ||
+      defaultSigner.signatureUrl;
     return uniqueSigners([
-      llpDefaults.signer,
+      { ...defaultSigner, signatureUrl: resolveAssetUrl(defaultSignature) },
       ...(loggedInPartnerSigner ? [{ ...loggedInPartnerSigner, signatureUrl: resolveAssetUrl(signedInSignature || loggedInPartnerSigner.signatureUrl) }] : []),
       ...PARTNER_SIGNERS.map(s => ({ ...s, signatureUrl: resolveAssetUrl(signatureOverrides[s.label] || s.signatureUrl) })),
       ...employees
