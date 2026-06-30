@@ -486,33 +486,51 @@ def update_payable(id: str, payload: dict, db: Session = Depends(get_db), user: 
         raise HTTPException(status_code=404, detail="Payable not found")
     merged = serialize_payable(db, item) | payload
     taxable, gst, gross, tds_rate, tds, net = calculate_amounts(merged)
-    item.vendor_name = merged.get("VendorName") or item.vendor_name
-    item.bill_no = merged.get("BillNo") or item.bill_no
+    if "VendorName" in payload:
+        item.vendor_name = payload.get("VendorName") or ""
+    if "BillNo" in payload:
+        item.bill_no = payload.get("BillNo") or ""
     item.normalized_bill_no = normalize_key(item.bill_no)
-    item.bill_date = parse_date(merged.get("BillDate"))
-    item.due_date = parse_date(merged.get("DueDate"))
-    item.vendor_id = merged.get("VendorID") or item.vendor_id
-    item.vendor_category = merged.get("VendorCategory") or item.vendor_category
-    item.vendor_gstin = merged.get("VendorGSTIN") or item.vendor_gstin
-    item.vendor_pan = merged.get("VendorPAN") or item.vendor_pan
-    item.expense_type = merged.get("ExpenseType") or item.expense_type
-    item.description = merged.get("Description") or item.description
+    if "BillDate" in payload:
+        item.bill_date = parse_date(payload.get("BillDate"))
+    if "DueDate" in payload:
+        item.due_date = parse_date(payload.get("DueDate"))
+    if "VendorID" in payload:
+        item.vendor_id = payload.get("VendorID") or None
+    if "VendorCategory" in payload:
+        item.vendor_category = payload.get("VendorCategory") or ""
+    if "VendorGSTIN" in payload:
+        item.vendor_gstin = payload.get("VendorGSTIN") or ""
+    if "VendorPAN" in payload:
+        item.vendor_pan = payload.get("VendorPAN") or ""
+    if "ExpenseType" in payload:
+        item.expense_type = payload.get("ExpenseType") or ""
+    if "Description" in payload:
+        item.description = payload.get("Description") or ""
     item.taxable_amount, item.gst_amount, item.gross_amount = taxable, gst, gross
     item.tds_section = normalize_tds_section(merged.get("TDSSection"), tds_rate, merged.get("VendorCategory") or item.vendor_category)
     item.tds_rate, item.tds_amount, item.net_payable = tds_rate, tds, net
     item.paid_amount = dec(merged.get("PaidAmount"))
     item.status = payable_status(net, item.paid_amount, merged.get("Status"))
-    item.payment_date = parse_date(merged.get("PaymentDate"))
-    item.payment_mode = merged.get("PaymentMode") or item.payment_mode
-    item.bank_account = merged.get("BankAccount") or item.bank_account
-    item.reference_no = merged.get("ReferenceNo") or ""
-    item.challan_no = merged.get("ChallanNo") or ""
-    item.challan_date = parse_date(merged.get("ChallanDate"))
+    if "PaymentDate" in payload:
+        item.payment_date = parse_date(payload.get("PaymentDate"))
+    if "PaymentMode" in payload:
+        item.payment_mode = payload.get("PaymentMode") or ""
+    if "BankAccount" in payload:
+        item.bank_account = payload.get("BankAccount") or ""
+    if "ReferenceNo" in payload:
+        item.reference_no = payload.get("ReferenceNo") or ""
+    if "ChallanNo" in payload:
+        item.challan_no = payload.get("ChallanNo") or ""
+    if "ChallanDate" in payload:
+        item.challan_date = parse_date(payload.get("ChallanDate"))
     item.interest_amount = dec(merged.get("InterestAmount"))
-    item.notes = merged.get("Notes") or ""
+    if "Notes" in payload:
+        item.notes = payload.get("Notes") or ""
     audit(db, user.email, "payables", "update", id)
     db.commit()
-    return {"ok": True, "message": "Payable updated"}
+    db.refresh(item)
+    return {"ok": True, "message": "Payable updated", "data": serialize_payable(db, item)}
 
 
 @router.post("/payables/batch-payment")

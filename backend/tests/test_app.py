@@ -108,6 +108,55 @@ def test_payable_tds_section_is_normalized_and_editable(client, auth_headers):
     assert row["TDSRate"] == 0.1
 
 
+def test_payable_update_persists_edited_fields(client, auth_headers):
+    created = client.post(
+        "/payables",
+        headers=auth_headers,
+        json={
+            "VendorName": "Editable Vendor",
+            "VendorCategory": "Travel Agency",
+            "BillNo": "EDIT-1",
+            "BillDate": "2026-05-18",
+            "TaxableAmount": "1000",
+            "GSTAmount": "180",
+            "TDSRate": "2",
+            "Notes": "before",
+        },
+    )
+    assert created.status_code == 200
+    payable_id = created.json()["data"]["PayableID"]
+
+    updated = client.put(
+        f"/payables/{payable_id}",
+        headers=auth_headers,
+        json={
+            "VendorName": "Editable Vendor Updated",
+            "VendorCategory": "Office Purchase",
+            "BillNo": "EDIT-2",
+            "BillDate": "2026-05-20",
+            "TaxableAmount": "2000",
+            "GSTAmount": "360",
+            "GrossAmount": "2360",
+            "TDSRate": "0",
+            "TDSAmount": "0",
+            "PaymentMode": "NEFT",
+            "BankAccount": "",
+            "ReferenceNo": "",
+            "Notes": "",
+        },
+    )
+    assert updated.status_code == 200
+    data = updated.json()["data"]
+    assert data["VendorName"] == "Editable Vendor Updated"
+    assert data["VendorCategory"] == "Office Purchase"
+    assert data["BillNo"] == "EDIT-2"
+    assert data["BillDate"] == "2026-05-20"
+    assert data["GrossAmount"] == 2360.0
+    assert data["TDSAmount"] == 0.0
+    assert data["BankAccount"] == ""
+    assert data["Notes"] == ""
+
+
 def test_vendor_payables_can_be_marked_paid_in_batch(client, auth_headers):
     ids = []
     for bill_no, amount in [("BATCH-1", "1000"), ("BATCH-2", "2500")]:
