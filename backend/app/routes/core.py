@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import current_user, get_llp_id, require_llp_id, require_roles
+from app.dependencies import ADMIN_ROLES, current_user, get_llp_id, require_llp_id, require_roles
 from app.models import (
     BankAccount,
     CashBookEntry,
@@ -710,9 +710,9 @@ def add_receipt(payload: dict, db: Session = Depends(get_db), llp_id: str = Depe
 
 
 @router.get("/neo-invoices")
-def neo_invoices(db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), _: User = Depends(current_user)):
+def neo_invoices(db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), user: User = Depends(current_user)):
     q = db.query(NeoInvoice)
-    if llp_id:
+    if llp_id and (user.role or "").lower() not in ADMIN_ROLES:
         q = q.filter(NeoInvoice.llp_id == llp_id)
     return {"ok": True, "data": [serialize_neo_invoice(r) for r in q.order_by(NeoInvoice.invoice_date.desc(), NeoInvoice.created_at.desc()).all()]}
 

@@ -313,6 +313,40 @@ def test_neo_invoice_create_list_update(client, auth_headers):
     assert updated.json()["data"]["Status"] == "Sent"
 
 
+def test_admin_neo_invoice_list_shows_all_llps(client, auth_headers):
+    db = SessionLocal()
+    db.add(LLP(id="LLP002", llp_name="Second LLP", short_code="SECOND", gstin="", pan="", address="", status="Active"))
+    db.commit()
+    db.close()
+
+    base_payload = {
+        "InvoiceDate": "2026-06-13",
+        "BillingMonth": "Jun-2026",
+        "InvoiceType": "Professional Fees",
+        "GSTMode": "With GST",
+        "IsProforma": "No",
+        "Particulars": "Professional Fees",
+        "TaxableAmount": "1000",
+        "GSTRate": "18",
+        "GSTAmount": "180",
+        "Amount": "1180",
+        "TDSRate": "10",
+        "TDSAmount": "100",
+        "NetPayable": "1080",
+    }
+    first_headers = {**auth_headers, "X-LLP-ID": "LLP001"}
+    second_headers = {**auth_headers, "X-LLP-ID": "LLP002"}
+
+    first = client.post("/neo-invoices", headers=first_headers, json={**base_payload, "InvoiceNo": "ZivNeoLLP001"})
+    second = client.post("/neo-invoices", headers=second_headers, json={**base_payload, "InvoiceNo": "ZivNeoLLP002"})
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    rows = client.get("/neo-invoices", headers=auth_headers).json()["data"]
+    invoice_numbers = {row["InvoiceNo"] for row in rows}
+    assert {"ZivNeoLLP001", "ZivNeoLLP002"} <= invoice_numbers
+
+
 def test_partner_llp_name_resolves_to_llp_id(client, auth_headers):
     created = client.post(
         "/partners",
