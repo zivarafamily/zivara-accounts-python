@@ -85,7 +85,8 @@ export default function PaymentTracker() {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState(initial);
   const [vendorChoice, setVendorChoice] = useState("");
-  const [search, setSearch] = useState("");
+  const [vendorFilter, setVendorFilter] = useState("");
+  const [billFilter, setBillFilter] = useState("");
   const [status, setStatus] = useState("");
   const [category, setCategory] = useState("");
   const [error, setError] = useState("");
@@ -125,13 +126,38 @@ export default function PaymentTracker() {
 
   useEffect(() => { load(); }, [currentLLP?.llpId]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter(row => {
-      const text = [row.VendorName, row.VendorCategory, row.BillNo, row.Description, row.TDSSection].join(" ").toLowerCase();
-      return (!q || text.includes(q)) && (!status || row.Status === status) && (!category || row.VendorCategory === category);
+  const vendorFilterOptions = useMemo(() => {
+    const map = new Map();
+    rows.forEach(row => {
+      const key = payableVendorKey(row);
+      if (!key) return;
+      const current = map.get(key) || { key, name:row.VendorName || "Unknown Vendor", count:0 };
+      current.count += 1;
+      map.set(key, current);
     });
-  }, [rows, search, status, category]);
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows]);
+
+  const billFilterOptions = useMemo(() => {
+    const sourceRows = vendorFilter ? rows.filter(row => payableVendorKey(row) === vendorFilter) : rows;
+    const map = new Map();
+    sourceRows.forEach(row => {
+      const billNo = String(row.BillNo || "").trim();
+      if (!billNo) return;
+      map.set(billNo, billNo);
+    });
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b, undefined, { numeric:true }));
+  }, [rows, vendorFilter]);
+
+  const filtered = useMemo(() => {
+    return rows.filter(row => {
+      const billNo = String(row.BillNo || "").trim();
+      return (!vendorFilter || payableVendorKey(row) === vendorFilter) &&
+        (!billFilter || billNo === billFilter) &&
+        (!status || row.Status === status) &&
+        (!category || row.VendorCategory === category);
+    });
+  }, [rows, vendorFilter, billFilter, status, category]);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const setBatch = (k, v) => setBatchForm(p => ({ ...p, [k]: v }));
@@ -445,7 +471,18 @@ export default function PaymentTracker() {
       </div>
 
       <div style={{ ...card, display:"flex", gap:".75rem", alignItems:"center", flexWrap:"wrap" }}>
-        <input style={{ maxWidth:260 }} placeholder="Search vendor, bill no, TDS..." value={search} onChange={e=>setSearch(e.target.value)} />
+        <select
+          style={{ maxWidth:280 }}
+          value={vendorFilter}
+          onChange={e=>{ setVendorFilter(e.target.value); setBillFilter(""); }}
+        >
+          <option value="">All vendors</option>
+          {vendorFilterOptions.map(v => <option key={v.key} value={v.key}>{v.name} ({v.count})</option>)}
+        </select>
+        <select style={{ maxWidth:230 }} value={billFilter} onChange={e=>setBillFilter(e.target.value)}>
+          <option value="">All bills</option>
+          {billFilterOptions.map(billNo => <option key={billNo} value={billNo}>{billNo}</option>)}
+        </select>
         <select style={{ maxWidth:170 }} value={status} onChange={e=>setStatus(e.target.value)}>
           <option value="">All statuses</option>
           {["Pending","Part Paid","Paid","Cancelled"].map(s => <option key={s}>{s}</option>)}
@@ -454,7 +491,7 @@ export default function PaymentTracker() {
           <option value="">All categories</option>
           {CATEGORIES.map(c => <option key={c}>{c}</option>)}
         </select>
-        {(search || status || category) && <button style={btn("ghost")} onClick={()=>{ setSearch(""); setStatus(""); setCategory(""); }}>Clear</button>}
+        {(vendorFilter || billFilter || status || category) && <button style={btn("ghost")} onClick={()=>{ setVendorFilter(""); setBillFilter(""); setStatus(""); setCategory(""); }}>Clear</button>}
         <span style={{ marginLeft:"auto", fontSize:".8rem", color:"var(--muted)" }}>{filtered.length} bill{filtered.length !== 1 ? "s" : ""}</span>
       </div>
 
