@@ -74,6 +74,14 @@ function payableVendorKey(row) {
   return normalizeKey(row.VendorName) || row.VendorID;
 }
 
+function compareBillNo(a, b) {
+  const billA = String(a.BillNo || "").trim();
+  const billB = String(b.BillNo || "").trim();
+  const byBill = billA.localeCompare(billB, undefined, { numeric:true, sensitivity:"base" });
+  if (byBill !== 0) return byBill;
+  return String(a.BillDate || "").localeCompare(String(b.BillDate || ""));
+}
+
 export default function PaymentTracker() {
   const { currentLLP } = useLLP();
   const [rows, setRows] = useState([]);
@@ -154,7 +162,7 @@ export default function PaymentTracker() {
         (!billFilter || billNo === billFilter) &&
         (!status || row.Status === status) &&
         (!category || row.VendorCategory === category);
-      });
+      }).sort(compareBillNo);
   }, [rows, vendorFilter, billFilter, status, category]);
 
   const filteredSummary = useMemo(() => filtered.reduce((sum, row) => ({
