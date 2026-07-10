@@ -78,7 +78,6 @@ export default function PaymentTracker() {
   const { currentLLP } = useLLP();
   const [rows, setRows] = useState([]);
   const [vendors, setVendors] = useState([]);
-  const [summary, setSummary] = useState({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
@@ -112,7 +111,6 @@ export default function PaymentTracker() {
       ]);
       if (payRes.status === "fulfilled" && payRes.value.ok) {
         setRows(payRes.value.data || []);
-        setSummary(payRes.value.summary || {});
       } else if (payRes.status === "rejected") {
         setError(payRes.reason?.message || "Unable to load payables");
       }
@@ -156,8 +154,15 @@ export default function PaymentTracker() {
         (!billFilter || billNo === billFilter) &&
         (!status || row.Status === status) &&
         (!category || row.VendorCategory === category);
-    });
+      });
   }, [rows, vendorFilter, billFilter, status, category]);
+
+  const filteredSummary = useMemo(() => filtered.reduce((sum, row) => ({
+    grossAmount:sum.grossAmount + Number(row.GrossAmount || 0),
+    tdsAmount:sum.tdsAmount + Number(row.TDSAmount || 0),
+    netPayable:sum.netPayable + Number(row.NetPayable || 0),
+    balanceAmount:sum.balanceAmount + Number(row.BalanceAmount || 0),
+  }), { grossAmount:0, tdsAmount:0, netPayable:0, balanceAmount:0 }), [filtered]);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const setBatch = (k, v) => setBatchForm(p => ({ ...p, [k]: v }));
@@ -440,10 +445,10 @@ export default function PaymentTracker() {
 
   const amounts = calc(form);
   const kpis = [
-    { label:"Gross Bills", value:fmt(summary.grossAmount), color:"var(--accent2)" },
-    { label:"TDS Deducted", value:fmt(summary.tdsAmount), color:"var(--warning)" },
-    { label:"Net Payable", value:fmt(summary.netPayable), color:"var(--accent)" },
-    { label:"Balance Due", value:fmt(summary.balanceAmount), color:"var(--danger)" },
+    { label:"Gross Bills", value:fmt(filteredSummary.grossAmount), color:"var(--accent2)" },
+    { label:"TDS Deducted", value:fmt(filteredSummary.tdsAmount), color:"var(--warning)" },
+    { label:"Net Payable", value:fmt(filteredSummary.netPayable), color:"var(--accent)" },
+    { label:"Balance Due", value:fmt(filteredSummary.balanceAmount), color:"var(--danger)" },
   ];
 
   return (
