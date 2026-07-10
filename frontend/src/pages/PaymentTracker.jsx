@@ -82,6 +82,10 @@ function compareBillNo(a, b) {
   return String(a.BillDate || "").localeCompare(String(b.BillDate || ""));
 }
 
+function csvCell(value) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
 export default function PaymentTracker() {
   const { currentLLP } = useLLP();
   const [rows, setRows] = useState([]);
@@ -451,6 +455,44 @@ export default function PaymentTracker() {
     }
   }
 
+  function exportFilteredCSV() {
+    const headers = [
+      "Vendor", "Category", "Bill No", "Bill Date", "Taxable Amount", "GST Amount", "Gross Amount",
+      "TDS Section", "TDS Rate (%)", "TDS Amount", "Net Payable", "Paid Amount", "Balance Amount",
+      "Status", "Payment Date", "Payment Mode", "Bank Account", "Reference / UTR", "Challan No",
+      "Challan Date", "Interest Amount", "Notes",
+    ];
+    const dataRows = filtered.map(row => [
+      row.VendorName, row.VendorCategory, row.BillNo, formatDate(row.BillDate), row.TaxableAmount,
+      row.GSTAmount, row.GrossAmount, row.TDSSection, row.TDSRate, row.TDSAmount, row.NetPayable,
+      row.PaidAmount, row.BalanceAmount, row.Status, formatDate(row.PaymentDate), row.PaymentMode,
+      row.BankAccount, row.ReferenceNo, row.ChallanNo, formatDate(row.ChallanDate), row.InterestAmount,
+      row.Notes,
+    ]);
+    const summaryRows = [
+      ["Summary"],
+      ["Gross Bills", filteredSummary.grossAmount],
+      ["TDS Deducted", filteredSummary.tdsAmount],
+      ["Net Payable", filteredSummary.netPayable],
+      ["Balance Due", filteredSummary.balanceAmount],
+      [],
+    ];
+    const csv = [
+      ...summaryRows.map(row => row.map(csvCell).join(",")),
+      headers.map(csvCell).join(","),
+      ...dataRows.map(row => row.map(csvCell).join(",")),
+    ].join("\r\n");
+    const blob = new Blob(["\ufeff", csv], { type:"text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `payment-tracker-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   const amounts = calc(form);
   const kpis = [
     { label:"Gross Bills", value:fmt(filteredSummary.grossAmount), color:"var(--accent2)" },
@@ -505,6 +547,7 @@ export default function PaymentTracker() {
           {CATEGORIES.map(c => <option key={c}>{c}</option>)}
         </select>
         {(vendorFilter || billFilter || status || category) && <button style={btn("ghost")} onClick={()=>{ setVendorFilter(""); setBillFilter(""); setStatus(""); setCategory(""); }}>Clear</button>}
+        <button style={btn("ghost")} onClick={exportFilteredCSV} disabled={!filtered.length}>Export Excel</button>
         <span style={{ marginLeft:"auto", fontSize:".8rem", color:"var(--muted)" }}>{filtered.length} bill{filtered.length !== 1 ? "s" : ""}</span>
       </div>
 
