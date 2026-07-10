@@ -13,6 +13,20 @@ const btn = (v = "primary") => ({
   cursor:"pointer",
 });
 const fmt = n => n != null && n !== "" ? "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "—";
+const fmtPercent = n => n != null && n !== "" ? `${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}%` : "—";
+const amountHeaders = new Set([
+  "Amount Paid/ Credited",
+  "Amount Paid / Credited",
+  "Tax Deducted",
+  "Interest, If any",
+  "Total Amount Paid",
+]);
+
+function formatCell(header, value) {
+  if (header === "Rate of TDS (%)") return fmtPercent(value);
+  if (amountHeaders.has(header)) return fmt(value);
+  return value ?? "—";
+}
 
 export default function CATDSReport() {
   const [headers, setHeaders] = useState([]);
@@ -100,7 +114,7 @@ export default function CATDSReport() {
               <tbody>
                 {rows.map((row, idx) => (
                   <tr key={idx}>
-                    {headers.map(h => <td key={h} style={{ whiteSpace:"nowrap" }}>{row[h]}</td>)}
+                    {headers.map(h => <td key={h} style={{ whiteSpace:"nowrap" }}>{formatCell(h, row[h])}</td>)}
                   </tr>
                 ))}
               </tbody>
