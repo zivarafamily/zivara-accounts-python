@@ -74,8 +74,12 @@ function normalizeKey(value) {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function compactVendorKey(value) {
+  return normalizeKey(value).replace(/[^a-z0-9]/g, "");
+}
+
 function payableVendorKey(row) {
-  return normalizeKey(row.VendorName) || row.VendorID;
+  return compactVendorKey(row.VendorName) || row.VendorID;
 }
 
 function compareBillNo(a, b) {

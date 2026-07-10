@@ -75,6 +75,11 @@ def _llp_id_from_payload(db: Session, payload: dict):
     return item.id if item else None
 
 
+def _vendor_batch_key(item: LLPPayable) -> str:
+    compact_name = re.sub(r"[^a-z0-9]", "", normalize_key(item.vendor_name))
+    return compact_name or item.vendor_id or ""
+
+
 def _revenue_scope_params(db: Session, user: User, llp_id: str | None, params: dict):
     scoped = dict(params)
     role = (user.role or "").lower()
@@ -637,7 +642,7 @@ def batch_payables(payload: dict, db: Session = Depends(get_db), llp_id: str | N
     rows = q.all()
     if len(rows) != len(set(payable_ids)):
         raise HTTPException(status_code=404, detail="One or more payable bills were not found")
-    vendor_keys = {(normalize_key(item.vendor_name) or item.vendor_id or "") for item in rows}
+    vendor_keys = {_vendor_batch_key(item) for item in rows}
     if len(vendor_keys) > 1:
         raise HTTPException(status_code=400, detail="Batch payment can include only one vendor")
 

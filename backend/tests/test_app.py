@@ -407,6 +407,39 @@ def test_vendor_batch_payment_can_pay_gross_and_leave_tds_pending(client, auth_h
     assert ca_tds["data"] == []
 
 
+def test_vendor_batch_payment_allows_spacing_variants_of_same_vendor(client, auth_headers):
+    ids = []
+    for vendor_name, bill_no in [
+        ("SELECTCITYFLY TOUR & TRAVELS 25-26", "BATCH-SPACE-1"),
+        ("SELECTCITYFLY TOUR &  TRAVELS 25 - 26", "BATCH-SPACE-2"),
+    ]:
+        created = client.post(
+            "/payables",
+            headers=auth_headers,
+            json={
+                "VendorName": vendor_name,
+                "VendorCategory": "Travel Agency",
+                "BillNo": bill_no,
+                "BillDate": "2026-05-18",
+                "GrossAmount": "1000",
+            },
+        )
+        assert created.status_code == 200
+        ids.append(created.json()["data"]["PayableID"])
+
+    paid = client.post(
+        "/payables/batch-payment",
+        headers=auth_headers,
+        json={
+            "PayableIDs": ids,
+            "PaidAmount": "2000",
+            "ReferenceNo": "UTR-SPACES",
+        },
+    )
+    assert paid.status_code == 200
+    assert paid.json()["paidCount"] == 2
+
+
 def test_vendor_ledger_returns_headers_rows_and_summary(client, auth_headers):
     created = client.post(
         "/payables",
