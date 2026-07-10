@@ -71,7 +71,7 @@ function normalizeKey(value) {
 }
 
 function payableVendorKey(row) {
-  return row.VendorID || normalizeKey(row.VendorName);
+  return normalizeKey(row.VendorName) || row.VendorID;
 }
 
 export default function PaymentTracker() {
