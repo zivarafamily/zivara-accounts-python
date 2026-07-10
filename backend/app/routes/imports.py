@@ -679,6 +679,9 @@ async def import_accounts_workbook(
         item.taxable_amount, item.gst_amount, item.gross_amount = taxable, gst, gross
         item.tds_section = normalize_tds_section(row.get("TDSSection"), tds_rate, item.vendor_category)
         item.tds_rate, item.tds_amount, item.net_payable = tds_rate, tds, net
+        item.tds_deducted_amount = _money(row.get("TDSDeductedAmount"))
+        if _money(row.get("PaidAmount")) > 0 and not item.tds_deducted_amount:
+            item.tds_deducted_amount = tds
         item.paid_amount = _money(row.get("PaidAmount"))
         item.payment_date = parse_date(row.get("PaymentDate"))
         item.payment_mode = _text(row.get("PaymentMode")) or "Bank"

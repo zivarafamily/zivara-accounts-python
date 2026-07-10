@@ -44,6 +44,7 @@ const tdsDisplay = row => {
   if (row.TDSSection) parts.push(row.TDSSection);
   if (Number(row.TDSRate) > 0) parts.push(`${Number(row.TDSRate).toLocaleString("en-IN")}%`);
   parts.push(fmt(row.TDSAmount));
+  if (Number(row.TDSPendingAmount || 0) > 0) parts.push(`pending ${fmt(row.TDSPendingAmount)}`);
   return parts.join(" · ");
 };
 
@@ -107,6 +108,8 @@ export default function PaymentTracker() {
   const [batchForm, setBatchForm] = useState({
     VendorKey:"",
     PayableIDs:[],
+    PaidAmount:"",
+    TDSMode:"net_after_tds",
     PaymentDate:new Date().toISOString().slice(0, 10),
     PaymentMode:"Bank",
     BankAccount:"",
@@ -172,9 +175,11 @@ export default function PaymentTracker() {
   const filteredSummary = useMemo(() => filtered.reduce((sum, row) => ({
     grossAmount:sum.grossAmount + Number(row.GrossAmount || 0),
     tdsAmount:sum.tdsAmount + Number(row.TDSAmount || 0),
+    tdsDeductedAmount:sum.tdsDeductedAmount + Number(row.TDSDeductedAmount || 0),
+    tdsPendingAmount:sum.tdsPendingAmount + Number(row.TDSPendingAmount || 0),
     netPayable:sum.netPayable + Number(row.NetPayable || 0),
     balanceAmount:sum.balanceAmount + Number(row.BalanceAmount || 0),
-  }), { grossAmount:0, tdsAmount:0, netPayable:0, balanceAmount:0 }), [filtered]);
+  }), { grossAmount:0, tdsAmount:0, tdsDeductedAmount:0, tdsPendingAmount:0, netPayable:0, balanceAmount:0 }), [filtered]);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const setBatch = (k, v) => setBatchForm(p => ({ ...p, [k]: v }));
@@ -210,6 +215,35 @@ export default function PaymentTracker() {
       .reduce((sum, row) => sum + Number(row.BalanceAmount || row.NetPayable || 0), 0),
     [batchVendorRows, batchForm.PayableIDs]
   );
+  const selectedBatchGross = useMemo(
+    () => batchVendorRows
+      .filter(row => batchForm.PayableIDs.includes(row.PayableID))
+      .reduce((sum, row) => sum + Number(row.GrossAmount || 0), 0),
+    [batchVendorRows, batchForm.PayableIDs]
+  );
+  const selectedBatchTDS = useMemo(
+    () => batchVendorRows
+      .filter(row => batchForm.PayableIDs.includes(row.PayableID))
+      .reduce((sum, row) => sum + Number(row.TDSAmount || 0), 0),
+    [batchVendorRows, batchForm.PayableIDs]
+  );
+  const selectedBatchPaymentTarget = batchForm.TDSMode === "gross_pending_tds" ? selectedBatchGross : selectedBatchTotal;
+
+  function batchTotalFor(payableIds, sourceRows = batchVendorRows) {
+    return sourceRows
+      .filter(row => payableIds.includes(row.PayableID))
+      .reduce((sum, row) => sum + Number(row.BalanceAmount || row.NetPayable || 0), 0);
+  }
+
+  function batchGrossTotalFor(payableIds, sourceRows = batchVendorRows) {
+    return sourceRows
+      .filter(row => payableIds.includes(row.PayableID))
+      .reduce((sum, row) => sum + Number(row.GrossAmount || 0), 0);
+  }
+
+  function batchPaymentTarget(payableIds, sourceRows = batchVendorRows, tdsMode = batchForm.TDSMode) {
+    return tdsMode === "gross_pending_tds" ? batchGrossTotalFor(payableIds, sourceRows) : batchTotalFor(payableIds, sourceRows);
+  }
 
   function openAdd() {
     setForm(initial);
@@ -222,9 +256,13 @@ export default function PaymentTracker() {
 
   function openBatchPay() {
     const first = vendorBatchOptions[0];
+    const firstRows = first ? outstandingPayables.filter(row => payableVendorKey(row) === first.key).sort(compareBillNo) : [];
+    const payableIds = firstRows.map(row => row.PayableID);
     setBatchForm({
       VendorKey:first?.key || "",
-      PayableIDs:first ? outstandingPayables.filter(row => payableVendorKey(row) === first.key).map(row => row.PayableID) : [],
+      PayableIDs:payableIds,
+      PaidAmount:batchTotalFor(payableIds, firstRows).toFixed(2),
+      TDSMode:"net_after_tds",
       PaymentDate:new Date().toISOString().slice(0, 10),
       PaymentMode:"Bank",
       BankAccount:"",
@@ -412,24 +450,36 @@ export default function PaymentTracker() {
   }
 
   function applyBatchVendor(vendorKey) {
+    const payableRows = outstandingPayables.filter(row => payableVendorKey(row) === vendorKey).sort(compareBillNo);
+    const payableIds = payableRows.map(row => row.PayableID);
     setBatchForm(p => ({
       ...p,
       VendorKey:vendorKey,
-      PayableIDs:outstandingPayables.filter(row => payableVendorKey(row) === vendorKey).map(row => row.PayableID),
+      PayableIDs:payableIds,
+      PaidAmount:batchPaymentTarget(payableIds, payableRows, p.TDSMode).toFixed(2),
     }));
+  }
+
+  function setBatchTDSMode(tdsMode) {
+    setBatchForm(p => ({ ...p, TDSMode:tdsMode, PaidAmount:batchPaymentTarget(p.PayableIDs, batchVendorRows, tdsMode).toFixed(2) }));
   }
 
   function toggleBatchBill(payableId) {
-    setBatchForm(p => ({
-      ...p,
-      PayableIDs:p.PayableIDs.includes(payableId)
+    setBatchForm(p => {
+      const nextPayableIDs = p.PayableIDs.includes(payableId)
         ? p.PayableIDs.filter(id => id !== payableId)
-        : [...p.PayableIDs, payableId],
-    }));
+        : [...p.PayableIDs, payableId];
+      return {
+        ...p,
+        PayableIDs:nextPayableIDs,
+        PaidAmount:batchPaymentTarget(nextPayableIDs, batchVendorRows, p.TDSMode).toFixed(2),
+      };
+    });
   }
 
   function setAllBatchBills(checked) {
-    setBatch("PayableIDs", checked ? batchVendorRows.map(row => row.PayableID) : []);
+    const payableIds = checked ? batchVendorRows.map(row => row.PayableID) : [];
+    setBatchForm(p => ({ ...p, PayableIDs:payableIds, PaidAmount:batchPaymentTarget(payableIds, batchVendorRows, p.TDSMode).toFixed(2) }));
   }
 
   async function saveBatchPayment(e) {
@@ -438,11 +488,22 @@ export default function PaymentTracker() {
       setError("Select at least one bill for batch payment");
       return;
     }
+    const paidAmount = Number(batchForm.PaidAmount || 0);
+    if (paidAmount <= 0) {
+      setError("Paid amount must be greater than zero");
+      return;
+    }
+    if (paidAmount > selectedBatchPaymentTarget) {
+      setError(`Paid amount cannot exceed selected ${batchForm.TDSMode === "gross_pending_tds" ? "gross" : "net"} amount ${fmt(selectedBatchPaymentTarget)}. Select the missing bill or record the extra separately.`);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
       await apiPost("batchPayLLPPayables", {
         PayableIDs:batchForm.PayableIDs,
+        PaidAmount:batchForm.PaidAmount,
+        TDSMode:batchForm.TDSMode,
         PaymentDate:batchForm.PaymentDate,
         PaymentMode:batchForm.PaymentMode,
         BankAccount:batchForm.BankAccount,
@@ -460,13 +521,13 @@ export default function PaymentTracker() {
   function exportFilteredCSV() {
     const headers = [
       "Vendor", "Category", "Bill No", "Bill Date", "Taxable Amount", "GST Amount", "Gross Amount",
-      "TDS Section", "TDS Rate (%)", "TDS Amount", "Net Payable", "Paid Amount", "Balance Amount",
+      "TDS Section", "TDS Rate (%)", "Expected TDS", "TDS Deducted", "Pending TDS", "Net Payable", "Paid Amount", "Balance Amount",
       "Status", "Payment Date", "Payment Mode", "Bank Account", "Reference / UTR", "Challan No",
       "Challan Date", "Interest Amount", "Notes",
     ];
     const dataRows = filtered.map(row => [
       row.VendorName, row.VendorCategory, row.BillNo, formatDate(row.BillDate), row.TaxableAmount,
-      row.GSTAmount, row.GrossAmount, row.TDSSection, row.TDSRate, row.TDSAmount, row.NetPayable,
+      row.GSTAmount, row.GrossAmount, row.TDSSection, row.TDSRate, row.TDSAmount, row.TDSDeductedAmount, row.TDSPendingAmount, row.NetPayable,
       row.PaidAmount, row.BalanceAmount, row.Status, formatDate(row.PaymentDate), row.PaymentMode,
       row.BankAccount, row.ReferenceNo, row.ChallanNo, formatDate(row.ChallanDate), row.InterestAmount,
       row.Notes,
@@ -474,7 +535,9 @@ export default function PaymentTracker() {
     const summaryRows = [
       ["Summary"],
       ["Gross Bills", filteredSummary.grossAmount],
-      ["TDS Deducted", filteredSummary.tdsAmount],
+      ["Expected TDS", filteredSummary.tdsAmount],
+      ["TDS Deducted", filteredSummary.tdsDeductedAmount],
+      ["Pending TDS", filteredSummary.tdsPendingAmount],
       ["Net Payable", filteredSummary.netPayable],
       ["Balance Due", filteredSummary.balanceAmount],
       [],
@@ -498,7 +561,8 @@ export default function PaymentTracker() {
   const amounts = calc(form);
   const kpis = [
     { label:"Gross Bills", value:fmt(filteredSummary.grossAmount), color:"var(--accent2)" },
-    { label:"TDS Deducted", value:fmt(filteredSummary.tdsAmount), color:"var(--warning)" },
+    { label:"Expected TDS", value:fmt(filteredSummary.tdsAmount), color:"var(--warning)" },
+    { label:"Pending TDS", value:fmt(filteredSummary.tdsPendingAmount), color:"var(--danger)" },
     { label:"Net Payable", value:fmt(filteredSummary.netPayable), color:"var(--accent)" },
     { label:"Balance Due", value:fmt(filteredSummary.balanceAmount), color:"var(--danger)" },
   ];
@@ -610,6 +674,14 @@ export default function PaymentTracker() {
                 <div><label style={label}>Payment Mode</label><select value={batchForm.PaymentMode} onChange={e=>setBatch("PaymentMode", e.target.value)}>{["Bank","NEFT","RTGS","IMPS","UPI","Cheque","Cash"].map(o => <option key={o}>{o}</option>)}</select></div>
                 <div><label style={label}>Bank Account</label><input value={batchForm.BankAccount} onChange={e=>setBatch("BankAccount", e.target.value)} /></div>
                 <div><label style={label}>Reference / UTR</label><input value={batchForm.ReferenceNo} onChange={e=>setBatch("ReferenceNo", e.target.value)} /></div>
+                <div>
+                  <label style={label}>TDS Treatment</label>
+                  <select value={batchForm.TDSMode} onChange={e=>setBatchTDSMode(e.target.value)}>
+                    <option value="net_after_tds">Pay net after TDS</option>
+                    <option value="gross_pending_tds">Pay gross, keep TDS pending</option>
+                  </select>
+                </div>
+                <div><label style={label}>Paid Amount</label><input type="number" min="0" step="0.01" value={batchForm.PaidAmount} onChange={e=>setBatch("PaidAmount", e.target.value)} /></div>
               </div>
 
               <div style={{ border:"1px solid var(--border)", borderRadius:"6px", overflow:"hidden" }}>
@@ -618,14 +690,14 @@ export default function PaymentTracker() {
                     <input type="checkbox" checked={batchVendorRows.length > 0 && batchForm.PayableIDs.length === batchVendorRows.length} onChange={e=>setAllBatchBills(e.target.checked)} />
                     Select all bills
                   </label>
-                  <span style={{ color:"var(--accent)", fontWeight:800 }}>{batchForm.PayableIDs.length} selected · {fmt(selectedBatchTotal)}</span>
+                  <span style={{ color:"var(--accent)", fontWeight:800 }}>{batchForm.PayableIDs.length} selected · Gross {fmt(selectedBatchGross)} · TDS {fmt(selectedBatchTDS)} · Net {fmt(selectedBatchTotal)} · Paying {fmt(batchForm.PaidAmount)}</span>
                 </div>
                 <div style={{ maxHeight:320, overflowY:"auto" }}>
                   {batchVendorRows.length === 0 ? (
                     <p style={{ padding:"1.5rem", color:"var(--muted)", textAlign:"center" }}>No outstanding bills for this vendor.</p>
                   ) : (
                     <table>
-                      <thead><tr><th></th><th>Bill</th><th>Bill Date</th><th>Gross</th><th>Balance</th><th>Status</th></tr></thead>
+                      <thead><tr><th></th><th>Bill</th><th>Bill Date</th><th>Gross</th><th>TDS</th><th>Net / Balance</th><th>Status</th></tr></thead>
                       <tbody>
                         {batchVendorRows.map(row => (
                           <tr key={row.PayableID}>
@@ -633,6 +705,7 @@ export default function PaymentTracker() {
                             <td style={{ color:"var(--accent2)", whiteSpace:"nowrap" }}>{row.BillNo || "—"}</td>
                             <td style={{ whiteSpace:"nowrap" }}>{formatDate(row.BillDate)}</td>
                             <td style={{ whiteSpace:"nowrap" }}>{fmt(row.GrossAmount)}</td>
+                            <td style={{ color:"var(--warning)", whiteSpace:"nowrap" }}>{fmt(row.TDSAmount)}</td>
                             <td style={{ color:"var(--danger)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.BalanceAmount || row.NetPayable)}</td>
                             <td><Badge value={row.Status} /></td>
                           </tr>

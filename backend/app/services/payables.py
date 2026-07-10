@@ -69,6 +69,7 @@ def payable_status(net, paid, current=""):
 
 def serialize_payable(db: Session, p: LLPPayable):
     balance = max(dec(p.net_payable) - dec(p.paid_amount), Decimal("0.00"))
+    tds_pending = max(dec(p.tds_amount) - dec(p.tds_deducted_amount), Decimal("0.00"))
     tds_section = normalize_tds_section(p.tds_section, p.tds_rate, p.vendor_category)
     return {
         "PayableID": p.id,
@@ -92,6 +93,8 @@ def serialize_payable(db: Session, p: LLPPayable):
         "TDSSectionLabel": TDS_SECTION_LABELS.get(tds_section, tds_section),
         "TDSRate": money(p.tds_rate),
         "TDSAmount": money(p.tds_amount),
+        "TDSDeductedAmount": money(p.tds_deducted_amount),
+        "TDSPendingAmount": money(tds_pending),
         "NetPayable": money(p.net_payable),
         "PaidAmount": money(p.paid_amount),
         "BalanceAmount": money(balance),
@@ -125,6 +128,9 @@ def create_payable(db: Session, payload: dict, llp_id: str, user_email: str):
             raise HTTPException(status_code=409, detail="Duplicate payable bill already exists")
     taxable, gst, gross, tds_rate, tds, net = calculate_amounts(payload)
     paid = dec(payload.get("PaidAmount"))
+    tds_deducted = dec(payload.get("TDSDeductedAmount"))
+    if paid > 0 and not tds_deducted:
+        tds_deducted = tds
     item = LLPPayable(
         id=payload.get("PayableID") or make_id("PAY"),
         llp_id=llp_id,
@@ -145,6 +151,7 @@ def create_payable(db: Session, payload: dict, llp_id: str, user_email: str):
         tds_section=normalize_tds_section(payload.get("TDSSection"), tds_rate, payload.get("VendorCategory") or ""),
         tds_rate=tds_rate,
         tds_amount=tds,
+        tds_deducted_amount=tds_deducted,
         net_payable=net,
         paid_amount=paid,
         payment_date=parse_date(payload.get("PaymentDate")),

@@ -298,6 +298,115 @@ def test_vendor_payables_can_be_marked_paid_in_batch(client, auth_headers):
     assert {r["ReferenceNo"] for r in rows} == {"UTR-BATCH"}
 
 
+def test_vendor_batch_payment_can_allocate_paid_amount(client, auth_headers):
+    ids = []
+    for bill_no, amount in [("BATCH-PART-1", "1000"), ("BATCH-PART-2", "2500")]:
+        created = client.post(
+            "/payables",
+            headers=auth_headers,
+            json={
+                "VendorName": "Batch Partial Vendor",
+                "VendorCategory": "Travel Agency",
+                "BillNo": bill_no,
+                "BillDate": "2026-05-18",
+                "GrossAmount": amount,
+            },
+        )
+        assert created.status_code == 200
+        ids.append(created.json()["data"]["PayableID"])
+
+    paid = client.post(
+        "/payables/batch-payment",
+        headers=auth_headers,
+        json={
+            "PayableIDs": ids,
+            "PaidAmount": "1200",
+            "PaymentDate": "2026-05-20",
+            "PaymentMode": "NEFT",
+            "ReferenceNo": "UTR-PART",
+        },
+    )
+    assert paid.status_code == 200
+    assert paid.json()["paidAmount"] == 1200.0
+
+    rows = sorted(
+        [r for r in client.get("/payables", headers=auth_headers).json()["data"] if r["PayableID"] in ids],
+        key=lambda r: r["BillNo"],
+    )
+    assert rows[0]["PaidAmount"] == 1000.0
+    assert rows[0]["Status"] == "Paid"
+    assert rows[1]["PaidAmount"] == 200.0
+    assert rows[1]["BalanceAmount"] == 2300.0
+    assert rows[1]["Status"] == "Part Paid"
+
+
+def test_vendor_batch_payment_rejects_overpayment(client, auth_headers):
+    created = client.post(
+        "/payables",
+        headers=auth_headers,
+        json={
+            "VendorName": "Batch Overpay Vendor",
+            "VendorCategory": "Travel Agency",
+            "BillNo": "BATCH-OVER-1",
+            "BillDate": "2026-05-18",
+            "GrossAmount": "1000",
+        },
+    )
+    assert created.status_code == 200
+
+    paid = client.post(
+        "/payables/batch-payment",
+        headers=auth_headers,
+        json={
+            "PayableIDs": [created.json()["data"]["PayableID"]],
+            "PaidAmount": "1000.01",
+        },
+    )
+    assert paid.status_code == 400
+    assert "cannot exceed selected balance" in paid.json()["detail"]
+
+
+def test_vendor_batch_payment_can_pay_gross_and_leave_tds_pending(client, auth_headers):
+    created = client.post(
+        "/payables",
+        headers=auth_headers,
+        json={
+            "VendorName": "Batch Gross Vendor",
+            "VendorCategory": "Travel Agency",
+            "BillNo": "BATCH-GROSS-1",
+            "BillDate": "2026-05-18",
+            "TaxableAmount": "1000",
+            "GSTAmount": "180",
+            "TDSRate": "2",
+        },
+    )
+    assert created.status_code == 200
+    payable_id = created.json()["data"]["PayableID"]
+
+    paid = client.post(
+        "/payables/batch-payment",
+        headers=auth_headers,
+        json={
+            "PayableIDs": [payable_id],
+            "PaidAmount": "1180",
+            "TDSMode": "gross_pending_tds",
+            "ReferenceNo": "UTR-GROSS",
+        },
+    )
+    assert paid.status_code == 200
+    assert paid.json()["paidAmount"] == 1180.0
+
+    row = next(r for r in client.get("/payables", headers=auth_headers).json()["data"] if r["PayableID"] == payable_id)
+    assert row["Status"] == "Paid"
+    assert row["PaidAmount"] == 1180.0
+    assert row["TDSAmount"] == 20.0
+    assert row["TDSDeductedAmount"] == 0.0
+    assert row["TDSPendingAmount"] == 20.0
+
+    ca_tds = client.get("/reports/ca-tds", headers=auth_headers).json()
+    assert ca_tds["data"] == []
+
+
 def test_vendor_ledger_returns_headers_rows_and_summary(client, auth_headers):
     created = client.post(
         "/payables",

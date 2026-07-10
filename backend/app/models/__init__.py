@@ -132,6 +132,7 @@ class LLPPayable(Base, TimestampMixin):
     tds_section: Mapped[str] = mapped_column(String(40), default="", nullable=False)
     tds_rate: Mapped[object] = mapped_column(Money, default=0, nullable=False)
     tds_amount: Mapped[object] = mapped_column(Money, default=0, nullable=False)
+    tds_deducted_amount: Mapped[object] = mapped_column(Money, default=0, nullable=False)
     net_payable: Mapped[object] = mapped_column(Money, default=0, nullable=False)
     paid_amount: Mapped[object] = mapped_column(Money, default=0, nullable=False)
     payment_date: Mapped[Date | None] = mapped_column(Date, nullable=True)

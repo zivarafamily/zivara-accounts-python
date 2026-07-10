@@ -560,7 +560,7 @@ def payables(db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp
     if llp_id:
         q = q.filter(LLPPayable.llp_id == llp_id)
     rows = [serialize_payable(db, p) for p in q.all()]
-    summary = {"billCount": len(rows), "grossAmount": sum(r["GrossAmount"] for r in rows), "tdsAmount": sum(r["TDSAmount"] for r in rows), "netPayable": sum(r["NetPayable"] for r in rows), "paidAmount": sum(r["PaidAmount"] for r in rows), "balanceAmount": sum(r["BalanceAmount"] for r in rows)}
+    summary = {"billCount": len(rows), "grossAmount": sum(r["GrossAmount"] for r in rows), "tdsAmount": sum(r["TDSAmount"] for r in rows), "tdsDeductedAmount": sum(r["TDSDeductedAmount"] for r in rows), "tdsPendingAmount": sum(r["TDSPendingAmount"] for r in rows), "netPayable": sum(r["NetPayable"] for r in rows), "paidAmount": sum(r["PaidAmount"] for r in rows), "balanceAmount": sum(r["BalanceAmount"] for r in rows)}
     return {"ok": True, "data": rows, "summary": summary}
 
 
@@ -600,6 +600,9 @@ def update_payable(id: str, payload: dict, db: Session = Depends(get_db), user: 
     item.taxable_amount, item.gst_amount, item.gross_amount = taxable, gst, gross
     item.tds_section = normalize_tds_section(merged.get("TDSSection"), tds_rate, merged.get("VendorCategory") or item.vendor_category)
     item.tds_rate, item.tds_amount, item.net_payable = tds_rate, tds, net
+    item.tds_deducted_amount = dec(merged.get("TDSDeductedAmount"))
+    if dec(merged.get("PaidAmount")) > 0 and not item.tds_deducted_amount:
+        item.tds_deducted_amount = tds
     item.paid_amount = dec(merged.get("PaidAmount"))
     item.status = payable_status(net, item.paid_amount, merged.get("Status"))
     if "PaymentDate" in payload:
@@ -634,7 +637,7 @@ def batch_payables(payload: dict, db: Session = Depends(get_db), llp_id: str | N
     rows = q.all()
     if len(rows) != len(set(payable_ids)):
         raise HTTPException(status_code=404, detail="One or more payable bills were not found")
-    vendor_keys = {(item.vendor_id or normalize_key(item.vendor_name)) for item in rows}
+    vendor_keys = {(normalize_key(item.vendor_name) or item.vendor_id or "") for item in rows}
     if len(vendor_keys) > 1:
         raise HTTPException(status_code=400, detail="Batch payment can include only one vendor")
 
@@ -643,23 +646,45 @@ def batch_payables(payload: dict, db: Session = Depends(get_db), llp_id: str | N
     payment_mode = payload.get("PaymentMode") or "Bank"
     bank_account = payload.get("BankAccount") or ""
     reference_no = payload.get("ReferenceNo") or ""
-    for item in rows:
+    pay_gross = str(payload.get("TDSMode") or "").strip() == "gross_pending_tds"
+    payable_rows = sorted((item for item in rows if item.status != "Cancelled"), key=lambda item: (item.normalized_bill_no or normalize_key(item.bill_no), item.bill_date or datetime.min.date()))
+    def payment_target(item):
+        return dec(item.gross_amount) if pay_gross else dec(item.net_payable)
+
+    total_balance = sum(max(payment_target(item) - dec(item.paid_amount), Decimal("0.00")) for item in payable_rows)
+    requested_paid = dec(payload.get("PaidAmount")) if payload.get("PaidAmount") not in (None, "") else total_balance
+    if requested_paid <= 0:
+        raise HTTPException(status_code=400, detail="PaidAmount must be greater than zero")
+    if requested_paid > total_balance:
+        raise HTTPException(status_code=400, detail=f"PaidAmount cannot exceed selected balance of {money(total_balance)}")
+
+    remaining = requested_paid
+    for item in payable_rows:
         if item.status == "Cancelled":
             continue
-        item.paid_amount = dec(item.net_payable)
+        balance = max(payment_target(item) - dec(item.paid_amount), Decimal("0.00"))
+        if balance <= 0:
+            continue
+        applied = min(balance, remaining)
+        if applied <= 0:
+            break
+        item.paid_amount = dec(item.paid_amount) + applied
         item.payment_date = payment_date
         item.payment_mode = payment_mode
         item.bank_account = bank_account
         item.reference_no = reference_no
+        if not pay_gross:
+            item.tds_deducted_amount = max(dec(item.tds_deducted_amount), dec(item.tds_amount))
         item.status = payable_status(item.net_payable, item.paid_amount)
         audit(db, user.email, "payables", "batch-payment", item.id)
         paid_rows.append(item)
+        remaining -= applied
     db.commit()
     return {
         "ok": True,
         "message": f"{len(paid_rows)} payable bill(s) marked paid",
         "paidCount": len(paid_rows),
-        "paidAmount": money(sum(dec(item.net_payable) for item in paid_rows)),
+        "paidAmount": money(requested_paid - remaining),
         "data": [serialize_payable(db, item) for item in paid_rows],
     }
 
@@ -669,11 +694,14 @@ def mark_paid(id: str, payload: dict, db: Session = Depends(get_db), user: User 
     item = db.get(LLPPayable, id)
     if not item:
         raise HTTPException(status_code=404, detail="Payable not found")
-    item.paid_amount = dec(payload.get("PaidAmount")) or dec(item.net_payable)
+    pay_gross = str(payload.get("TDSMode") or "").strip() == "gross_pending_tds"
+    item.paid_amount = dec(payload.get("PaidAmount")) or (dec(item.gross_amount) if pay_gross else dec(item.net_payable))
     item.payment_date = parse_date(payload.get("PaymentDate")) or datetime.now(timezone.utc).date()
     item.payment_mode = payload.get("PaymentMode") or item.payment_mode
     item.bank_account = payload.get("BankAccount") or item.bank_account
     item.reference_no = payload.get("ReferenceNo") or item.reference_no
+    if not pay_gross:
+        item.tds_deducted_amount = max(dec(item.tds_deducted_amount), dec(item.tds_amount))
     item.status = payable_status(item.net_payable, item.paid_amount)
     audit(db, user.email, "payables", "payment", id)
     db.commit()
@@ -1289,14 +1317,14 @@ def dashboard(db: Session = Depends(get_db), llp_id: str | None = Depends(get_ll
 @router.get("/reports/reconciliation")
 def reconciliation(format: str = Query("json"), db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), _: User = Depends(current_user)):
     rows = [serialize_payable(db, p) for p in (db.query(LLPPayable).filter(LLPPayable.llp_id == llp_id).all() if llp_id else db.query(LLPPayable).all())]
-    data = [{"BillNo": r["BillNo"], "BillMonth": r["BillDate"][:7], "VendorName": r["VendorName"], "GSTMode": "With GST" if r["GSTAmount"] else "Without GST", "GrossAmount": r["GrossAmount"], "TDSDeducted": r["TDSAmount"], "NetPayable": r["NetPayable"], "PaidAmount": r["PaidAmount"], "BalanceAmount": r["BalanceAmount"], "Status": r["Status"]} for r in rows]
+    data = [{"BillNo": r["BillNo"], "BillMonth": r["BillDate"][:7], "VendorName": r["VendorName"], "GSTMode": "With GST" if r["GSTAmount"] else "Without GST", "GrossAmount": r["GrossAmount"], "TDSDeducted": r["TDSDeductedAmount"], "TDSPending": r["TDSPendingAmount"], "NetPayable": r["NetPayable"], "PaidAmount": r["PaidAmount"], "BalanceAmount": r["BalanceAmount"], "Status": r["Status"]} for r in rows]
     return export_rows(data, format, "reconciliation")
 
 
 @router.get("/reports/ca-tds")
 def ca_tds(format: str = Query("json"), db: Session = Depends(get_db), llp_id: str | None = Depends(get_llp_id), _: User = Depends(current_user)):
-    rows = [serialize_payable(db, p) for p in (db.query(LLPPayable).filter(LLPPayable.llp_id == llp_id).all() if llp_id else db.query(LLPPayable).all()) if dec(p.tds_amount) > 0]
-    data = [{"S No.": i + 1, "Deductee Name": r["VendorName"], "PAN of  Deductee": r["VendorPAN"], "Nature of Payment": r["ExpenseType"], "Section": r["TDSSection"], "Date of Payment/ Credit": r["PaymentDate"] or r["BillDate"], "Amount Paid/ Credited": r["TaxableAmount"], "Rate of TDS (%)": r["TDSRate"], "Tax Deducted": r["TDSAmount"], "Interest, If any": r["InterestAmount"], "Total Amount Paid": r["TDSAmount"] + r["InterestAmount"], "Challan No.": r["ChallanNo"], "Date of Payment": r["ChallanDate"], "Remarks": r["Notes"]} for i, r in enumerate(rows)]
+    rows = [serialize_payable(db, p) for p in (db.query(LLPPayable).filter(LLPPayable.llp_id == llp_id).all() if llp_id else db.query(LLPPayable).all()) if dec(p.tds_deducted_amount) > 0]
+    data = [{"S No.": i + 1, "Deductee Name": r["VendorName"], "PAN of  Deductee": r["VendorPAN"], "Nature of Payment": r["ExpenseType"], "Section": r["TDSSection"], "Date of Payment/ Credit": r["PaymentDate"] or r["BillDate"], "Amount Paid/ Credited": r["TaxableAmount"], "Rate of TDS (%)": r["TDSRate"], "Tax Deducted": r["TDSDeductedAmount"], "Interest, If any": r["InterestAmount"], "Total Amount Paid": r["TDSDeductedAmount"] + r["InterestAmount"], "Challan No.": r["ChallanNo"], "Date of Payment": r["ChallanDate"], "Remarks": r["Notes"]} for i, r in enumerate(rows)]
     result = export_rows(data, format, "ca-tds")
     if isinstance(result, dict):
         result["headers"] = list(data[0].keys()) if data else []
@@ -1313,12 +1341,12 @@ def vendor_ledger(vendor: str = "", format: str = Query("json"), db: Session = D
     data = []
     for r in rows:
         balance += dec(r["NetPayable"])
-        data.append({"Date": r["BillDate"], "VendorName": r["VendorName"], "Particulars": f"Bill {r['BillNo']}", "BillNo": r["BillNo"], "Debit": r["NetPayable"], "Credit": 0, "GrossAmount": r["GrossAmount"], "TDSAmount": r["TDSAmount"], "PaidAmount": 0, "Balance": money(balance), "ReferenceNo": "", "Status": r["Status"], "Notes": r["Notes"]})
+        data.append({"Date": r["BillDate"], "VendorName": r["VendorName"], "Particulars": f"Bill {r['BillNo']}", "BillNo": r["BillNo"], "Debit": r["NetPayable"], "Credit": 0, "GrossAmount": r["GrossAmount"], "TDSAmount": r["TDSAmount"], "TDSDeductedAmount": r["TDSDeductedAmount"], "TDSPendingAmount": r["TDSPendingAmount"], "PaidAmount": 0, "Balance": money(balance), "ReferenceNo": "", "Status": r["Status"], "Notes": r["Notes"]})
         if dec(r["PaidAmount"]) > 0:
             balance -= dec(r["PaidAmount"])
             data.append({"Date": r["PaymentDate"], "VendorName": r["VendorName"], "Particulars": f"Payment against {r['BillNo']}", "BillNo": r["BillNo"], "Debit": 0, "Credit": r["PaidAmount"], "GrossAmount": 0, "TDSAmount": 0, "PaidAmount": r["PaidAmount"], "Balance": money(balance), "ReferenceNo": r["ReferenceNo"], "Status": r["Status"], "Notes": r["PaymentMode"]})
     if format == "json":
-        headers = ["Date", "VendorName", "Particulars", "BillNo", "Debit", "Credit", "GrossAmount", "TDSAmount", "PaidAmount", "Balance", "ReferenceNo", "Status", "Notes"]
+        headers = ["Date", "VendorName", "Particulars", "BillNo", "Debit", "Credit", "GrossAmount", "TDSAmount", "TDSDeductedAmount", "TDSPendingAmount", "PaidAmount", "Balance", "ReferenceNo", "Status", "Notes"]
         summary = {
             "Debit": money(sum(dec(r["Debit"]) for r in data)),
             "Credit": money(sum(dec(r["Credit"]) for r in data)),
