@@ -198,7 +198,9 @@ export default function PaymentTracker() {
   }, [outstandingPayables]);
 
   const batchVendorRows = useMemo(
-    () => outstandingPayables.filter(row => batchForm.VendorKey && payableVendorKey(row) === batchForm.VendorKey),
+    () => outstandingPayables
+      .filter(row => batchForm.VendorKey && payableVendorKey(row) === batchForm.VendorKey)
+      .sort(compareBillNo),
     [outstandingPayables, batchForm.VendorKey]
   );
 
