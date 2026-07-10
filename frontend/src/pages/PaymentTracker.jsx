@@ -39,12 +39,15 @@ const fmt = n => n != null && n !== "" && !isNaN(Number(n))
   ? "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 })
   : "—";
 
+const tdsDeducted = row => Number(row.TDSDeductedAmount || 0);
+const tdsPending = row => Math.max(Number(row.TDSAmount || 0) - tdsDeducted(row), 0);
+
 const tdsDisplay = row => {
   const parts = [];
   if (row.TDSSection) parts.push(row.TDSSection);
   if (Number(row.TDSRate) > 0) parts.push(`${Number(row.TDSRate).toLocaleString("en-IN")}%`);
   parts.push(fmt(row.TDSAmount));
-  if (Number(row.TDSPendingAmount || 0) > 0) parts.push(`pending ${fmt(row.TDSPendingAmount)}`);
+  if (tdsPending(row) > 0) parts.push(`pending ${fmt(tdsPending(row))}`);
   return parts.join(" · ");
 };
 
@@ -175,8 +178,8 @@ export default function PaymentTracker() {
   const filteredSummary = useMemo(() => filtered.reduce((sum, row) => ({
     grossAmount:sum.grossAmount + Number(row.GrossAmount || 0),
     tdsAmount:sum.tdsAmount + Number(row.TDSAmount || 0),
-    tdsDeductedAmount:sum.tdsDeductedAmount + Number(row.TDSDeductedAmount || 0),
-    tdsPendingAmount:sum.tdsPendingAmount + Number(row.TDSPendingAmount || 0),
+    tdsDeductedAmount:sum.tdsDeductedAmount + tdsDeducted(row),
+    tdsPendingAmount:sum.tdsPendingAmount + tdsPending(row),
     netPayable:sum.netPayable + Number(row.NetPayable || 0),
     balanceAmount:sum.balanceAmount + Number(row.BalanceAmount || 0),
   }), { grossAmount:0, tdsAmount:0, tdsDeductedAmount:0, tdsPendingAmount:0, netPayable:0, balanceAmount:0 }), [filtered]);
@@ -527,7 +530,7 @@ export default function PaymentTracker() {
     ];
     const dataRows = filtered.map(row => [
       row.VendorName, row.VendorCategory, row.BillNo, formatDate(row.BillDate), row.TaxableAmount,
-      row.GSTAmount, row.GrossAmount, row.TDSSection, row.TDSRate, row.TDSAmount, row.TDSDeductedAmount, row.TDSPendingAmount, row.NetPayable,
+      row.GSTAmount, row.GrossAmount, row.TDSSection, row.TDSRate, row.TDSAmount, tdsDeducted(row), tdsPending(row), row.NetPayable,
       row.PaidAmount, row.BalanceAmount, row.Status, formatDate(row.PaymentDate), row.PaymentMode,
       row.BankAccount, row.ReferenceNo, row.ChallanNo, formatDate(row.ChallanDate), row.InterestAmount,
       row.Notes,
