@@ -102,6 +102,55 @@ function downloadSkippedRows(result) {
   URL.revokeObjectURL(url);
 }
 
+function excelCell(value, style = "") {
+  const text = value == null ? "" : String(value);
+  return `<td${style ? ` style="${style}"` : ""}>${text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")}</td>`;
+}
+
+function downloadNeoRevenueTemplate() {
+  const headers = [
+    "PAN", "Client Name", "Partner Name", "Date", "Product", "Tnx Type", "Scheme Name",
+    "Amount", "Commission %", "Remarks", "Gross Revenue Jun'26", "Income Type",
+  ];
+  const rows = [
+    ["ABCDE1234F", "Sample Client One", "Manugopal A K", "30-Jun-26", "AIF", "Purchase", "NEO INFRA INCOME OPPORTUNITIES FUND II A1", "10000000", "1.78%", "", "178000", "Transactional"],
+    ["ABCDE1234F", "Sample Client One", "Manugopal A K", "30-Jun-26", "PMS", "Purchase", "Neo Multi-Asset Moderate Strategy", "55512299.93", "", "", "10265.97", "ARR"],
+    ["PQRST6789L", "Sample Client Two", "Manugopal A K", "30-Jun-26", "Mutual Fund", "Purchase", "HDFC Liquid Fund-Growth", "", "", "CAMS", "30.68", "ARR"],
+  ];
+  const headerHtml = headers.map(h => excelCell(h, "font-weight:bold;background:#17365D;color:#fff;border:1px solid #9EADCC;")).join("");
+  const sampleHtml = rows.map(row => `<tr>${row.map(v => excelCell(v, "background:#EAF3F8;border:1px solid #D9E2F3;")).join("")}</tr>`).join("");
+  const blankRows = Array.from({ length: 150 }, () => `<tr>${headers.map((_, idx) => excelCell("", `border:1px solid #D9E2F3;${idx === 1 || idx === 10 ? "background:#FFF2F2;" : ""}`)).join("")}</tr>`).join("");
+  const workbook = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    table { border-collapse: collapse; font-family: Calibri, Arial, sans-serif; font-size: 11pt; }
+    td { padding: 6px 8px; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <table>
+    <tr>${headerHtml}</tr>
+    ${sampleHtml}
+    ${blankRows}
+  </table>
+</body>
+</html>`;
+  const blob = new Blob(["\uFEFF" + workbook], { type:"application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "neo-revenue-import-template.xls";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function skippedBreakdown(rows) {
   const counts = new Map();
   rows.forEach(row => {
@@ -272,6 +321,7 @@ export default function Imports() {
           <button type="submit" style={btn()} disabled={!neoRevenueFile || !selectedNeoRevenueMonth || neoRevenueBusy}>
             {neoRevenueBusy ? "Importing..." : "Import Neo Revenue"}
           </button>
+          <button type="button" style={btn("ghost")} onClick={downloadNeoRevenueTemplate}>Download Template</button>
           {neoRevenueFile && <button type="button" style={btn("ghost")} onClick={() => { setNeoRevenueFile(null); setResult(null); setNeoRevenueFileInputKey(key => key + 1); }}>Clear</button>}
         </form>
         <div style={{ color:"var(--muted)", fontSize:".75rem", marginTop:".65rem" }}>
