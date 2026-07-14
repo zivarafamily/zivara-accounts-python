@@ -83,6 +83,18 @@ function findInvoiceSigner(inv, signersList) {
     list[0];
 }
 
+const cleanFilterValue = value => String(value || "").trim();
+const partnerFilterValue = inv => cleanFilterValue(inv.RaisedBy || inv.AuthorisedSignatory);
+const llpFilterValue = inv => cleanFilterValue(inv.SellerName);
+const clientFilterValue = inv => cleanFilterValue(inv.BuyerName);
+const monthFilterValue = inv => {
+  const formatted = formatBillingMonth(inv.BillingMonth);
+  return formatted === "—" ? "" : formatted;
+};
+const uniqueFilterOptions = (rows, getter) =>
+  Array.from(new Set(rows.map(getter).map(cleanFilterValue).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+
 const GST_STATE_NAMES = {
   "01":"Jammu & Kashmir","02":"Himachal Pradesh","03":"Punjab","04":"Chandigarh",
   "05":"Uttarakhand","06":"Haryana","07":"Delhi","08":"Rajasthan","09":"Uttar Pradesh",
@@ -449,6 +461,12 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
   const [editId,       setEditId]       = useState(null);
   const [search,       setSearch]       = useState("");
   const [statusF,      setStatusF]      = useState("");
+  const [partnerF,     setPartnerF]     = useState("");
+  const [llpF,         setLlpF]         = useState("");
+  const [clientF,      setClientF]      = useState("");
+  const [monthF,       setMonthF]       = useState("");
+  const [typeF,        setTypeF]        = useState("");
+  const [gstF,         setGstF]         = useState("");
   const [bankAccounts, setBankAccounts] = useState([]);
   const [employees,    setEmployees]    = useState([]);
   const [llps,         setLlps]         = useState([]);
@@ -761,19 +779,54 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
     }
   }
 
-  const filtered = useMemo(() => invoices.filter(inv => {
+  const visibleInvoices = useMemo(() => invoices.filter(inv => {
     // Partners only see their own invoices
     // Match on RaisedBy first; fall back to AuthorisedSignatory for invoices saved before RaisedBy column existed
-    const raisedBy = String(inv.RaisedBy || inv.AuthorisedSignatory || "").trim();
+    const raisedBy = partnerFilterValue(inv);
     if (isPartner && employeeRef && raisedBy !== String(employeeRef).trim()) return false;
-    const s = search.toLowerCase();
+    return true;
+  }), [invoices, isPartner, employeeRef]);
+
+  const partnerOptions = useMemo(() => uniqueFilterOptions(visibleInvoices, partnerFilterValue), [visibleInvoices]);
+  const llpOptions = useMemo(() => uniqueFilterOptions(visibleInvoices, llpFilterValue), [visibleInvoices]);
+  const clientOptions = useMemo(() => uniqueFilterOptions(visibleInvoices, clientFilterValue), [visibleInvoices]);
+  const monthOptions = useMemo(() => uniqueFilterOptions(visibleInvoices, monthFilterValue), [visibleInvoices]);
+  const typeOptions = useMemo(() => uniqueFilterOptions(visibleInvoices, inv => inv.InvoiceType), [visibleInvoices]);
+  const gstOptions = useMemo(() => uniqueFilterOptions(visibleInvoices, inv => inv.GSTMode), [visibleInvoices]);
+
+  const filtered = useMemo(() => visibleInvoices.filter(inv => {
+    const s = search.trim().toLowerCase();
+    const partner = partnerFilterValue(inv);
+    const llp = llpFilterValue(inv);
+    const client = clientFilterValue(inv);
+    const month = monthFilterValue(inv);
+    const type = cleanFilterValue(inv.InvoiceType);
+    const gst = cleanFilterValue(inv.GSTMode);
+    const searchableText = [
+      inv.InvoiceNo,
+      inv.InvoiceTitle,
+      inv.InvoiceDate,
+      inv.BillingMonth,
+      month,
+      type,
+      gst,
+      partner,
+      llp,
+      client,
+      inv.Particulars,
+      inv.Status,
+    ].map(v => String(v || "").toLowerCase()).join(" ");
     const matchSearch = !s ||
-      (inv.InvoiceNo    || "").toLowerCase().includes(s) ||
-      (inv.BillingMonth || "").toLowerCase().includes(s) ||
-      (inv.SellerName   || "").toLowerCase().includes(s);
+      searchableText.includes(s);
     const matchStatus = !statusF || inv.Status === statusF;
-    return matchSearch && matchStatus;
-  }), [invoices, search, statusF, isPartner, employeeRef]);
+    const matchPartner = !partnerF || partner === partnerF;
+    const matchLLP = !llpF || llp === llpF;
+    const matchClient = !clientF || client === clientF;
+    const matchMonth = !monthF || month === monthF;
+    const matchType = !typeF || type === typeF;
+    const matchGST = !gstF || gst === gstF;
+    return matchSearch && matchStatus && matchPartner && matchLLP && matchClient && matchMonth && matchType && matchGST;
+  }), [visibleInvoices, search, statusF, partnerF, llpF, clientF, monthF, typeF, gstF]);
 
   const statusColor = s => ({ Draft:"#f59e0b", Sent:"#6366f1", Paid:"#22c55e", Cancelled:"#ef4444" }[s] || "var(--muted)");
 
@@ -1125,7 +1178,7 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
                 <button type="button"
                   style={{ ...btn("ghost"), border:"1px solid #6366f1", color:"#6366f1" }}
                   onClick={() => printInvoice(form, signers)}>
-                  Preview PDF
+                  Download PDF
                 </button>
                 <button type="submit" style={btn("primary")} disabled={saving}>
                   {saving ? "Saving…" : editId ? "Update Invoice" : "Save Invoice"}
@@ -1141,16 +1194,56 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
       <div style={{ ...card, display:"flex", gap:".75rem", flexWrap:"wrap", alignItems:"center" }}>
         <input
           style={{ ...inp, maxWidth:"260px" }}
-          placeholder="Search invoice no, month, seller…"
+          placeholder="Search invoice no, client, partner…"
           value={search}
           onChange={e=>setSearch(e.target.value)}
         />
+        <select style={{ ...inp, maxWidth:"190px" }} value={partnerF} onChange={e=>setPartnerF(e.target.value)}>
+          <option value="">All partners</option>
+          {partnerOptions.map(v=><option key={v} value={v}>{v}</option>)}
+        </select>
+        <select style={{ ...inp, maxWidth:"210px" }} value={llpF} onChange={e=>setLlpF(e.target.value)}>
+          <option value="">All LLPs</option>
+          {llpOptions.map(v=><option key={v} value={v}>{v}</option>)}
+        </select>
+        <select style={{ ...inp, maxWidth:"230px" }} value={clientF} onChange={e=>setClientF(e.target.value)}>
+          <option value="">All clients</option>
+          {clientOptions.map(v=><option key={v} value={v}>{v}</option>)}
+        </select>
+        <select style={{ ...inp, maxWidth:"150px" }} value={monthF} onChange={e=>setMonthF(e.target.value)}>
+          <option value="">All months</option>
+          {monthOptions.map(v=><option key={v} value={v}>{v}</option>)}
+        </select>
+        <select style={{ ...inp, maxWidth:"160px" }} value={typeF} onChange={e=>setTypeF(e.target.value)}>
+          <option value="">All types</option>
+          {typeOptions.map(v=><option key={v} value={v}>{v}</option>)}
+        </select>
+        <select style={{ ...inp, maxWidth:"160px" }} value={gstF} onChange={e=>setGstF(e.target.value)}>
+          <option value="">All GST modes</option>
+          {gstOptions.map(v=><option key={v} value={v}>{v}</option>)}
+        </select>
         <select style={{ ...inp, maxWidth:"160px" }} value={statusF} onChange={e=>setStatusF(e.target.value)}>
           <option value="">All Statuses</option>
           {STATUSES.map(s=><option key={s}>{s}</option>)}
         </select>
-        {(search || statusF) && <button style={btn("ghost")} onClick={()=>{setSearch("");setStatusF("");}}>Clear</button>}
-        <span style={{ marginLeft:"auto", fontSize:".8rem", color:"var(--muted)" }}>{filtered.length} of {invoices.length}</span>
+        {(search || statusF || partnerF || llpF || clientF || monthF || typeF || gstF) && (
+          <button
+            style={btn("ghost")}
+            onClick={()=>{
+              setSearch("");
+              setStatusF("");
+              setPartnerF("");
+              setLlpF("");
+              setClientF("");
+              setMonthF("");
+              setTypeF("");
+              setGstF("");
+            }}
+          >
+            Clear
+          </button>
+        )}
+        <span style={{ marginLeft:"auto", fontSize:".8rem", color:"var(--muted)" }}>{filtered.length} of {visibleInvoices.length}</span>
       </div>
 
       {/* ── TABLE ──────────────────────────────────────────────────────────── */}
@@ -1166,7 +1259,7 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:".83rem" }}>
               <thead>
                 <tr style={{ borderBottom:"1px solid var(--border)" }}>
-                  {["Invoice No","Title","Date","Month","Type","GST Mode","Seller","Amount","Status",""].map(h=>
+                  {["Invoice No","Title","Date","Month","Type","GST Mode","Partner","LLP","Client","Amount","Status",""].map(h=>
                     <th key={h} style={{ padding:".5rem .65rem", textAlign:"left", color:"var(--muted)", fontWeight:600, whiteSpace:"nowrap" }}>{h}</th>
                   )}
                 </tr>
@@ -1180,7 +1273,9 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
                     <td style={{ padding:".5rem .65rem" }}>{formatBillingMonth(inv.BillingMonth)}</td>
                     <td style={{ padding:".5rem .65rem", color:"var(--muted)", fontSize:".78rem" }}>{inv.InvoiceType || "—"}</td>
                     <td style={{ padding:".5rem .65rem", color:"var(--muted)", fontSize:".78rem" }}>{inv.GSTMode || "—"}</td>
-                    <td style={{ padding:".5rem .65rem" }}>{inv.SellerName || "—"}</td>
+                    <td style={{ padding:".5rem .65rem" }}>{partnerFilterValue(inv) || "—"}</td>
+                    <td style={{ padding:".5rem .65rem" }}>{llpFilterValue(inv) || "—"}</td>
+                    <td style={{ padding:".5rem .65rem" }}>{clientFilterValue(inv) || "—"}</td>
                     <td style={{ padding:".5rem .65rem", fontWeight:600, color:"var(--accent)", whiteSpace:"nowrap" }}>{fmt(inv.Amount)}</td>
                     <td style={{ padding:".5rem .65rem" }}>
                       <span style={{ background:statusColor(inv.Status)+"22", color:statusColor(inv.Status), padding:".2rem .65rem", borderRadius:"99px", fontSize:".72rem", fontWeight:600 }}>
@@ -1190,7 +1285,7 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
                     <td style={{ padding:".5rem .4rem", whiteSpace:"nowrap" }}>
                       <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem" }} onClick={()=>openEdit(inv)}>Edit</button>
                       {" "}
-                      <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem", border:"1px solid #6366f1", color:"#6366f1" }} onClick={()=>printInvoice(inv, signers)}>PDF</button>
+                      <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem", border:"1px solid #6366f1", color:"#6366f1" }} onClick={()=>printInvoice(inv, signers)}>Download PDF</button>
                       {" "}
                       <button style={{ ...btn("ghost"), padding:".25rem .6rem", fontSize:".78rem", color:"var(--danger)" }} onClick={()=>removeInvoice(inv)}>Delete</button>
                     </td>
