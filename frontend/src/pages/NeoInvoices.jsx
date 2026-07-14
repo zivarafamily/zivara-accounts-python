@@ -95,6 +95,10 @@ const uniqueFilterOptions = (rows, getter) =>
   Array.from(new Set(rows.map(getter).map(cleanFilterValue).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
 
+function csvCell(value) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
 const GST_STATE_NAMES = {
   "01":"Jammu & Kashmir","02":"Himachal Pradesh","03":"Punjab","04":"Chandigarh",
   "05":"Uttarakhand","06":"Haryana","07":"Delhi","08":"Rajasthan","09":"Uttar Pradesh",
@@ -831,6 +835,57 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
 
   const statusColor = s => ({ Draft:"#f59e0b", Sent:"#6366f1", Paid:"#22c55e", Cancelled:"#ef4444" }[s] || "var(--muted)");
 
+  function exportFilteredCSV() {
+    const headers = [
+      "Invoice No", "Invoice Title", "Invoice Date", "Billing Month", "Invoice Type", "GST Mode",
+      "Partner", "LLP", "Seller GSTIN", "Seller PAN", "Client", "Client GSTIN", "Client State",
+      "Particulars", "Taxable Amount", "GST Type", "GST Rate (%)", "CGST", "SGST", "IGST",
+      "GST Amount", "Total Amount", "TDS Rate (%)", "TDS Amount", "Net Payable", "Status", "Notes",
+    ];
+    const dataRows = filtered.map(inv => [
+      inv.InvoiceNo,
+      inv.InvoiceTitle || "Invoice",
+      formatDate(inv.InvoiceDate),
+      monthFilterValue(inv),
+      inv.InvoiceType,
+      inv.GSTMode,
+      partnerFilterValue(inv),
+      llpFilterValue(inv),
+      inv.SellerGSTIN,
+      inv.SellerPAN,
+      clientFilterValue(inv),
+      inv.BuyerGSTIN,
+      inv.BuyerState,
+      inv.Particulars,
+      inv.TaxableAmount,
+      inv.GSTType,
+      inv.GSTRate,
+      inv.CGSTAmount,
+      inv.SGSTAmount,
+      inv.IGSTAmount,
+      inv.GSTAmount,
+      inv.Amount,
+      inv.TDSRate,
+      inv.TDSAmount,
+      inv.NetPayable,
+      inv.Status,
+      inv.Notes,
+    ]);
+    const csv = [
+      headers.map(csvCell).join(","),
+      ...dataRows.map(row => row.map(csvCell).join(",")),
+    ].join("\r\n");
+    const blob = new Blob(["\ufeff", csv], { type:"text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `neo-invoices-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:"1.25rem" }}>
 
@@ -1244,6 +1299,7 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
             Clear
           </button>
         )}
+        <button style={btn("ghost")} onClick={exportFilteredCSV} disabled={!filtered.length}>Export Excel</button>
         <span style={{ marginLeft:"auto", fontSize:".8rem", color:"var(--muted)" }}>{filtered.length} of {visibleInvoices.length}</span>
       </div>
 
