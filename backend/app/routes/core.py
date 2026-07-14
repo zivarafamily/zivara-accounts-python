@@ -39,7 +39,7 @@ from app.services.neo_revenue import (
     serialize_client,
     serialize_revenue,
 )
-from app.services.payables import calculate_amounts, create_payable, normalize_tds_section, payable_status, serialize_payable
+from app.services.payables import calculate_amounts, create_payable, normalize_line_items, normalize_tds_section, payable_status, serialize_payable, tax_breakdown
 
 router = APIRouter(tags=["core"])
 
@@ -581,6 +581,7 @@ def update_payable(id: str, payload: dict, db: Session = Depends(get_db), user: 
         raise HTTPException(status_code=404, detail="Payable not found")
     merged = serialize_payable(db, item) | payload
     taxable, gst, gross, tds_rate, tds, net = calculate_amounts(merged)
+    cgst, sgst, igst, gst, tcs = tax_breakdown(merged)
     if "VendorName" in payload:
         item.vendor_name = payload.get("VendorName") or ""
     if "BillNo" in payload:
@@ -602,7 +603,9 @@ def update_payable(id: str, payload: dict, db: Session = Depends(get_db), user: 
         item.expense_type = payload.get("ExpenseType") or ""
     if "Description" in payload:
         item.description = payload.get("Description") or ""
-    item.taxable_amount, item.gst_amount, item.gross_amount = taxable, gst, gross
+    item.taxable_amount, item.cgst_amount, item.sgst_amount, item.igst_amount = taxable, cgst, sgst, igst
+    item.gst_amount, item.tcs_amount, item.gross_amount = gst, tcs, gross
+    item.line_items = normalize_line_items(merged.get("LineItems"))
     item.tds_section = normalize_tds_section(merged.get("TDSSection"), tds_rate, merged.get("VendorCategory") or item.vendor_category)
     item.tds_rate, item.tds_amount, item.net_payable = tds_rate, tds, net
     item.tds_deducted_amount = dec(merged.get("TDSDeductedAmount"))

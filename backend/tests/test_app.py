@@ -137,6 +137,34 @@ def test_payable_calculations():
     assert net == Decimal("1080.00")
 
 
+def test_payable_tax_components_and_tcs_are_calculated(client, auth_headers):
+    res = client.post(
+        "/payables",
+        headers=auth_headers,
+        json={
+            "VendorName": "Tax Component Vendor",
+            "VendorCategory": "Office Purchase",
+            "BillNo": "TAX-COMP-1",
+            "BillDate": "2026-07-10",
+            "TaxableAmount": "1000",
+            "CGSTAmount": "45",
+            "SGSTAmount": "45",
+            "IGSTAmount": "50",
+            "TCSAmount": "10",
+            "TDSRate": "2",
+            "LineItems": [{"Particulars": "Mixed GST", "TaxableAmount": "1000", "GSTRate": "14"}],
+        },
+    )
+    assert res.status_code == 200
+    row = res.json()["data"]
+    assert row["GSTAmount"] == 140.0
+    assert row["TCSAmount"] == 10.0
+    assert row["GrossAmount"] == 1150.0
+    assert row["TDSAmount"] == 20.0
+    assert row["NetPayable"] == 1130.0
+    assert row["LineItems"][0]["Particulars"] == "Mixed GST"
+
+
 def test_legacy_tds_sections_normalize_to_section_393():
     assert normalize_tds_section("194C", "2", "Travel Agency") == "393(1)-6(i)-2"
     assert normalize_tds_section("194J", "10", "Software") == "393(1)-6(iii)-10"

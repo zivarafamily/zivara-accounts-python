@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -41,18 +42,58 @@ def normalize_tds_section(section: object, tds_rate: object = None, category: st
 
 def calculate_amounts(payload: dict):
     taxable = dec(payload.get("TaxableAmount") or payload.get("taxable_amount"))
+    cgst = dec(payload.get("CGSTAmount") or payload.get("cgst_amount"))
+    sgst = dec(payload.get("SGSTAmount") or payload.get("sgst_amount"))
+    igst = dec(payload.get("IGSTAmount") or payload.get("igst_amount"))
     gst = dec(payload.get("GSTAmount") or payload.get("gst_amount"))
+    if not gst:
+        gst = cgst + sgst + igst
+    tcs = dec(payload.get("TCSAmount") or payload.get("tcs_amount"))
     gross = dec(payload.get("GrossAmount") or payload.get("Amount") or payload.get("gross_amount"))
     if not gross:
-        gross = taxable + gst
+        gross = taxable + gst + tcs
     if not taxable and gross:
-        taxable = max(gross - gst, Decimal("0.00"))
+        taxable = max(gross - gst - tcs, Decimal("0.00"))
     tds_rate = dec(payload.get("TDSRate") or payload.get("tds_rate"))
     tds = dec(payload.get("TDSAmount") or payload.get("tds_amount"))
     if not tds and tds_rate:
         tds = (taxable * tds_rate / Decimal("100")).quantize(Decimal("0.01"))
     net = max(gross - tds, Decimal("0.00"))
     return taxable, gst, gross, tds_rate, tds, net
+
+
+def tax_breakdown(payload: dict):
+    cgst = dec(payload.get("CGSTAmount") or payload.get("cgst_amount"))
+    sgst = dec(payload.get("SGSTAmount") or payload.get("sgst_amount"))
+    igst = dec(payload.get("IGSTAmount") or payload.get("igst_amount"))
+    gst = dec(payload.get("GSTAmount") or payload.get("gst_amount"))
+    if not gst:
+        gst = cgst + sgst + igst
+    elif not (cgst or sgst or igst):
+        igst = gst
+    tcs = dec(payload.get("TCSAmount") or payload.get("tcs_amount"))
+    return cgst, sgst, igst, gst, tcs
+
+
+def normalize_line_items(value):
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, separators=(",", ":"))
+    except TypeError:
+        return ""
+
+
+def parse_line_items(value):
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError):
+        return []
 
 
 def payable_status(net, paid, current=""):
@@ -86,8 +127,13 @@ def serialize_payable(db: Session, p: LLPPayable):
         "ExpenseType": p.expense_type,
         "Description": p.description,
         "TaxableAmount": money(p.taxable_amount),
+        "CGSTAmount": money(p.cgst_amount),
+        "SGSTAmount": money(p.sgst_amount),
+        "IGSTAmount": money(p.igst_amount),
         "GSTAmount": money(p.gst_amount),
+        "TCSAmount": money(p.tcs_amount),
         "GrossAmount": money(p.gross_amount),
+        "LineItems": parse_line_items(p.line_items),
         "TDSSection": tds_section,
         "TDSSectionRaw": p.tds_section,
         "TDSSectionLabel": TDS_SECTION_LABELS.get(tds_section, tds_section),
@@ -127,6 +173,7 @@ def create_payable(db: Session, payload: dict, llp_id: str, user_email: str):
         if exists:
             raise HTTPException(status_code=409, detail="Duplicate payable bill already exists")
     taxable, gst, gross, tds_rate, tds, net = calculate_amounts(payload)
+    cgst, sgst, igst, gst, tcs = tax_breakdown(payload)
     paid = dec(payload.get("PaidAmount"))
     tds_deducted = dec(payload.get("TDSDeductedAmount"))
     if paid > 0 and not tds_deducted:
@@ -146,8 +193,13 @@ def create_payable(db: Session, payload: dict, llp_id: str, user_email: str):
         expense_type=payload.get("ExpenseType") or "Vendor Bill",
         description=payload.get("Description") or "",
         taxable_amount=taxable,
+        cgst_amount=cgst,
+        sgst_amount=sgst,
+        igst_amount=igst,
         gst_amount=gst,
+        tcs_amount=tcs,
         gross_amount=gross,
+        line_items=normalize_line_items(payload.get("LineItems")),
         tds_section=normalize_tds_section(payload.get("TDSSection"), tds_rate, payload.get("VendorCategory") or ""),
         tds_rate=tds_rate,
         tds_amount=tds,

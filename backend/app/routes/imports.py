@@ -31,7 +31,7 @@ from app.security import hash_password
 from app.services.common import audit, make_id, normalize_key, parse_date
 from app.services.neo_invoices import apply_neo_invoice_payload, create_neo_invoice
 from app.services.neo_revenue import apply_client_payload, apply_revenue_payload, create_revenue, duplicate_key, serialize_revenue
-from app.services.payables import calculate_amounts, normalize_tds_section, payable_status
+from app.services.payables import calculate_amounts, normalize_line_items, normalize_tds_section, payable_status, tax_breakdown
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -662,6 +662,7 @@ async def import_accounts_workbook(
         vendor = _vendor(db, llp_id, row.get("VendorName"))
         merged = {key: row.get(key) for key in row}
         taxable, gst, gross, tds_rate, tds, net = calculate_amounts(merged)
+        cgst, sgst, igst, gst, tcs = tax_breakdown(merged)
         item = db.get(LLPPayable, _text(row.get("PayableID"))) if _text(row.get("PayableID")) else None
         item = item or LLPPayable(id=_text(row.get("PayableID")) or make_id("PAY"), llp_id=llp_id, vendor_name="", bill_no="", normalized_bill_no="")
         item.llp_id = llp_id
@@ -676,7 +677,9 @@ async def import_accounts_workbook(
         item.due_date = parse_date(row.get("DueDate"))
         item.expense_type = _text(row.get("ExpenseType")) or "Vendor Bill"
         item.description = _text(row.get("Description"))
-        item.taxable_amount, item.gst_amount, item.gross_amount = taxable, gst, gross
+        item.taxable_amount, item.cgst_amount, item.sgst_amount, item.igst_amount = taxable, cgst, sgst, igst
+        item.gst_amount, item.tcs_amount, item.gross_amount = gst, tcs, gross
+        item.line_items = normalize_line_items(row.get("LineItems"))
         item.tds_section = normalize_tds_section(row.get("TDSSection"), tds_rate, item.vendor_category)
         item.tds_rate, item.tds_amount, item.net_payable = tds_rate, tds, net
         item.tds_deducted_amount = _money(row.get("TDSDeductedAmount"))
