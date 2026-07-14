@@ -511,22 +511,23 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
     const defaultSignature = signatureOverrides[defaultSigner.label] ||
       signatureOverrides[defaultSigner.signatory] ||
       defaultSigner.signatureUrl;
+    const employeeSigners = employees
+      .filter(e => e.InvoicePrefixGST || knownSignerForName(e.Name))
+      .map(e => {
+        const known = knownSignerForName(e.Name);
+        return {
+          label:        e.Name,
+          prefixGST:    e.InvoicePrefixGST || known?.prefixGST || "",
+          prefixNG:     e.InvoicePrefixNG || known?.prefixNG || ((e.InvoicePrefixGST || known?.prefixGST || "") + "N"),
+          signatory:    e.Name,
+          signatureUrl: resolveAssetUrl(signatureOverrides[e.Name] || e.SignatureURL || known?.signatureUrl || ""),
+        };
+      });
     return uniqueSigners([
       { ...defaultSigner, signatureUrl: resolveAssetUrl(defaultSignature) },
       ...(loggedInPartnerSigner ? [{ ...loggedInPartnerSigner, signatureUrl: resolveAssetUrl(signedInSignature || loggedInPartnerSigner.signatureUrl) }] : []),
+      ...employeeSigners,
       ...PARTNER_SIGNERS.map(s => ({ ...s, signatureUrl: resolveAssetUrl(signatureOverrides[s.label] || s.signatureUrl) })),
-      ...employees
-        .filter(e => e.InvoicePrefixGST || knownSignerForName(e.Name))
-        .map(e => {
-          const known = knownSignerForName(e.Name);
-          return {
-            label:        e.Name,
-            prefixGST:    e.InvoicePrefixGST || known?.prefixGST || "",
-            prefixNG:     e.InvoicePrefixNG || known?.prefixNG || ((e.InvoicePrefixGST || known?.prefixGST || "") + "N"),
-            signatory:    e.Name,
-            signatureUrl: resolveAssetUrl(signatureOverrides[e.Name] || e.SignatureURL || known?.signatureUrl || ""),
-          };
-        }),
     ]);
   }, [employees, employeeRef, llpDefaults.signer, signatureOverrides, authSignatureUrl]);
 
