@@ -36,17 +36,23 @@ const btn = (v = "primary") => ({
   color:v === "primary" ? "#fff" : "var(--muted)",
 });
 
-const fmt = n => n != null && n !== "" && !isNaN(Number(n))
-  ? "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 })
+const num = value => {
+  if (value == null || value === "") return 0;
+  const cleaned = String(value).replace(/[^0-9.-]/g, "");
+  return cleaned && !isNaN(Number(cleaned)) ? Number(cleaned) : 0;
+};
+
+const fmt = n => n != null && n !== "" && !isNaN(num(n))
+  ? "₹" + num(n).toLocaleString("en-IN", { minimumFractionDigits: 2 })
   : "—";
 
-const tdsDeducted = row => Number(row.TDSDeductedAmount || 0);
-const tdsPending = row => Math.max(Number(row.TDSAmount || 0) - tdsDeducted(row), 0);
+const tdsDeducted = row => num(row.TDSDeductedAmount);
+const tdsPending = row => Math.max(num(row.TDSAmount) - tdsDeducted(row), 0);
 
 const tdsDisplay = row => {
   const parts = [];
   if (row.TDSSection) parts.push(row.TDSSection);
-  if (Number(row.TDSRate) > 0) parts.push(`${Number(row.TDSRate).toLocaleString("en-IN")}%`);
+  if (num(row.TDSRate) > 0) parts.push(`${num(row.TDSRate).toLocaleString("en-IN")}%`);
   parts.push(fmt(row.TDSAmount));
   if (tdsPending(row) > 0) parts.push(`pending ${fmt(tdsPending(row))}`);
   return parts.join(" · ");
@@ -55,15 +61,15 @@ const tdsDisplay = row => {
 function calc(form) {
   const lineTotals = calcLineItems(form.LineItems || []);
   const useLines = lineTotals.hasValues;
-  const taxable = useLines ? lineTotals.taxable : Number(form.TaxableAmount || 0);
-  const cgst = useLines ? lineTotals.cgst : Number(form.CGSTAmount || 0);
-  const sgst = useLines ? lineTotals.sgst : Number(form.SGSTAmount || 0);
-  const igst = useLines ? lineTotals.igst : Number(form.IGSTAmount || 0);
-  const gst = cgst + sgst + igst || Number(form.GSTAmount || 0);
-  const tcs = useLines ? lineTotals.tcs : Number(form.TCSAmount || 0);
-  const gross = Number(form.GrossAmount || 0) || taxable + gst + tcs;
-  const tdsRate = Number(form.TDSRate || 0);
-  const tds = form.TDSAmount !== "" ? Number(form.TDSAmount || 0) : Math.round(taxable * tdsRate) / 100;
+  const taxable = useLines ? lineTotals.taxable : num(form.TaxableAmount);
+  const cgst = useLines ? lineTotals.cgst : num(form.CGSTAmount);
+  const sgst = useLines ? lineTotals.sgst : num(form.SGSTAmount);
+  const igst = useLines ? lineTotals.igst : num(form.IGSTAmount);
+  const gst = cgst + sgst + igst || num(form.GSTAmount);
+  const tcs = useLines ? lineTotals.tcs : num(form.TCSAmount);
+  const gross = num(form.GrossAmount) || taxable + gst + tcs;
+  const tdsRate = num(form.TDSRate);
+  const tds = form.TDSAmount !== "" ? num(form.TDSAmount) : Math.round(taxable * tdsRate) / 100;
   const net = Math.max(gross - tds, 0);
   return { taxable, cgst, sgst, igst, gst, tcs, gross, tds, net };
 }
@@ -83,12 +89,12 @@ function calcLineItems(items = []) {
 }
 
 function calcLineItem(item = {}) {
-  const taxable = Number(item.TaxableAmount || 0);
-  const rate = Number(item.GSTRate || 0);
-  let cgst = Number(item.CGSTAmount || 0);
-  let sgst = Number(item.SGSTAmount || 0);
-  let igst = Number(item.IGSTAmount || 0);
-  const tcs = Number(item.TCSAmount || 0);
+  const taxable = num(item.TaxableAmount);
+  const rate = num(item.GSTRate);
+  let cgst = num(item.CGSTAmount);
+  let sgst = num(item.SGSTAmount);
+  let igst = num(item.IGSTAmount);
+  const tcs = num(item.TCSAmount);
   if (!cgst && !sgst && !igst && taxable && rate) {
     const gst = Math.round(taxable * rate) / 100;
     if (item.GSTType === "CGST_SGST") {
@@ -220,19 +226,19 @@ export default function PaymentTracker() {
   }, [rows, vendorFilter, billFilter, status, category]);
 
   const filteredSummary = useMemo(() => filtered.reduce((sum, row) => ({
-    grossAmount:sum.grossAmount + Number(row.GrossAmount || 0),
-    tdsAmount:sum.tdsAmount + Number(row.TDSAmount || 0),
+    grossAmount:sum.grossAmount + num(row.GrossAmount),
+    tdsAmount:sum.tdsAmount + num(row.TDSAmount),
     tdsDeductedAmount:sum.tdsDeductedAmount + tdsDeducted(row),
     tdsPendingAmount:sum.tdsPendingAmount + tdsPending(row),
-    netPayable:sum.netPayable + Number(row.NetPayable || 0),
-    balanceAmount:sum.balanceAmount + Number(row.BalanceAmount || 0),
+    netPayable:sum.netPayable + num(row.NetPayable),
+    balanceAmount:sum.balanceAmount + num(row.BalanceAmount),
   }), { grossAmount:0, tdsAmount:0, tdsDeductedAmount:0, tdsPendingAmount:0, netPayable:0, balanceAmount:0 }), [filtered]);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const setBatch = (k, v) => setBatchForm(p => ({ ...p, [k]: v }));
 
   const outstandingPayables = useMemo(
-    () => rows.filter(row => row.Status !== "Paid" && row.Status !== "Cancelled" && Number(row.BalanceAmount || row.NetPayable || 0) > 0),
+    () => rows.filter(row => row.Status !== "Paid" && row.Status !== "Cancelled" && num(row.BalanceAmount || row.NetPayable) > 0),
     [rows]
   );
 
@@ -243,7 +249,7 @@ export default function PaymentTracker() {
       if (!key) return;
       const current = map.get(key) || { key, name:row.VendorName || "Unknown Vendor", count:0, total:0 };
       current.count += 1;
-      current.total += Number(row.BalanceAmount || row.NetPayable || 0);
+      current.total += num(row.BalanceAmount || row.NetPayable);
       map.set(key, current);
     });
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -259,19 +265,19 @@ export default function PaymentTracker() {
   const selectedBatchTotal = useMemo(
     () => batchVendorRows
       .filter(row => batchForm.PayableIDs.includes(row.PayableID))
-      .reduce((sum, row) => sum + Number(row.BalanceAmount || row.NetPayable || 0), 0),
+      .reduce((sum, row) => sum + num(row.BalanceAmount || row.NetPayable), 0),
     [batchVendorRows, batchForm.PayableIDs]
   );
   const selectedBatchGross = useMemo(
     () => batchVendorRows
       .filter(row => batchForm.PayableIDs.includes(row.PayableID))
-      .reduce((sum, row) => sum + Number(row.GrossAmount || 0), 0),
+      .reduce((sum, row) => sum + num(row.GrossAmount), 0),
     [batchVendorRows, batchForm.PayableIDs]
   );
   const selectedBatchTDS = useMemo(
     () => batchVendorRows
       .filter(row => batchForm.PayableIDs.includes(row.PayableID))
-      .reduce((sum, row) => sum + Number(row.TDSAmount || 0), 0),
+      .reduce((sum, row) => sum + num(row.TDSAmount), 0),
     [batchVendorRows, batchForm.PayableIDs]
   );
   const selectedBatchPaymentTarget = batchForm.TDSMode === "gross_pending_tds" ? selectedBatchGross : selectedBatchTotal;
@@ -279,13 +285,13 @@ export default function PaymentTracker() {
   function batchTotalFor(payableIds, sourceRows = batchVendorRows) {
     return sourceRows
       .filter(row => payableIds.includes(row.PayableID))
-      .reduce((sum, row) => sum + Number(row.BalanceAmount || row.NetPayable || 0), 0);
+      .reduce((sum, row) => sum + num(row.BalanceAmount || row.NetPayable), 0);
   }
 
   function batchGrossTotalFor(payableIds, sourceRows = batchVendorRows) {
     return sourceRows
       .filter(row => payableIds.includes(row.PayableID))
-      .reduce((sum, row) => sum + Number(row.GrossAmount || 0), 0);
+      .reduce((sum, row) => sum + num(row.GrossAmount), 0);
   }
 
   function batchPaymentTarget(payableIds, sourceRows = batchVendorRows, tdsMode = batchForm.TDSMode) {
@@ -584,7 +590,7 @@ export default function PaymentTracker() {
       setError("Select at least one bill for batch payment");
       return;
     }
-    const paidAmount = Number(batchForm.PaidAmount || 0);
+    const paidAmount = num(batchForm.PaidAmount);
     if (paidAmount <= 0) {
       setError("Paid amount must be greater than zero");
       return;
@@ -738,7 +744,7 @@ export default function PaymentTracker() {
                     <td title={row.TDSSectionLabel || row.TDSSection || ""} style={{ color:"var(--warning)", whiteSpace:"nowrap" }}>{tdsDisplay(row)}</td>
                     <td style={{ color:"var(--accent)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.NetPayable)}</td>
                     <td style={{ color:"var(--success)", whiteSpace:"nowrap" }}>{fmt(row.PaidAmount)}</td>
-                    <td style={{ color:Number(row.BalanceAmount) > 0 ? "var(--danger)" : "var(--muted)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.BalanceAmount)}</td>
+                    <td style={{ color:num(row.BalanceAmount) > 0 ? "var(--danger)" : "var(--muted)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.BalanceAmount)}</td>
                     <td><Badge value={row.Status} /></td>
                     <td style={{ whiteSpace:"nowrap" }}>
                       <button style={{ ...btn("ghost"), padding:".3rem .6rem" }} onClick={()=>openEdit(row)}>Edit</button>{" "}
@@ -862,10 +868,10 @@ export default function PaymentTracker() {
                   {(form.LineItems || []).map((item, index) => (
                     <div key={index} style={{ display:"grid", gridTemplateColumns:"minmax(160px,1.5fr) repeat(5,minmax(105px,1fr)) auto", gap:".55rem", alignItems:"end" }}>
                       <div><label style={label}>Particulars</label><input value={item.Particulars || ""} onChange={e=>updateLineItem(index, "Particulars", e.target.value)} placeholder="Service / item" /></div>
-                      <div><label style={label}>Taxable</label><input type="number" min="0" step="0.01" value={item.TaxableAmount || ""} onChange={e=>updateLineItem(index, "TaxableAmount", e.target.value)} /></div>
+                      <div><label style={label}>Taxable</label><input inputMode="decimal" value={item.TaxableAmount || ""} onChange={e=>updateLineItem(index, "TaxableAmount", e.target.value)} /></div>
                       <div><label style={label}>GST Type</label><select value={item.GSTType || "IGST"} onChange={e=>updateLineItem(index, "GSTType", e.target.value)}><option value="IGST">IGST</option><option value="CGST_SGST">CGST + SGST</option><option value="None">No GST</option></select></div>
-                      <div><label style={label}>GST %</label><input type="number" min="0" step="0.01" value={item.GSTRate || ""} onChange={e=>updateLineItem(index, "GSTRate", e.target.value)} /></div>
-                      <div><label style={label}>TCS</label><input type="number" min="0" step="0.01" value={item.TCSAmount || ""} onChange={e=>updateLineItem(index, "TCSAmount", e.target.value)} /></div>
+                      <div><label style={label}>GST %</label><input inputMode="decimal" value={item.GSTRate || ""} onChange={e=>updateLineItem(index, "GSTRate", e.target.value)} /></div>
+                      <div><label style={label}>TCS</label><input inputMode="decimal" value={item.TCSAmount || ""} onChange={e=>updateLineItem(index, "TCSAmount", e.target.value)} /></div>
                       <div><label style={label}>Line Total</label><input readOnly value={fmt(calcLineItem(item).total)} /></div>
                       <button type="button" style={{ ...btn("ghost"), padding:".45rem .55rem", color:"var(--danger)" }} onClick={()=>removeLineItem(index)}>Remove</button>
                     </div>
@@ -874,11 +880,11 @@ export default function PaymentTracker() {
                     Use separate rows when one invoice has 18% GST for one item and 5% GST for another. Totals below are calculated from these rows.
                   </div>
                 </div>
-                <div><label style={label}>Taxable Value</label><input type="number" min="0" step="0.01" value={form.TaxableAmount} onChange={e=>set("TaxableAmount", e.target.value)} /></div>
-                <div><label style={label}>CGST</label><input type="number" min="0" step="0.01" value={form.CGSTAmount} onChange={e=>set("CGSTAmount", e.target.value)} /></div>
-                <div><label style={label}>SGST</label><input type="number" min="0" step="0.01" value={form.SGSTAmount} onChange={e=>set("SGSTAmount", e.target.value)} /></div>
-                <div><label style={label}>IGST</label><input type="number" min="0" step="0.01" value={form.IGSTAmount} onChange={e=>set("IGSTAmount", e.target.value)} /></div>
-                <div><label style={label}>TCS</label><input type="number" min="0" step="0.01" value={form.TCSAmount} onChange={e=>set("TCSAmount", e.target.value)} /></div>
+                <div><label style={label}>Taxable Value</label><input inputMode="decimal" value={form.TaxableAmount} onChange={e=>set("TaxableAmount", e.target.value)} /></div>
+                <div><label style={label}>CGST</label><input inputMode="decimal" value={form.CGSTAmount} onChange={e=>set("CGSTAmount", e.target.value)} /></div>
+                <div><label style={label}>SGST</label><input inputMode="decimal" value={form.SGSTAmount} onChange={e=>set("SGSTAmount", e.target.value)} /></div>
+                <div><label style={label}>IGST</label><input inputMode="decimal" value={form.IGSTAmount} onChange={e=>set("IGSTAmount", e.target.value)} /></div>
+                <div><label style={label}>TCS</label><input inputMode="decimal" value={form.TCSAmount} onChange={e=>set("TCSAmount", e.target.value)} /></div>
                 <div><label style={label}>GST Total</label><input type="text" value={fmt(amounts.gst)} readOnly /></div>
                 <div><label style={label}>Gross Bill Amount</label><input type="text" value={fmt(amounts.gross)} readOnly /></div>
                 <div>
