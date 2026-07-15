@@ -188,6 +188,40 @@ def serialize_bank_account(db: Session, a: BankAccount):
     }
 
 
+def _bank_account_from_payload(db: Session, llp_id: str, payload: dict) -> BankAccount | None:
+    value = str(
+        payload.get("BankAccountID")
+        or payload.get("AccountID")
+        or payload.get("PaidBy")
+        or payload.get("BankAccount")
+        or ""
+    ).strip()
+    if not value:
+        return None
+    return db.query(BankAccount).filter(
+        BankAccount.llp_id == llp_id,
+        (
+            (BankAccount.id == value)
+            | (BankAccount.account_name == value)
+            | (BankAccount.bank_name == value)
+            | (BankAccount.account_number == value)
+        ),
+    ).first()
+
+
+def _recalculate_bank_balance(db: Session, bank: BankAccount):
+    entries = db.query(CashBookEntry).filter(
+        CashBookEntry.llp_id == bank.llp_id,
+        CashBookEntry.paid_by == bank.id,
+    ).order_by(CashBookEntry.entry_date, CashBookEntry.created_at, CashBookEntry.id).all()
+    balance = dec(bank.opening_balance)
+    for entry in entries:
+        entry.opening_balance = balance
+        balance = balance + dec(entry.amount_in) - dec(entry.amount_out)
+        entry.closing_balance = balance
+    bank.current_balance = balance
+
+
 @router.get("/health")
 def health():
     return {"ok": True, "timestamp": datetime.now(timezone.utc).isoformat()}
@@ -1263,16 +1297,25 @@ def cash_book(db: Session = Depends(get_db), llp_id: str | None = Depends(get_ll
     q = db.query(CashBookEntry)
     if llp_id:
         q = q.filter(CashBookEntry.llp_id == llp_id)
-    return {"ok": True, "data": [{"EntryID": c.id, "LLPID": c.llp_id, "LLPName": llp_name(db, c.llp_id), "Date": iso(c.entry_date), "Type": c.entry_type, "OpeningBalance": money(c.opening_balance), "AmountIn": money(c.amount_in), "AmountOut": money(c.amount_out), "ClosingBalance": money(c.closing_balance), "ReferenceType": c.reference_type, "ReferenceID": c.reference_id, "Description": c.description, "PaidBy": c.paid_by, "CreatedAt": iso(c.created_at)} for c in q.order_by(CashBookEntry.created_at).all()]}
+    banks = {b.id: b for b in db.query(BankAccount).all()}
+    return {"ok": True, "data": [{"EntryID": c.id, "LLPID": c.llp_id, "LLPName": llp_name(db, c.llp_id), "Date": iso(c.entry_date), "Type": c.entry_type, "OpeningBalance": money(c.opening_balance), "AmountIn": money(c.amount_in), "AmountOut": money(c.amount_out), "ClosingBalance": money(c.closing_balance), "ReferenceType": c.reference_type, "ReferenceID": c.reference_id, "Description": c.description, "PaidBy": c.paid_by, "BankAccountID": c.paid_by if c.paid_by in banks else "", "BankAccountName": banks[c.paid_by].account_name if c.paid_by in banks else c.paid_by, "CreatedAt": iso(c.created_at)} for c in q.order_by(CashBookEntry.created_at).all()]}
 
 
 @router.post("/cash-book")
 def add_cash(payload: dict, db: Session = Depends(get_db), llp_id: str = Depends(require_llp_id), user: User = Depends(current_user)):
-    opening = dec(payload.get("OpeningBalance")) if payload.get("OpeningBalance") not in (None, "") else latest_cash_balance(db, llp_id)
+    bank = _bank_account_from_payload(db, llp_id, payload)
+    opening = dec(payload.get("OpeningBalance")) if payload.get("OpeningBalance") not in (None, "") else (dec(bank.current_balance) if bank else latest_cash_balance(db, llp_id))
     amount_in = dec(payload.get("AmountIn"))
     amount_out = dec(payload.get("AmountOut"))
-    item = CashBookEntry(id=payload.get("EntryID") or make_id("CASH"), llp_id=llp_id, entry_date=parse_date(payload.get("Date")), entry_type=payload.get("Type") or "Payment", opening_balance=opening, amount_in=amount_in, amount_out=amount_out, closing_balance=opening + amount_in - amount_out, reference_type=payload.get("ReferenceType") or "Manual", reference_id=payload.get("ReferenceID") or "", description=payload.get("Description") or "", paid_by=payload.get("PaidBy") or "")
+    if amount_in <= 0 and amount_out <= 0:
+        raise HTTPException(status_code=400, detail="Enter either Amount In or Amount Out")
+    if amount_in > 0 and amount_out > 0:
+        raise HTTPException(status_code=400, detail="Use either Amount In or Amount Out, not both")
+    item = CashBookEntry(id=payload.get("EntryID") or make_id("CASH"), llp_id=llp_id, entry_date=parse_date(payload.get("Date")), entry_type=payload.get("Type") or "Payment", opening_balance=opening, amount_in=amount_in, amount_out=amount_out, closing_balance=opening + amount_in - amount_out, reference_type=payload.get("ReferenceType") or "Manual", reference_id=payload.get("ReferenceID") or "", description=payload.get("Description") or "", paid_by=bank.id if bank else (payload.get("PaidBy") or ""))
     db.add(item)
+    if bank:
+        db.flush()
+        _recalculate_bank_balance(db, bank)
     audit(db, user.email, "cashbook", "create", item.id)
     db.commit()
     return {"ok": True, "data": {"EntryID": item.id}}
@@ -1283,9 +1326,31 @@ def update_cash(id: str, payload: dict, db: Session = Depends(get_db), user: Use
     item = db.get(CashBookEntry, id)
     if not item:
         raise HTTPException(status_code=404, detail="Cash entry not found")
+    old_bank = db.get(BankAccount, item.paid_by) if item.paid_by else None
+    bank = _bank_account_from_payload(db, item.llp_id, payload) if any(k in payload for k in ("BankAccountID", "AccountID", "BankAccount", "PaidBy")) else old_bank
     item.amount_in = dec(payload.get("AmountIn", item.amount_in))
     item.amount_out = dec(payload.get("AmountOut", item.amount_out))
-    item.closing_balance = dec(item.opening_balance) + dec(item.amount_in) - dec(item.amount_out)
+    if item.amount_in <= 0 and item.amount_out <= 0:
+        raise HTTPException(status_code=400, detail="Enter either Amount In or Amount Out")
+    if item.amount_in > 0 and item.amount_out > 0:
+        raise HTTPException(status_code=400, detail="Use either Amount In or Amount Out, not both")
+    if "Date" in payload:
+        item.entry_date = parse_date(payload.get("Date"))
+    if "Type" in payload:
+        item.entry_type = payload.get("Type") or "Payment"
+    if "ReferenceType" in payload:
+        item.reference_type = payload.get("ReferenceType") or "Manual"
+    if "ReferenceID" in payload:
+        item.reference_id = payload.get("ReferenceID") or ""
+    if "Description" in payload:
+        item.description = payload.get("Description") or ""
+    item.paid_by = bank.id if bank else (payload.get("PaidBy", item.paid_by) or "")
+    if old_bank:
+        _recalculate_bank_balance(db, old_bank)
+    if bank and (not old_bank or bank.id != old_bank.id):
+        _recalculate_bank_balance(db, bank)
+    if not bank and not old_bank:
+        item.closing_balance = dec(item.opening_balance) + dec(item.amount_in) - dec(item.amount_out)
     audit(db, user.email, "cashbook", "update", id)
     db.commit()
     return {"ok": True}
@@ -1296,7 +1361,11 @@ def delete_cash(id: str, db: Session = Depends(get_db), user: User = Depends(req
     item = db.get(CashBookEntry, id)
     if not item:
         raise HTTPException(status_code=404, detail="Cash entry not found")
+    bank = db.get(BankAccount, item.paid_by) if item.paid_by else None
     db.delete(item)
+    db.flush()
+    if bank:
+        _recalculate_bank_balance(db, bank)
     audit(db, user.email, "cashbook", "delete", id)
     db.commit()
     return {"ok": True}

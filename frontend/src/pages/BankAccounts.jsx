@@ -8,6 +8,11 @@ const initial = {
   CurrentBalance:"", IsActive:"Yes", Notes:""
 };
 
+const txnInitial = {
+  BankAccountID:"", Date:"", Type:"Payment", AmountIn:"", AmountOut:"",
+  ReferenceType:"Manual", ReferenceID:"", Description:""
+};
+
 const card  = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
 const label = { display:"block", fontSize:".75rem", color:"var(--muted)", marginBottom:".35rem", fontWeight:500 };
 const btn   = (v="primary") => ({
@@ -40,6 +45,8 @@ export default function BankAccounts() {
   const [form, setForm]           = useState(initial);
   const [loading, setLoading]     = useState(false);
   const [formOpen, setFormOpen]   = useState(false);
+  const [txnOpen, setTxnOpen]     = useState(false);
+  const [txnForm, setTxnForm]     = useState(txnInitial);
   const [editId, setEditId]       = useState(null);
   const scopeLabel = currentLLP?.global ? "All Entities" : (currentLLP?.llpName || currentLLP?.LLPName || "Selected LLP");
 
@@ -57,6 +64,14 @@ export default function BankAccounts() {
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   function openAdd() { setForm(initial); setEditId(null); setFormOpen(true); }
+  function openTxn(acc = null) {
+    setTxnForm({
+      ...txnInitial,
+      BankAccountID: acc?.AccountID || "",
+      Date: new Date().toISOString().slice(0, 10),
+    });
+    setTxnOpen(true);
+  }
   function openEdit(acc) {
     setForm({
       AccountName: acc.AccountName||"", BankName: acc.BankName||"",
@@ -67,6 +82,29 @@ export default function BankAccounts() {
     });
     setEditId(acc.AccountID);
     setFormOpen(true);
+  }
+
+  const setTxn = (k, v) => setTxnForm(p => ({ ...p, [k]: v }));
+
+  async function saveTxn(e) {
+    e.preventDefault();
+    const amountIn = Number(txnForm.AmountIn) || 0;
+    const amountOut = Number(txnForm.AmountOut) || 0;
+    if (amountIn <= 0 && amountOut <= 0) {
+      alert("Enter either Amount In or Amount Out");
+      return;
+    }
+    if (amountIn > 0 && amountOut > 0) {
+      alert("Use either Amount In or Amount Out, not both");
+      return;
+    }
+    try {
+      const r = await apiPost("saveCashEntry", txnForm);
+      if (r.ok) { setTxnOpen(false); setTxnForm(txnInitial); load(); }
+      else alert(r.error || "Error saving transaction");
+    } catch (err) {
+      alert(err.message || "Error saving transaction");
+    }
   }
 
   async function save(e) {
@@ -104,7 +142,10 @@ export default function BankAccounts() {
           <h2 style={{ fontWeight:700, fontSize:"1.25rem", color:"var(--text)" }}>Bank Accounts</h2>
           <p style={{ color:"var(--muted)", fontSize:".8rem", marginTop:".2rem" }}>Manage company bank accounts · {scopeLabel}</p>
         </div>
-        <button style={btn()} onClick={openAdd}>+ Add Account</button>
+        <div style={{ display:"flex", gap:".75rem", flexWrap:"wrap" }}>
+          <button style={btn("ghost")} onClick={()=>openTxn()} disabled={accounts.length === 0}>+ Add Transaction</button>
+          <button style={btn()} onClick={openAdd}>+ Add Account</button>
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -160,6 +201,45 @@ export default function BankAccounts() {
         </div>
       )}
 
+      {txnOpen && (
+        <div style={card}>
+          <h3 style={{ fontWeight:600, marginBottom:"1rem", color:"var(--text)" }}>New Bank Transaction</h3>
+          <form onSubmit={saveTxn}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))", gap:"1rem" }}>
+              <div><label style={label}>Bank Account *</label>
+                <select value={txnForm.BankAccountID} onChange={e=>setTxn("BankAccountID", e.target.value)} required>
+                  <option value="">— Select bank account —</option>
+                  {accounts.map(acc => (
+                    <option key={acc.AccountID} value={acc.AccountID}>
+                      {acc.AccountName} · {acc.BankName} · {String(acc.AccountNumber || "").slice(-4)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div><label style={label}>Date *</label><input type="date" value={txnForm.Date} onChange={e=>setTxn("Date", e.target.value)} required /></div>
+              <div><label style={label}>Type</label>
+                <select value={txnForm.Type} onChange={e=>setTxn("Type", e.target.value)}>
+                  {["Receipt","Payment","Adjustment","CashDeposit"].map(o=><option key={o}>{o}</option>)}
+                </select>
+              </div>
+              <div><label style={label}>Amount In (₹)</label><input type="number" min="0" step="0.01" placeholder="Money received" value={txnForm.AmountIn} onChange={e=>setTxn("AmountIn", e.target.value)} /></div>
+              <div><label style={label}>Amount Out (₹)</label><input type="number" min="0" step="0.01" placeholder="Money paid" value={txnForm.AmountOut} onChange={e=>setTxn("AmountOut", e.target.value)} /></div>
+              <div><label style={label}>Reference Type</label>
+                <select value={txnForm.ReferenceType} onChange={e=>setTxn("ReferenceType", e.target.value)}>
+                  {["Manual","Vendor Payment","Receipt","Bank Charge","Transfer","Adjustment"].map(o=><option key={o}>{o}</option>)}
+                </select>
+              </div>
+              <div><label style={label}>Reference / UTR</label><input placeholder="Cheque no / UTR / voucher no" value={txnForm.ReferenceID} onChange={e=>setTxn("ReferenceID", e.target.value)} /></div>
+              <div style={{ gridColumn:"span 2" }}><label style={label}>Description</label><input placeholder="Narration" value={txnForm.Description} onChange={e=>setTxn("Description", e.target.value)} /></div>
+            </div>
+            <div style={{ display:"flex", gap:".75rem", marginTop:"1.25rem" }}>
+              <button type="submit" style={btn()}>Save Transaction</button>
+              <button type="button" style={btn("ghost")} onClick={()=>setTxnOpen(false)}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Table */}
       <div style={{ ...card, padding:0, overflow:"hidden" }}>
         <div style={{ padding:".9rem 1.25rem", borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -206,6 +286,10 @@ export default function BankAccounts() {
                     <td>
                       <button onClick={()=>openEdit(acc)} style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--muted)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}>
                         Edit
+                      </button>
+                      {" "}
+                      <button onClick={()=>openTxn(acc)} style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--accent)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}>
+                        Txn
                       </button>
                       {" "}
                       <button onClick={()=>removeAccount(acc)} style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--danger)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}>
