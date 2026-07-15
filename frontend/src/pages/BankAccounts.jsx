@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../api/client";
+import { useLLP } from "../context/LLPContext";
 
 const initial = {
   AccountName:"", BankName:"", AccountNumber:"", IFSC:"",
@@ -34,11 +35,13 @@ function Badge({ v, colors }) {
 const fmt = n => n != null && n !== "" ? "₹"+Number(n).toLocaleString("en-IN") : "—";
 
 export default function BankAccounts() {
+  const { currentLLP } = useLLP();
   const [accounts, setAccounts]   = useState([]);
   const [form, setForm]           = useState(initial);
   const [loading, setLoading]     = useState(false);
   const [formOpen, setFormOpen]   = useState(false);
   const [editId, setEditId]       = useState(null);
+  const scopeLabel = currentLLP?.global ? "All Entities" : (currentLLP?.llpName || currentLLP?.LLPName || "Selected LLP");
 
   async function load() {
     setLoading(true);
@@ -49,7 +52,7 @@ export default function BankAccounts() {
     finally { setLoading(false); }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [currentLLP?.llpId, currentLLP?.LLPID, currentLLP?.global]);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -99,7 +102,7 @@ export default function BankAccounts() {
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         <div>
           <h2 style={{ fontWeight:700, fontSize:"1.25rem", color:"var(--text)" }}>Bank Accounts</h2>
-          <p style={{ color:"var(--muted)", fontSize:".8rem", marginTop:".2rem" }}>Manage company bank accounts</p>
+          <p style={{ color:"var(--muted)", fontSize:".8rem", marginTop:".2rem" }}>Manage company bank accounts · {scopeLabel}</p>
         </div>
         <button style={btn()} onClick={openAdd}>+ Add Account</button>
       </div>
@@ -170,16 +173,17 @@ export default function BankAccounts() {
             <table>
               <thead>
                 <tr>
-                  <th>Account Name</th><th>Bank</th><th>Account No.</th>
+                  <th>LLP</th><th>Account Name</th><th>Bank</th><th>Account No.</th>
                   <th>IFSC</th><th>Type</th><th>Branch</th>
                   <th>Opening Bal</th><th>Current Bal</th><th>Status</th><th></th>
                 </tr>
               </thead>
               <tbody>
                 {accounts.length===0 ? (
-                  <tr><td colSpan="10" style={{ textAlign:"center", color:"var(--muted)", padding:"2.5rem" }}>No bank accounts added yet</td></tr>
+                  <tr><td colSpan="11" style={{ textAlign:"center", color:"var(--muted)", padding:"2.5rem" }}>No bank accounts added yet for {scopeLabel}</td></tr>
                 ) : accounts.map(acc => (
                   <tr key={acc.AccountID}>
+                    <td style={{ color:"var(--muted)", fontSize:".8rem" }}>{acc.LLPName || "—"}</td>
                     <td style={{ fontWeight:600 }}>{acc.AccountName}</td>
                     <td>{acc.BankName}</td>
                     <td style={{ fontFamily:"monospace", color:"var(--accent2)", letterSpacing:".05em" }}>
