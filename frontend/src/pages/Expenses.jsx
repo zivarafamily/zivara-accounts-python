@@ -140,7 +140,56 @@ export default function Expenses() {
     taxable: acc.taxable + Number(e.TaxableValue || 0),
     gst: acc.gst + Number(e.GSTAmount || 0),
   }), { amount:0, taxable:0, gst:0 });
-  const fmt = n => "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 });
+const fmt = n => "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 });
+
+  function csvCell(value) {
+    return `"${String(value ?? "").replace(/"/g, '""')}"`;
+  }
+
+  function exportFilteredCSV() {
+    const headers = [
+      "ExpenseID", "Date", "BillingMonth", "ExpenseType", "Category",
+      "VendorOrPerson", "Description", "PaidBy", "ReimburseTo", "ChargeTo",
+      "PaymentMode", "TaxableValue", "CGSTAmount", "SGSTAmount", "IGSTAmount",
+      "GSTAmount", "Amount", "Status", "BillAvailable", "BillLink", "Notes",
+    ];
+    const rows = filteredExpenses.map(e => ({
+      ExpenseID: e.ExpenseID || "",
+      Date: e.Date || "",
+      BillingMonth: e.BillingMonth || "",
+      ExpenseType: e.ExpenseType || "",
+      Category: e.Category || "",
+      VendorOrPerson: e.VendorOrPerson || "",
+      Description: e.Description || "",
+      PaidBy: e.PaidBy || "",
+      ReimburseTo: e.ReimburseTo || e.SettlementTo || e.PaidBy || "",
+      ChargeTo: e.ChargeTo || "",
+      PaymentMode: e.PaymentMode || "",
+      TaxableValue: e.TaxableValue || "",
+      CGSTAmount: e.CGSTAmount || "",
+      SGSTAmount: e.SGSTAmount || "",
+      IGSTAmount: e.IGSTAmount || "",
+      GSTAmount: e.GSTAmount || "",
+      Amount: e.Amount || "",
+      Status: e.Status || "",
+      BillAvailable: e.BillAvailable || "",
+      BillLink: e.BillLink || "",
+      Notes: e.Notes || "",
+    }));
+    const csv = [
+      headers.map(csvCell).join(","),
+      ...rows.map(row => headers.map(h => csvCell(row[h])).join(",")),
+    ].join("\r\n");
+    const blob = new Blob(["\ufeff", csv], { type:"text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `expenses-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
   async function save(e) {
     e.preventDefault();
@@ -303,6 +352,7 @@ export default function Expenses() {
         {(filterMonth || filterPerson || filterSeller) && (
           <button style={btn("ghost")} onClick={()=>{ setFilterMonth(""); setFilterPerson(""); setFilterSeller(""); }}>Clear</button>
         )}
+        <button style={btn("ghost")} onClick={exportFilteredCSV} disabled={!filteredExpenses.length}>Export Excel</button>
         <span style={{ marginLeft:"auto", fontSize:".8rem", color:"var(--muted)" }}>{filteredExpenses.length} of {expenses.length} record{expenses.length !== 1 ? "s" : ""}</span>
       </div>
 
