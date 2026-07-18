@@ -9,6 +9,7 @@ from app.services.common import audit, dec, iso, llp_name, make_id, money, norma
 
 
 def serialize_expense(db: Session, e: Expense):
+    reimbursement_receiver = e.reimburse_to or e.paid_by
     return {
         "ExpenseID": e.id,
         "LLPID": e.llp_id,
@@ -19,6 +20,7 @@ def serialize_expense(db: Session, e: Expense):
         "PaidBy": e.paid_by,
         "ChargeTo": e.charge_to,
         "ReimburseTo": e.reimburse_to,
+        "SettlementTo": reimbursement_receiver,
         "PaymentMode": e.payment_mode,
         "TaxableValue": money(e.taxable_value),
         "CGSTAmount": money(e.cgst_amount),
@@ -77,7 +79,7 @@ def create_expense(db: Session, payload: dict, llp_id: str, user_email: str):
         category=payload.get("Category") or "",
         paid_by=payload.get("PaidBy") or "",
         charge_to=payload.get("ChargeTo") or "",
-        reimburse_to=payload.get("ReimburseTo") or "",
+        reimburse_to=payload.get("ReimburseTo") or payload.get("SettlementTo") or payload.get("PaidTo") or "",
         payment_mode=payload.get("PaymentMode") or "Cash",
         taxable_value=taxable,
         cgst_amount=cgst,
@@ -118,6 +120,8 @@ def reimburse_expense(db: Session, expense_id: str, payload: dict, llp_id: str, 
     if exp.status not in {"Approved", "Reimbursed"} and not payload.get("force"):
         raise HTTPException(status_code=400, detail="Expense must be approved before reimbursement")
     exp.status = "Reimbursed"
+    if any(key in payload for key in ("ReimburseTo", "SettlementTo", "PaidTo")):
+        exp.reimburse_to = payload.get("ReimburseTo") or payload.get("SettlementTo") or payload.get("PaidTo") or exp.reimburse_to
     exp.reimburse_mode = payload.get("ReimburseMode") or payload.get("ReimburseAccount") or ""
     exp.reimburse_account = payload.get("ReimburseAccount") or payload.get("ReimburseMode") or ""
     exp.reimburse_date = parse_date(payload.get("ReimburseDate")) or datetime.now(timezone.utc).date()

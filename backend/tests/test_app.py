@@ -546,6 +546,38 @@ def test_expense_approval_and_petty_cash_reimbursement(client, auth_headers):
     assert cash[0]["AmountOut"] == 750.0
 
 
+def test_reimbursement_report_tracks_actual_payer_and_settlement_receiver(client, auth_headers):
+    manu = client.post(
+        "/expenses",
+        headers=auth_headers,
+        json={"Date": "2026-06-10", "Amount": "2000", "PaidBy": "Manu", "Description": "Office expense"},
+    ).json()["data"]["ExpenseID"]
+    dinu = client.post(
+        "/expenses",
+        headers=auth_headers,
+        json={"Date": "2026-06-11", "Amount": "1500", "PaidBy": "Dinu", "ReimburseTo": "Manu", "Description": "Travel"},
+    ).json()["data"]["ExpenseID"]
+
+    rows = client.get("/reports/reimbursements", headers=auth_headers).json()["data"]
+    manu_row = next(r for r in rows if r["RefID"] == manu)
+    dinu_row = next(r for r in rows if r["RefID"] == dinu)
+
+    assert manu_row["ActualPaidBy"] == "Manu"
+    assert manu_row["SettlementTo"] == "Manu"
+    assert dinu_row["ActualPaidBy"] == "Dinu"
+    assert dinu_row["SettlementTo"] == "Manu"
+
+    reimbursed = client.post(
+        f"/expenses/{dinu}/reimburse",
+        headers=auth_headers,
+        json={"ReimburseTo": "Manu", "ReimburseMode": "Bank", "ReimburseAccount": "HDFC Current", "ReimburseRef": "UTR123", "force": True},
+    )
+    assert reimbursed.status_code == 200
+    data = reimbursed.json()["data"]
+    assert data["Status"] == "Reimbursed"
+    assert data["SettlementTo"] == "Manu"
+
+
 def test_dashboard_and_reports(client, auth_headers):
     client.post("/receipts", headers=auth_headers, json={"Date": "2026-06-10", "AmountReceived": "1000"})
     dash = client.get("/reports/dashboard", headers=auth_headers).json()["summary"]

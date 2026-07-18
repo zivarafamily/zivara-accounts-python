@@ -9,7 +9,7 @@ const currentBillingMonth = () => {
 };
 
 const initial = {
-  Date:"", ExpenseType:"Travel", Category:"", PaidBy:"",
+  Date:"", ExpenseType:"Travel", Category:"", PaidBy:"", ChargeTo:"",
   PaymentMode:"Cash", Amount:"", VendorOrPerson:"", Description:"",
   BillAvailable:"No", BillLink:"",
   TaxableValue:"", CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", GSTAmount:"",
@@ -26,7 +26,7 @@ const btn   = (variant="primary") => ({
   cursor:"pointer",
 });
 
-const STATUS_COLOR = { Draft:"var(--muted)", Approved:"var(--success)", Paid:"var(--accent2)", Recovered:"var(--warning)" };
+const STATUS_COLOR = { Draft:"var(--muted)", Submitted:"var(--warning)", Approved:"var(--success)", Reimbursed:"var(--accent2)", Paid:"var(--accent2)", Recovered:"var(--warning)" };
 
 function Badge({ v }) {
   return (
@@ -93,6 +93,7 @@ export default function Expenses() {
       ExpenseType: e.ExpenseType || "Misc",
       Category: e.Category || "",
       PaidBy: e.PaidBy || "",
+      ChargeTo: e.ChargeTo || "",
       PaymentMode: e.PaymentMode || "Cash",
       Amount: e.Amount || "",
       VendorOrPerson: e.VendorOrPerson || "",
@@ -105,7 +106,7 @@ export default function Expenses() {
       IGSTAmount: igst,
       GSTAmount: gst ? gst.toFixed(2) : e.GSTAmount || "",
       EmployeeName: e.EmployeeName || "",
-      ReimburseTo: e.ReimburseTo || e.EmployeeName || "",
+      ReimburseTo: e.ReimburseTo || e.SettlementTo || e.EmployeeName || "",
       BillingMonth: e.BillingMonth || currentBillingMonth(),
       Notes: e.Notes || "",
       Status: e.Status || "Draft",
@@ -150,7 +151,7 @@ export default function Expenses() {
       BillAvailable: "No",
       BillLink: "",
       EmployeeName: form.ReimburseTo || form.EmployeeName || "",
-      ReimburseTo: form.ReimburseTo || "",
+      ReimburseTo: form.ReimburseTo || form.PaidBy || "",
       ...(editId ? { ExpenseID: editId } : {}),
     };
     setFormError("");
@@ -214,12 +215,13 @@ export default function Expenses() {
                 </select>
               </div>
               <div><label style={label}>Category</label><input placeholder="e.g. Cab" value={form.Category} onChange={e=>set("Category",e.target.value)} /></div>
-              <div><label style={label}>Paid By</label>
+              <div><label style={label}>Actual Paid By</label>
                 <select value={form.PaidBy} onChange={e=>set("PaidBy",e.target.value)} required>
                   <option value="">Select partner</option>
                   {partnerNames.map(name => <option key={name} value={name}>{name}</option>)}
                 </select>
               </div>
+              <div><label style={label}>Charge To</label><input placeholder="LLP / partner / client" value={form.ChargeTo} onChange={e=>set("ChargeTo",e.target.value)} /></div>
               <div><label style={label}>Payment Mode</label>
                 <select value={form.PaymentMode} onChange={e=>set("PaymentMode",e.target.value)}>
                   {["Cash","Bank","UPI","Card"].map(o=><option key={o}>{o}</option>)}
@@ -241,7 +243,7 @@ export default function Expenses() {
               <div><label style={label}>GST Total (₹)</label><input type="number" min="0" step="0.01" placeholder="auto" value={gstTotal ? gstTotal.toFixed(2) : ""} readOnly /></div>
               <div><label style={label}>Reimburse To</label>
                 <select value={form.ReimburseTo} onChange={e=>set("ReimburseTo",e.target.value)}>
-                  <option value="">Same / not applicable</option>
+                  <option value="">Same as actual payer</option>
                   {partnerNames.map(name => <option key={name} value={name}>{name}</option>)}
                 </select>
               </div>
@@ -253,7 +255,7 @@ export default function Expenses() {
               <div><label style={label}>Notes</label><input placeholder="Notes" value={form.Notes} onChange={e=>set("Notes",e.target.value)} /></div>
               <div><label style={label}>Status</label>
                 <select value={form.Status} onChange={e=>set("Status",e.target.value)}>
-                  {["Draft","Approved","Paid","Recovered"].map(o=><option key={o}>{o}</option>)}
+                  {["Draft","Submitted","Approved","Reimbursed","Paid","Recovered"].map(o=><option key={o}>{o}</option>)}
                 </select>
               </div>
             </div>
@@ -318,13 +320,13 @@ export default function Expenses() {
               <thead>
                 <tr>
                   <th>Date</th><th>Type</th><th>Category</th>
-                  <th>Amount</th><th>Paid By</th><th>Mode</th>
+                  <th>Amount</th><th>Paid By</th><th>Reimburse To</th><th>Mode</th>
                   <th>Status</th><th>Description</th><th></th>
                 </tr>
               </thead>
               <tbody>
                 {filteredExpenses.length===0 ? (
-                  <tr><td colSpan="9" style={{ textAlign:"center", color:"var(--muted)", padding:"2.5rem" }}>No expenses yet</td></tr>
+                  <tr><td colSpan="10" style={{ textAlign:"center", color:"var(--muted)", padding:"2.5rem" }}>No expenses yet</td></tr>
                 ) : (
                   filteredExpenses.map(e => (
                     <tr key={e.ExpenseID}>
@@ -332,7 +334,9 @@ export default function Expenses() {
                       <td>{e.ExpenseType}</td>
                       <td style={{ color:"var(--muted)" }}>{e.Category}</td>
                       <td style={{ fontWeight:600, color:"var(--accent2)" }}>₹{Number(e.Amount||0).toLocaleString("en-IN")}</td>
-                      <td>{e.PaidBy}</td><td>{e.PaymentMode}</td>
+                      <td>{e.PaidBy}</td>
+                      <td>{e.ReimburseTo || e.SettlementTo || e.PaidBy}</td>
+                      <td>{e.PaymentMode}</td>
                       <td><Badge v={e.Status}/></td>
                       <td style={{ color:"var(--muted)", maxWidth:"200px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.Description}</td>
                       <td style={{ whiteSpace:"nowrap" }}>

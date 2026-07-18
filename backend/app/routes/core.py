@@ -790,6 +790,7 @@ def update_expense(id: str, payload: dict, db: Session = Depends(get_db), user: 
         "PaidBy": ("paid_by", str),
         "ChargeTo": ("charge_to", str),
         "ReimburseTo": ("reimburse_to", str),
+        "SettlementTo": ("reimburse_to", str),
         "EmployeeName": ("employee_name", str),
         "PaymentMode": ("payment_mode", str),
         "TaxableValue": ("taxable_value", dec),
@@ -1439,4 +1440,29 @@ def reimbursements(db: Session = Depends(get_db), llp_id: str | None = Depends(g
     q = db.query(Expense)
     if llp_id:
         q = q.filter(Expense.llp_id == llp_id)
-    return {"ok": True, "data": [{"Source": "Expense", "RefID": e.id, "Date": iso(e.expense_date), "PaidBy": e.paid_by, "Description": e.description or e.category, "BillingMonth": e.billing_month, "Amount": money(e.amount), "Status": e.status} for e in q.all() if e.paid_by]}
+    data = []
+    for e in q.all():
+        if not e.paid_by:
+            continue
+        reimburse_to = e.reimburse_to or e.paid_by
+        data.append({
+            "Source": "Expense",
+            "RefID": e.id,
+            "ExpenseID": e.id,
+            "Date": iso(e.expense_date),
+            "PaidBy": e.paid_by,
+            "ActualPaidBy": e.paid_by,
+            "ReimburseTo": reimburse_to,
+            "SettlementTo": reimburse_to,
+            "Description": e.description or e.category,
+            "BillingMonth": e.billing_month,
+            "Amount": money(e.amount),
+            "Status": e.status,
+            "ReimburseMode": e.reimburse_mode,
+            "ReimburseAccount": e.reimburse_account,
+            "ReimburseDate": iso(e.reimburse_date),
+            "ReimburseRef": e.reimburse_ref,
+            "ReimburseBy": e.reimburse_by,
+        })
+    data.sort(key=lambda r: r["Date"] or "", reverse=True)
+    return {"ok": True, "data": data}
