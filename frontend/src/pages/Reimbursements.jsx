@@ -6,9 +6,9 @@ const card  = { background: "var(--card)", border: "1px solid var(--border)", bo
 const inp   = { width: "100%", boxSizing: "border-box", padding: ".5rem .65rem", background: "var(--input,#1e293b)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text)", fontSize: ".875rem" };
 const fmt   = n => "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 });
 
-const PENDING      = ["Draft", "Submitted", "Approved"];
+const PENDING      = ["Draft", "Submitted", "Approved", "Pending"];
 const REIMBURSED   = "Reimbursed";
-const sourceColor  = { Expense: "#f59e0b" };
+const sourceColor  = { Expense: "#f59e0b", Payable: "#6366f1" };
 
 export default function Reimbursements({ role = "admin", employeeRef = "" }) {
   const isOwn = (role === "partner" || role === "rm") && employeeRef;
@@ -116,15 +116,25 @@ export default function Reimbursements({ role = "admin", employeeRef = "" }) {
     setReimbursing(true);
     try {
       for (const row of selectedRows) {
-        await apiPost("reimburseExpense", {
-          ExpenseID: row.RefID,
-          ReimburseTo: row.SettlementTo,
-          ReimburseDate: payment.ReimburseDate,
-          ReimburseMode: payment.ReimburseMode,
-          ReimburseAccount: payment.ReimburseAccount || payment.ReimburseMode,
-          ReimburseRef: payment.ReimburseRef,
-          force: true,
-        });
+        if (row.Source === "Payable") {
+          await apiPost("reimbursePayable", {
+            PayableID: row.RefID,
+            ReimburseTo: row.SettlementTo,
+            ReimbursementDate: payment.ReimburseDate,
+            ReimbursementRef: payment.ReimburseRef,
+            force: true,
+          });
+        } else {
+          await apiPost("reimburseExpense", {
+            ExpenseID: row.RefID,
+            ReimburseTo: row.SettlementTo,
+            ReimburseDate: payment.ReimburseDate,
+            ReimburseMode: payment.ReimburseMode,
+            ReimburseAccount: payment.ReimburseAccount || payment.ReimburseMode,
+            ReimburseRef: payment.ReimburseRef,
+            force: true,
+          });
+        }
       }
       loadData();
     } catch (err) {
@@ -186,7 +196,7 @@ export default function Reimbursements({ role = "admin", employeeRef = "" }) {
         <div style={{ minWidth: "140px" }}>
           <select style={inp} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="">All statuses</option>
-            {["Draft", "Submitted", "Approved", "Reimbursed", "Rejected"].map(s => <option key={s}>{s}</option>)}
+            {["Draft", "Submitted", "Approved", "Pending", "Reimbursed", "Rejected"].map(s => <option key={s}>{s}</option>)}
           </select>
         </div>
         <div style={{ minWidth: "140px" }}>

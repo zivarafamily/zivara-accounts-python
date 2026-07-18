@@ -23,6 +23,7 @@ const initial = {
   LineItems:[{ Particulars:"", TaxableAmount:"", GSTType:"IGST", GSTRate:"18", CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", TCSAmount:"" }],
   TDSSection:"393(1)-6(i)-2", TDSRate:"2", TDSAmount:"",
   PaidAmount:"", PaymentDate:"", PaymentMode:"Bank", BankAccount:"", ReferenceNo:"",
+  PaidByType:"Company", PaidByName:"", ReimburseTo:"", ReimbursementStatus:"Not Required",
   ChallanNo:"", ChallanDate:"", InterestAmount:"",
   Status:"Pending", Notes:"",
 };
@@ -116,6 +117,10 @@ function Badge({ value }) {
   return <span style={{ background:color+"22", color, padding:".2rem .6rem", borderRadius:"99px", fontSize:".72rem", fontWeight:700, whiteSpace:"nowrap" }}>{value || "Pending"}</span>;
 }
 
+function reimbursementRequired(paidByType) {
+  return normalizeKey(paidByType || "Company") !== "company";
+}
+
 function normalizeKey(value) {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -167,6 +172,9 @@ export default function PaymentTracker() {
     PaymentMode:"Bank",
     BankAccount:"",
     ReferenceNo:"",
+    PaidByType:"Company",
+    PaidByName:"",
+    ReimburseTo:"",
   });
 
   async function load() {
@@ -214,6 +222,12 @@ export default function PaymentTracker() {
     });
     return Array.from(map.values()).sort((a, b) => a.localeCompare(b, undefined, { numeric:true }));
   }, [rows, vendorFilter]);
+
+  const payerOptions = useMemo(() => Array.from(new Set(rows.flatMap(row => [
+    row.PaidByName,
+    row.ReimburseTo,
+    row.SettlementTo,
+  ]).map(v => String(v || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [rows]);
 
   const filtered = useMemo(() => {
     return rows.filter(row => {
@@ -320,6 +334,9 @@ export default function PaymentTracker() {
       PaymentMode:"Bank",
       BankAccount:"",
       ReferenceNo:"",
+      PaidByType:"Company",
+      PaidByName:"",
+      ReimburseTo:"",
     });
     setBatchOpen(true);
   }
@@ -356,6 +373,10 @@ export default function PaymentTracker() {
       PaymentMode: row.PaymentMode || "Bank",
       BankAccount: row.BankAccount || "",
       ReferenceNo: row.ReferenceNo || "",
+      PaidByType: row.PaidByType || "Company",
+      PaidByName: row.PaidByName || "",
+      ReimburseTo: row.ReimburseTo || row.SettlementTo || "",
+      ReimbursementStatus: row.ReimbursementStatus || "Not Required",
       ChallanNo: row.ChallanNo || "",
       ChallanDate: String(row.ChallanDate || "").slice(0, 10),
       InterestAmount: row.InterestAmount || "",
@@ -481,6 +502,7 @@ export default function PaymentTracker() {
         }
       }
       const amounts = calc(form);
+      const needsReimbursement = reimbursementRequired(form.PaidByType);
       const payload = {
         ...vendorPayload,
         TaxableAmount: amounts.taxable,
@@ -492,6 +514,10 @@ export default function PaymentTracker() {
         GrossAmount: amounts.gross,
         TDSAmount: amounts.tds,
         NetPayable: amounts.net,
+        PaidByType: form.PaidByType || "Company",
+        PaidByName: needsReimbursement ? form.PaidByName : (form.PaidAmount ? "Company" : form.PaidByName),
+        ReimburseTo: needsReimbursement ? (form.ReimburseTo || form.PaidByName) : "",
+        ReimbursementStatus: needsReimbursement && num(form.PaidAmount) > 0 ? (form.ReimbursementStatus === "Reimbursed" ? "Reimbursed" : "Pending") : "Not Required",
       };
       const saved = await apiPost(editId ? "updateLLPPayable" : "saveLLPPayable", editId ? { ...payload, PayableID: editId } : payload);
       const payableId = editId || saved.data?.PayableID;
@@ -517,6 +543,17 @@ export default function PaymentTracker() {
   }
 
   async function markPaid(row) {
+    const paidByType = window.prompt("Who paid this vendor bill? Enter Company, Partner, Staff, or Other", row.PaidByType || "Company");
+    if (paidByType === null) return;
+    const needsReimbursement = reimbursementRequired(paidByType);
+    let paidByName = row.PaidByName || "";
+    let reimburseTo = row.ReimburseTo || row.SettlementTo || "";
+    if (needsReimbursement) {
+      paidByName = window.prompt("Actual paid by name", paidByName);
+      if (paidByName === null) return;
+      reimburseTo = window.prompt("Company should reimburse to", reimburseTo || paidByName);
+      if (reimburseTo === null) return;
+    }
     const ref = window.prompt(`Payment reference / UTR for ${row.VendorName || row.BillNo || "bill"}`);
     if (ref === null) return;
     setSaving(true);
@@ -528,6 +565,9 @@ export default function PaymentTracker() {
         PaymentMode: row.PaymentMode || "Bank",
         BankAccount: row.BankAccount || "",
         ReferenceNo: ref,
+        PaidByType: paidByType || "Company",
+        PaidByName: needsReimbursement ? paidByName : "Company",
+        ReimburseTo: needsReimbursement ? (reimburseTo || paidByName) : "",
       });
       await load();
     } catch (err) {
@@ -602,6 +642,7 @@ export default function PaymentTracker() {
     setSaving(true);
     setError("");
     try {
+      const needsReimbursement = reimbursementRequired(batchForm.PaidByType);
       await apiPost("batchPayLLPPayables", {
         PayableIDs:batchForm.PayableIDs,
         PaidAmount:batchForm.PaidAmount,
@@ -610,6 +651,9 @@ export default function PaymentTracker() {
         PaymentMode:batchForm.PaymentMode,
         BankAccount:batchForm.BankAccount,
         ReferenceNo:batchForm.ReferenceNo,
+        PaidByType:batchForm.PaidByType || "Company",
+        PaidByName:needsReimbursement ? batchForm.PaidByName : "Company",
+        ReimburseTo:needsReimbursement ? (batchForm.ReimburseTo || batchForm.PaidByName) : "",
       });
       setBatchOpen(false);
       await load();
@@ -730,7 +774,7 @@ export default function PaymentTracker() {
             <table>
               <thead>
                 <tr>
-                  <th>Vendor</th><th>Category</th><th>Bill</th><th>Bill Date</th><th>Gross</th><th>TDS</th><th>Net Payable</th><th>Paid</th><th>Balance</th><th>Status</th><th></th>
+                  <th>Vendor</th><th>Category</th><th>Bill</th><th>Bill Date</th><th>Gross</th><th>TDS</th><th>Net Payable</th><th>Paid</th><th>Paid By</th><th>Reimburse To</th><th>Balance</th><th>Status</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -744,6 +788,8 @@ export default function PaymentTracker() {
                     <td title={row.TDSSectionLabel || row.TDSSection || ""} style={{ color:"var(--warning)", whiteSpace:"nowrap" }}>{tdsDisplay(row)}</td>
                     <td style={{ color:"var(--accent)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.NetPayable)}</td>
                     <td style={{ color:"var(--success)", whiteSpace:"nowrap" }}>{fmt(row.PaidAmount)}</td>
+                    <td style={{ whiteSpace:"nowrap" }}>{row.PaidByType === "Company" ? "Company" : `${row.PaidByName || "—"} (${row.PaidByType || "Other"})`}</td>
+                    <td style={{ color:row.ReimburseTo || row.SettlementTo ? "var(--accent)" : "var(--muted)", whiteSpace:"nowrap" }}>{row.ReimburseTo || row.SettlementTo || "—"}</td>
                     <td style={{ color:num(row.BalanceAmount) > 0 ? "var(--danger)" : "var(--muted)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.BalanceAmount)}</td>
                     <td><Badge value={row.Status} /></td>
                     <td style={{ whiteSpace:"nowrap" }}>
@@ -777,6 +823,13 @@ export default function PaymentTracker() {
                 <div><label style={label}>Payment Mode</label><select value={batchForm.PaymentMode} onChange={e=>setBatch("PaymentMode", e.target.value)}>{["Bank","NEFT","RTGS","IMPS","UPI","Cheque","Cash"].map(o => <option key={o}>{o}</option>)}</select></div>
                 <div><label style={label}>Bank Account</label><input value={batchForm.BankAccount} onChange={e=>setBatch("BankAccount", e.target.value)} /></div>
                 <div><label style={label}>Reference / UTR</label><input value={batchForm.ReferenceNo} onChange={e=>setBatch("ReferenceNo", e.target.value)} /></div>
+                <div><label style={label}>Paid By Type</label><select value={batchForm.PaidByType} onChange={e=>setBatchForm(p => ({ ...p, PaidByType:e.target.value, PaidByName:e.target.value === "Company" ? "Company" : p.PaidByName, ReimburseTo:e.target.value === "Company" ? "" : p.ReimburseTo }))}>{["Company","Partner","Staff","Other"].map(o => <option key={o}>{o}</option>)}</select></div>
+                {reimbursementRequired(batchForm.PaidByType) && (
+                  <>
+                    <div><label style={label}>Actual Paid By</label><input list="payable-payer-options" value={batchForm.PaidByName} onChange={e=>setBatch("PaidByName", e.target.value)} placeholder="Manu / Dinu / X" /></div>
+                    <div><label style={label}>Reimburse To</label><input list="payable-payer-options" value={batchForm.ReimburseTo} onChange={e=>setBatch("ReimburseTo", e.target.value)} placeholder="Defaults to actual payer" /></div>
+                  </>
+                )}
                 <div>
                   <label style={label}>TDS Treatment</label>
                   <select value={batchForm.TDSMode} onChange={e=>setBatchTDSMode(e.target.value)}>
@@ -901,6 +954,23 @@ export default function PaymentTracker() {
                 <div><label style={label}>Payment Mode</label><select value={form.PaymentMode} onChange={e=>set("PaymentMode", e.target.value)}>{["Bank","NEFT","RTGS","IMPS","UPI","Cheque","Cash"].map(o => <option key={o}>{o}</option>)}</select></div>
                 <div><label style={label}>Bank Account</label><input value={form.BankAccount} onChange={e=>set("BankAccount", e.target.value)} /></div>
                 <div><label style={label}>Reference / UTR</label><input value={form.ReferenceNo} onChange={e=>set("ReferenceNo", e.target.value)} /></div>
+                <div><label style={label}>Paid By Type</label><select value={form.PaidByType} onChange={e=>setForm(p => ({ ...p, PaidByType:e.target.value, PaidByName:e.target.value === "Company" ? "Company" : p.PaidByName, ReimburseTo:e.target.value === "Company" ? "" : p.ReimburseTo }))}>{["Company","Partner","Staff","Other"].map(o => <option key={o}>{o}</option>)}</select></div>
+                {reimbursementRequired(form.PaidByType) && (
+                  <>
+                    <div>
+                      <label style={label}>Actual Paid By</label>
+                      <input list="payable-payer-options" value={form.PaidByName} onChange={e=>set("PaidByName", e.target.value)} placeholder="Manu / Dinu / X" />
+                    </div>
+                    <div>
+                      <label style={label}>Reimburse To</label>
+                      <input list="payable-payer-options" value={form.ReimburseTo} onChange={e=>set("ReimburseTo", e.target.value)} placeholder="Defaults to actual payer" />
+                    </div>
+                    <div><label style={label}>Reimbursement Status</label><input value={form.ReimbursementStatus || "Pending"} readOnly /></div>
+                  </>
+                )}
+                <datalist id="payable-payer-options">
+                  {payerOptions.map(name => <option key={name} value={name} />)}
+                </datalist>
                 <div><label style={label}>Challan No</label><input value={form.ChallanNo} onChange={e=>set("ChallanNo", e.target.value)} /></div>
                 <div><label style={label}>Challan Date</label><input type="date" value={form.ChallanDate} onChange={e=>set("ChallanDate", e.target.value)} /></div>
                 <div><label style={label}>Interest, If Any</label><input type="number" min="0" step="0.01" value={form.InterestAmount} onChange={e=>set("InterestAmount", e.target.value)} /></div>

@@ -108,10 +108,26 @@ def payable_status(net, paid, current=""):
     return "Pending"
 
 
+def is_company_paid(paid_by_type: object) -> bool:
+    return normalize_key(paid_by_type or "Company") == "company"
+
+
+def payable_reimbursement_status(paid_by_type: object, paid_amount: object, current: object = "") -> str:
+    current = str(current or "").strip()
+    if current == "Reimbursed":
+        return "Reimbursed"
+    if is_company_paid(paid_by_type):
+        return "Not Required"
+    return "Pending" if dec(paid_amount) > 0 else ""
+
+
 def serialize_payable(db: Session, p: LLPPayable):
     balance = max(dec(p.net_payable) - dec(p.paid_amount), Decimal("0.00"))
     tds_pending = max(dec(p.tds_amount) - dec(p.tds_deducted_amount), Decimal("0.00"))
     tds_section = normalize_tds_section(p.tds_section, p.tds_rate, p.vendor_category)
+    paid_by_type = p.paid_by_type or "Company"
+    paid_by_name = p.paid_by_name or ("Company" if is_company_paid(paid_by_type) and dec(p.paid_amount) > 0 else "")
+    reimburse_to = p.reimburse_to or (paid_by_name if not is_company_paid(paid_by_type) else "")
     return {
         "PayableID": p.id,
         "LLPID": p.llp_id,
@@ -148,6 +164,13 @@ def serialize_payable(db: Session, p: LLPPayable):
         "PaymentMode": p.payment_mode,
         "BankAccount": p.bank_account,
         "ReferenceNo": p.reference_no,
+        "PaidByType": paid_by_type,
+        "PaidByName": paid_by_name,
+        "ReimburseTo": reimburse_to,
+        "SettlementTo": reimburse_to,
+        "ReimbursementStatus": p.reimbursement_status or payable_reimbursement_status(paid_by_type, p.paid_amount),
+        "ReimbursementDate": iso(p.reimbursement_date),
+        "ReimbursementRef": p.reimbursement_ref,
         "ChallanNo": p.challan_no,
         "ChallanDate": iso(p.challan_date),
         "InterestAmount": money(p.interest_amount),
@@ -178,6 +201,9 @@ def create_payable(db: Session, payload: dict, llp_id: str, user_email: str):
     tds_deducted = dec(payload.get("TDSDeductedAmount"))
     if paid > 0 and not tds_deducted:
         tds_deducted = tds
+    paid_by_type = payload.get("PaidByType") or ("Company" if paid > 0 else "")
+    paid_by_name = payload.get("PaidByName") or ("Company" if is_company_paid(paid_by_type) and paid > 0 else "")
+    reimburse_to = payload.get("ReimburseTo") or payload.get("SettlementTo") or (paid_by_name if not is_company_paid(paid_by_type) else "")
     item = LLPPayable(
         id=payload.get("PayableID") or make_id("PAY"),
         llp_id=llp_id,
@@ -210,6 +236,12 @@ def create_payable(db: Session, payload: dict, llp_id: str, user_email: str):
         payment_mode=payload.get("PaymentMode") or "Bank",
         bank_account=payload.get("BankAccount") or "",
         reference_no=payload.get("ReferenceNo") or "",
+        paid_by_type=paid_by_type or "Company",
+        paid_by_name=paid_by_name,
+        reimburse_to=reimburse_to,
+        reimbursement_status=payload.get("ReimbursementStatus") or payable_reimbursement_status(paid_by_type, paid),
+        reimbursement_date=parse_date(payload.get("ReimbursementDate")),
+        reimbursement_ref=payload.get("ReimbursementRef") or "",
         challan_no=payload.get("ChallanNo") or "",
         challan_date=parse_date(payload.get("ChallanDate")),
         interest_amount=dec(payload.get("InterestAmount")),

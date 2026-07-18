@@ -39,7 +39,7 @@ from app.services.neo_revenue import (
     serialize_client,
     serialize_revenue,
 )
-from app.services.payables import calculate_amounts, create_payable, normalize_line_items, normalize_tds_section, payable_status, serialize_payable, tax_breakdown
+from app.services.payables import calculate_amounts, create_payable, is_company_paid, normalize_line_items, normalize_tds_section, payable_reimbursement_status, payable_status, serialize_payable, tax_breakdown
 
 router = APIRouter(tags=["core"])
 
@@ -655,6 +655,24 @@ def update_payable(id: str, payload: dict, db: Session = Depends(get_db), user: 
         item.bank_account = payload.get("BankAccount") or ""
     if "ReferenceNo" in payload:
         item.reference_no = payload.get("ReferenceNo") or ""
+    if "PaidByType" in payload:
+        item.paid_by_type = payload.get("PaidByType") or "Company"
+    if "PaidByName" in payload:
+        item.paid_by_name = payload.get("PaidByName") or ""
+    if "ReimburseTo" in payload or "SettlementTo" in payload:
+        item.reimburse_to = payload.get("ReimburseTo") or payload.get("SettlementTo") or ""
+    if "ReimbursementStatus" in payload:
+        item.reimbursement_status = payload.get("ReimbursementStatus") or payable_reimbursement_status(item.paid_by_type, item.paid_amount)
+    elif any(key in payload for key in ("PaidByType", "PaidByName", "ReimburseTo", "SettlementTo", "PaidAmount")):
+        if not item.paid_by_name and is_company_paid(item.paid_by_type) and dec(item.paid_amount) > 0:
+            item.paid_by_name = "Company"
+        if not item.reimburse_to and not is_company_paid(item.paid_by_type):
+            item.reimburse_to = item.paid_by_name
+        item.reimbursement_status = payable_reimbursement_status(item.paid_by_type, item.paid_amount, item.reimbursement_status)
+    if "ReimbursementDate" in payload:
+        item.reimbursement_date = parse_date(payload.get("ReimbursementDate"))
+    if "ReimbursementRef" in payload:
+        item.reimbursement_ref = payload.get("ReimbursementRef") or ""
     if "ChallanNo" in payload:
         item.challan_no = payload.get("ChallanNo") or ""
     if "ChallanDate" in payload:
@@ -688,6 +706,9 @@ def batch_payables(payload: dict, db: Session = Depends(get_db), llp_id: str | N
     payment_mode = payload.get("PaymentMode") or "Bank"
     bank_account = payload.get("BankAccount") or ""
     reference_no = payload.get("ReferenceNo") or ""
+    paid_by_type = payload.get("PaidByType") or "Company"
+    paid_by_name = payload.get("PaidByName") or ("Company" if is_company_paid(paid_by_type) else "")
+    reimburse_to = payload.get("ReimburseTo") or payload.get("SettlementTo") or (paid_by_name if not is_company_paid(paid_by_type) else "")
     pay_gross = str(payload.get("TDSMode") or "").strip() == "gross_pending_tds"
     payable_rows = sorted((item for item in rows if item.status != "Cancelled"), key=lambda item: (item.normalized_bill_no or normalize_key(item.bill_no), item.bill_date or datetime.min.date()))
     def payment_target(item):
@@ -715,6 +736,10 @@ def batch_payables(payload: dict, db: Session = Depends(get_db), llp_id: str | N
         item.payment_mode = payment_mode
         item.bank_account = bank_account
         item.reference_no = reference_no
+        item.paid_by_type = paid_by_type
+        item.paid_by_name = paid_by_name
+        item.reimburse_to = reimburse_to
+        item.reimbursement_status = payable_reimbursement_status(paid_by_type, item.paid_amount, item.reimbursement_status)
         if not pay_gross:
             item.tds_deducted_amount = max(dec(item.tds_deducted_amount), dec(item.tds_amount))
         item.status = payable_status(item.net_payable, item.paid_amount)
@@ -742,12 +767,34 @@ def mark_paid(id: str, payload: dict, db: Session = Depends(get_db), user: User 
     item.payment_mode = payload.get("PaymentMode") or item.payment_mode
     item.bank_account = payload.get("BankAccount") or item.bank_account
     item.reference_no = payload.get("ReferenceNo") or item.reference_no
+    item.paid_by_type = payload.get("PaidByType") or item.paid_by_type or "Company"
+    item.paid_by_name = payload.get("PaidByName") or item.paid_by_name or ("Company" if is_company_paid(item.paid_by_type) else "")
+    item.reimburse_to = payload.get("ReimburseTo") or payload.get("SettlementTo") or item.reimburse_to or (item.paid_by_name if not is_company_paid(item.paid_by_type) else "")
+    item.reimbursement_status = payload.get("ReimbursementStatus") or payable_reimbursement_status(item.paid_by_type, item.paid_amount, item.reimbursement_status)
     if not pay_gross:
         item.tds_deducted_amount = max(dec(item.tds_deducted_amount), dec(item.tds_amount))
     item.status = payable_status(item.net_payable, item.paid_amount)
     audit(db, user.email, "payables", "payment", id)
     db.commit()
     return {"ok": True, "message": "Payable marked paid"}
+
+
+@router.post("/payables/{id}/reimburse")
+def reimburse_payable(id: str, payload: dict, db: Session = Depends(get_db), llp_id: str = Depends(require_llp_id), user: User = Depends(current_user)):
+    item = db.get(LLPPayable, id)
+    if not item or item.llp_id != llp_id:
+        raise HTTPException(status_code=404, detail="Payable not found")
+    if is_company_paid(item.paid_by_type):
+        raise HTTPException(status_code=400, detail="Company-paid payables do not require reimbursement")
+    if dec(item.paid_amount) <= 0 and not payload.get("force"):
+        raise HTTPException(status_code=400, detail="Payable must be paid before reimbursement")
+    item.reimbursement_status = "Reimbursed"
+    item.reimburse_to = payload.get("ReimburseTo") or payload.get("SettlementTo") or item.reimburse_to or item.paid_by_name
+    item.reimbursement_date = parse_date(payload.get("ReimbursementDate") or payload.get("ReimburseDate")) or datetime.now(timezone.utc).date()
+    item.reimbursement_ref = payload.get("ReimbursementRef") or payload.get("ReimburseRef") or ""
+    audit(db, user.email, "payables", "reimburse", id)
+    db.commit()
+    return {"ok": True, "message": "Payable reimbursement marked", "data": serialize_payable(db, item)}
 
 
 @router.delete("/payables/{id}")
@@ -1381,7 +1428,10 @@ def dashboard(db: Session = Depends(get_db), llp_id: str | None = Depends(get_ll
     summary = {
         "expenses_total": money(sum(dec(e.amount) for e in expenses)),
         "approved_expenses_total": money(sum(dec(e.amount) for e in expenses if e.status == "Approved")),
-        "pending_reimbursements_total": money(sum(dec(e.amount) for e in expenses if e.status in {"Draft", "Submitted", "Approved"})),
+        "pending_reimbursements_total": money(
+            sum(dec(e.amount) for e in expenses if e.status in {"Draft", "Submitted", "Approved"}) +
+            sum(dec(p.paid_amount) for p in payables if not is_company_paid(p.paid_by_type) and p.reimbursement_status in {"", "Pending"})
+        ),
         "reimbursed_total": money(sum(dec(e.amount) for e in expenses if e.status == "Reimbursed")),
         "pending_payables_total": money(sum(max(dec(p.net_payable) - dec(p.paid_amount), Decimal("0.00")) for p in payables)),
         "paid_payables_total": money(sum(dec(p.paid_amount) for p in payables)),
@@ -1463,6 +1513,32 @@ def reimbursements(db: Session = Depends(get_db), llp_id: str | None = Depends(g
             "ReimburseDate": iso(e.reimburse_date),
             "ReimburseRef": e.reimburse_ref,
             "ReimburseBy": e.reimburse_by,
+        })
+    payables_q = db.query(LLPPayable)
+    if llp_id:
+        payables_q = payables_q.filter(LLPPayable.llp_id == llp_id)
+    for p in payables_q.all():
+        if is_company_paid(p.paid_by_type) or dec(p.paid_amount) <= 0:
+            continue
+        reimburse_to = p.reimburse_to or p.paid_by_name
+        data.append({
+            "Source": "Payable",
+            "RefID": p.id,
+            "PayableID": p.id,
+            "Date": iso(p.payment_date or p.bill_date),
+            "PaidBy": p.paid_by_name,
+            "ActualPaidBy": p.paid_by_name,
+            "ReimburseTo": reimburse_to,
+            "SettlementTo": reimburse_to,
+            "Description": f"{p.vendor_name} - {p.description or p.bill_no or 'Vendor bill'}",
+            "BillingMonth": "",
+            "Amount": money(p.paid_amount),
+            "Status": p.reimbursement_status or "Pending",
+            "ReimburseMode": p.payment_mode,
+            "ReimburseAccount": p.bank_account,
+            "ReimburseDate": iso(p.reimbursement_date),
+            "ReimburseRef": p.reimbursement_ref,
+            "ReimburseBy": "",
         })
     data.sort(key=lambda r: r["Date"] or "", reverse=True)
     return {"ok": True, "data": data}

@@ -179,6 +179,45 @@ def test_duplicate_payable_rejection(client, auth_headers):
     assert client.post("/payables", headers=auth_headers, json=payload).status_code == 409
 
 
+def test_payable_paid_personally_flows_to_reimbursement_report(client, auth_headers):
+    created = client.post(
+        "/payables",
+        headers=auth_headers,
+        json={
+            "VendorName": "Travel Co",
+            "BillNo": "TRV-1",
+            "BillDate": "2026-06-10",
+            "TaxableAmount": "1000",
+            "GSTAmount": "180",
+            "PaidAmount": "1180",
+            "PaidByType": "Partner",
+            "PaidByName": "Dinu",
+            "ReimburseTo": "Manu",
+            "PaymentDate": "2026-06-11",
+            "ReferenceNo": "UPI1",
+        },
+    )
+    assert created.status_code == 200
+    payable_id = created.json()["data"]["PayableID"]
+
+    rows = client.get("/reports/reimbursements", headers=auth_headers).json()["data"]
+    row = next(r for r in rows if r["Source"] == "Payable" and r["RefID"] == payable_id)
+    assert row["ActualPaidBy"] == "Dinu"
+    assert row["SettlementTo"] == "Manu"
+    assert row["Amount"] == 1180.0
+    assert row["Status"] == "Pending"
+
+    reimbursed = client.post(
+        f"/payables/{payable_id}/reimburse",
+        headers=auth_headers,
+        json={"ReimburseTo": "Manu", "ReimbursementDate": "2026-06-12", "ReimbursementRef": "UTR-PAY-1"},
+    )
+    assert reimbursed.status_code == 200
+    data = reimbursed.json()["data"]
+    assert data["ReimbursementStatus"] == "Reimbursed"
+    assert data["ReimbursementRef"] == "UTR-PAY-1"
+
+
 def test_vendor_delete_is_blocked_when_payables_exist(client, auth_headers):
     vendor = client.post("/vendors", headers=auth_headers, json={"VendorName": "Delete Block Vendor"})
     assert vendor.status_code == 200
