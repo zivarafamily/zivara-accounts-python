@@ -13,11 +13,27 @@ depends_on = None
 def upgrade():
     op.add_column(
         "llp_payables",
-        sa.Column("tds_deducted_amount", sa.Numeric(18, 2), nullable=False, server_default="0"),
+        sa.Column(
+            "tds_deducted_amount",
+            sa.Numeric(18, 2),
+            nullable=False,
+            server_default="0",
+        ),
     )
-    op.execute("UPDATE llp_payables SET tds_deducted_amount = tds_amount WHERE paid_amount > 0")
-    op.alter_column("llp_payables", "tds_deducted_amount", server_default=None)
+
+    op.execute(
+        "UPDATE llp_payables "
+        "SET tds_deducted_amount = tds_amount "
+        "WHERE paid_amount > 0"
+    )
+
+    # SQLite does not support:
+    # ALTER TABLE ... ALTER COLUMN ... DROP DEFAULT
+    #
+    # Keep the default of 0. This is safe for this numeric field.
 
 
 def downgrade():
-    op.drop_column("llp_payables", "tds_deducted_amount")
+    # batch mode is SQLite-safe for schema changes
+    with op.batch_alter_table("llp_payables") as batch_op:
+        batch_op.drop_column("tds_deducted_amount")
