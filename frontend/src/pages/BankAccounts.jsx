@@ -10,7 +10,7 @@ const initial = {
 
 const txnInitial = {
   BankAccountID:"", Date:"", Type:"Payment", AmountIn:"", AmountOut:"",
-  ReferenceType:"Manual", ReferenceID:"", Description:""
+  ReferenceType:"Manual", ReferenceID:"", Description:"", LedgerID:""
 };
 
 const card  = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
@@ -42,6 +42,7 @@ const fmt = n => n != null && n !== "" ? "₹"+Number(n).toLocaleString("en-IN")
 export default function BankAccounts() {
   const { currentLLP } = useLLP();
   const [accounts, setAccounts]   = useState([]);
+  const [ledgers, setLedgers]     = useState([]);
   const [form, setForm]           = useState(initial);
   const [loading, setLoading]     = useState(false);
   const [formOpen, setFormOpen]   = useState(false);
@@ -53,8 +54,22 @@ export default function BankAccounts() {
   async function load() {
     setLoading(true);
     try {
-      const r = await apiGet("getBankAccounts");
-      if (r.ok) setAccounts(r.data || []);
+      const [bankResult, ledgerResult] = await Promise.allSettled([
+        apiGet("getBankAccounts"),
+        apiGet("getLedgers"),
+      ]);
+
+      if (bankResult.status === "fulfilled" && bankResult.value.ok) {
+        setAccounts(bankResult.value.data || []);
+      }
+
+      if (ledgerResult.status === "fulfilled" && ledgerResult.value.ok) {
+        setLedgers(
+          (ledgerResult.value.data || []).filter(
+            ledger => ledger.Status !== "Inactive"
+          )
+        );
+      }
     } catch {}
     finally { setLoading(false); }
   }
@@ -88,20 +103,41 @@ export default function BankAccounts() {
 
   async function saveTxn(e) {
     e.preventDefault();
+
     const amountIn = Number(txnForm.AmountIn) || 0;
     const amountOut = Number(txnForm.AmountOut) || 0;
+
+    if (!txnForm.LedgerID) {
+      alert("Select a ledger for this transaction");
+      return;
+    }
+
     if (amountIn <= 0 && amountOut <= 0) {
       alert("Enter either Amount In or Amount Out");
       return;
     }
+
     if (amountIn > 0 && amountOut > 0) {
       alert("Use either Amount In or Amount Out, not both");
       return;
     }
+
     try {
       const r = await apiPost("saveCashEntry", txnForm);
-      if (r.ok) { setTxnOpen(false); setTxnForm(txnInitial); load(); }
-      else alert(r.error || "Error saving transaction");
+
+      if (!r.ok || !r.data?.EntryID) {
+        alert(r.error || "Error saving transaction");
+        return;
+      }
+
+      await apiPost("postCashToLedger", {
+        EntryID: r.data.EntryID,
+        LedgerID: txnForm.LedgerID,
+      });
+
+      setTxnOpen(false);
+      setTxnForm(txnInitial);
+      await load();
     } catch (err) {
       alert(err.message || "Error saving transaction");
     }
@@ -224,6 +260,16 @@ export default function BankAccounts() {
               </div>
               <div><label style={label}>Amount In (₹)</label><input type="number" min="0" step="0.01" placeholder="Money received" value={txnForm.AmountIn} onChange={e=>setTxn("AmountIn", e.target.value)} /></div>
               <div><label style={label}>Amount Out (₹)</label><input type="number" min="0" step="0.01" placeholder="Money paid" value={txnForm.AmountOut} onChange={e=>setTxn("AmountOut", e.target.value)} /></div>
+              <div><label style={label}>Ledger *</label>
+                <select value={txnForm.LedgerID} onChange={e=>setTxn("LedgerID", e.target.value)} required>
+                  <option value="">— Select ledger —</option>
+                  {ledgers.map(ledger => (
+                    <option key={ledger.LedgerID} value={ledger.LedgerID}>
+                      {ledger.LedgerName} · {ledger.GroupName}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div><label style={label}>Reference Type</label>
                 <select value={txnForm.ReferenceType} onChange={e=>setTxn("ReferenceType", e.target.value)}>
                   {["Manual","Vendor Payment","Receipt","Bank Charge","Transfer","Adjustment"].map(o=><option key={o}>{o}</option>)}
