@@ -11,20 +11,65 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("llp_payables", sa.Column("paid_by_type", sa.String(length=40), nullable=False, server_default="Company"))
-    op.add_column("llp_payables", sa.Column("paid_by_name", sa.String(length=160), nullable=False, server_default=""))
-    op.add_column("llp_payables", sa.Column("reimburse_to", sa.String(length=160), nullable=False, server_default=""))
-    op.add_column("llp_payables", sa.Column("reimbursement_status", sa.String(length=40), nullable=False, server_default="Not Required"))
-    op.add_column("llp_payables", sa.Column("reimbursement_date", sa.Date(), nullable=True))
-    op.add_column("llp_payables", sa.Column("reimbursement_ref", sa.String(length=160), nullable=False, server_default=""))
-    for column in ("paid_by_type", "paid_by_name", "reimburse_to", "reimbursement_status", "reimbursement_ref"):
-        op.alter_column("llp_payables", column, server_default=None)
+    op.add_column(
+        "llp_payables",
+        sa.Column(
+            "paid_by_type",
+            sa.String(length=40),
+            nullable=False,
+            server_default="Company",
+        ),
+    )
+    op.add_column(
+        "llp_payables",
+        sa.Column(
+            "paid_by_name",
+            sa.String(length=160),
+            nullable=False,
+            server_default="",
+        ),
+    )
+    op.add_column(
+        "llp_payables",
+        sa.Column(
+            "reimburse_to",
+            sa.String(length=160),
+            nullable=False,
+            server_default="",
+        ),
+    )
+    op.add_column(
+        "llp_payables",
+        sa.Column(
+            "reimbursement_status",
+            sa.String(length=40),
+            nullable=False,
+            server_default="Not Required",
+        ),
+    )
+    op.add_column(
+        "llp_payables",
+        sa.Column("reimbursement_date", sa.Date(), nullable=True),
+    )
+    op.add_column(
+        "llp_payables",
+        sa.Column(
+            "reimbursement_ref",
+            sa.String(length=160),
+            nullable=False,
+            server_default="",
+        ),
+    )
+
+    # Keep server defaults for SQLite compatibility.
+    # SQLite does not support ALTER COLUMN ... DROP DEFAULT.
 
 
 def downgrade():
-    op.drop_column("llp_payables", "reimbursement_ref")
-    op.drop_column("llp_payables", "reimbursement_date")
-    op.drop_column("llp_payables", "reimbursement_status")
-    op.drop_column("llp_payables", "reimburse_to")
-    op.drop_column("llp_payables", "paid_by_name")
-    op.drop_column("llp_payables", "paid_by_type")
+    with op.batch_alter_table("llp_payables") as batch_op:
+        batch_op.drop_column("reimbursement_ref")
+        batch_op.drop_column("reimbursement_date")
+        batch_op.drop_column("reimbursement_status")
+        batch_op.drop_column("reimburse_to")
+        batch_op.drop_column("paid_by_name")
+        batch_op.drop_column("paid_by_type")
