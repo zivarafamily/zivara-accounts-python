@@ -5,7 +5,7 @@ import { formatDate } from "../utils/format";
 const initial = {
   Date:"", Type:"Payment", OpeningBalance:"",
   AmountIn:"", AmountOut:"", ReferenceType:"Manual",
-  ReferenceID:"", Description:""
+  ReferenceID:"", Description:"", LedgerID:""
 };
 
 const card  = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
@@ -36,6 +36,7 @@ const fmt = n => n != null && n !== "" ? "₹"+Number(n).toLocaleString("en-IN")
 
 export default function CashBook() {
   const [entries, setEntries]   = useState([]);
+  const [ledgers, setLedgers]     = useState([]);
   const [form, setForm]         = useState(initial);
   const [loading, setLoading]   = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -43,13 +44,31 @@ export default function CashBook() {
   async function load() {
     setLoading(true);
     try {
-      const r = await apiGet("getCashBook");
-      if (r.ok) {
-        const data = r.data || [];
+      const [cashResult, ledgerResult] = await Promise.allSettled([
+        apiGet("getCashBook"),
+        apiGet("getLedgers"),
+      ]);
+
+      if (cashResult.status === "fulfilled" && cashResult.value.ok) {
+        const data = cashResult.value.data || [];
         setEntries(data);
+
         if (data.length > 0) {
-          setForm(p => ({ ...p, OpeningBalance: String(data[data.length-1].ClosingBalance || "") }));
+          setForm(p => ({
+            ...p,
+            OpeningBalance: String(
+              data[data.length - 1].ClosingBalance || ""
+            ),
+          }));
         }
+      }
+
+      if (ledgerResult.status === "fulfilled" && ledgerResult.value.ok) {
+        setLedgers(
+          (ledgerResult.value.data || []).filter(
+            ledger => ledger.Status !== "Inactive"
+          )
+        );
       }
     } catch {}
     finally { setLoading(false); }
@@ -61,9 +80,44 @@ export default function CashBook() {
 
   async function save(e) {
     e.preventDefault();
-    const r = await apiPost("saveCashEntry", form);
-    if (r.ok) { setForm(initial); setFormOpen(false); load(); }
-    else alert(r.error || "Error saving");
+
+    const amountIn = Number(form.AmountIn) || 0;
+    const amountOut = Number(form.AmountOut) || 0;
+
+    if (!form.LedgerID) {
+      alert("Select a ledger for this cash entry");
+      return;
+    }
+
+    if (amountIn <= 0 && amountOut <= 0) {
+      alert("Enter either Amount In or Amount Out");
+      return;
+    }
+
+    if (amountIn > 0 && amountOut > 0) {
+      alert("Use either Amount In or Amount Out, not both");
+      return;
+    }
+
+    try {
+      const r = await apiPost("saveCashEntry", form);
+
+      if (!r.ok || !r.data?.EntryID) {
+        alert(r.error || "Error saving");
+        return;
+      }
+
+      await apiPost("postCashToLedger", {
+        EntryID: r.data.EntryID,
+        LedgerID: form.LedgerID,
+      });
+
+      setForm(initial);
+      setFormOpen(false);
+      await load();
+    } catch (err) {
+      alert(err.message || "Error saving cash entry");
+    }
   }
 
   async function removeEntry(en) {
@@ -118,6 +172,16 @@ export default function CashBook() {
               <div><label style={label}>Opening Balance (₹)</label><input type="number" placeholder="0.00" value={form.OpeningBalance} onChange={e=>set("OpeningBalance",e.target.value)} /></div>
               <div><label style={label}>Amount In (₹)</label><input type="number" placeholder="0.00" min="0" value={form.AmountIn} onChange={e=>set("AmountIn",e.target.value)} /></div>
               <div><label style={label}>Amount Out (₹)</label><input type="number" placeholder="0.00" min="0" value={form.AmountOut} onChange={e=>set("AmountOut",e.target.value)} /></div>
+              <div><label style={label}>Ledger *</label>
+                <select value={form.LedgerID} onChange={e=>set("LedgerID",e.target.value)} required>
+                  <option value="">— Select ledger —</option>
+                  {ledgers.map(ledger => (
+                    <option key={ledger.LedgerID} value={ledger.LedgerID}>
+                      {ledger.LedgerName} · {ledger.GroupName}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div><label style={label}>Reference Type</label>
                 <select value={form.ReferenceType} onChange={e=>set("ReferenceType",e.target.value)}>
                   {["Manual","Expense","Advance","InvoiceReceipt","Salary"].map(o=><option key={o}>{o}</option>)}
