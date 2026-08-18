@@ -67,7 +67,16 @@ def _unique_code(db: Session, llp_id: str, requested: str, exclude_id: str = "")
     return candidate
 
 
-def _ensure_ledger(db: Session, llp_id: str, name: str, group_name: str, account_type: str, system_key: str):
+def _ensure_ledger(
+    db: Session,
+    llp_id: str,
+    name: str,
+    group_name: str,
+    account_type: str,
+    system_key: str,
+    opening_balance=Decimal("0.00"),
+    opening_side="Dr",
+):
     item = db.query(Ledger).filter(Ledger.llp_id == llp_id, Ledger.system_key == system_key).first()
     if item:
         return item
@@ -83,8 +92,8 @@ def _ensure_ledger(db: Session, llp_id: str, name: str, group_name: str, account
         ledger_name=name,
         group_name=group_name,
         account_type=account_type,
-        opening_balance=Decimal("0.00"),
-        opening_side="Dr",
+        opening_balance=dec(opening_balance),
+        opening_side=opening_side if opening_side in {"Dr", "Cr"} else "Dr",
         status="Active",
         notes="",
         system_key=system_key,
@@ -104,6 +113,8 @@ def _source_ledger(db: Session, llp_id: str, cash: CashBookEntry):
             "Cash & Bank",
             "Asset",
             f"bank:{bank.id}",
+            opening_balance=bank.opening_balance,
+            opening_side="Dr",
         )
     return _ensure_ledger(db, llp_id, "Cash in Hand", "Cash & Bank", "Asset", "cash")
 
@@ -393,8 +404,6 @@ def post_cash_to_ledger(
         "SourceID": cash.id,
         "Lines": lines,
     })
-    cash.reference_type = "Ledger"
-    cash.reference_id = counter.id
     audit(db, user.email, "journal", "post-cash", journal.id)
     db.commit()
     return {"ok": True, "JournalID": journal.id, "LedgerID": counter.id}
