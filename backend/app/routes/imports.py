@@ -140,16 +140,6 @@ def _revenue_month_from_header(header):
     return f"{month}-{year}"
 
 
-def _selected_revenue_month_matches(header_month, selected_month):
-    if not selected_month:
-        return True
-    if header_month == selected_month:
-        return True
-    header_parts = _text(header_month).split("-")
-    selected_parts = _text(selected_month).split("-")
-    return len(header_parts) == 2 and len(selected_parts) == 2 and header_parts[0] == selected_parts[0]
-
-
 def _is_total_row(row):
     values = [_text(value).lower() for value in row.values()]
 
@@ -174,11 +164,10 @@ def _neo_revenue_total_checks(workbook, revenue_month_filter=""):
         ]
 
         for gross_header in gross_headers:
-            revenue_month = _revenue_month_from_header(gross_header)
+            header_month = _revenue_month_from_header(gross_header)
+            revenue_month = revenue_month_filter or header_month
 
             if not revenue_month:
-                continue
-            if not _selected_revenue_month_matches(revenue_month, revenue_month_filter):
                 continue
 
             detail_total = Decimal("0.00")
@@ -258,7 +247,9 @@ def _neo_revenue_import_rows(workbook, revenue_month_filter=""):
         for index, row in enumerate(explicit, start=2):
             if _is_total_row(row):
                 continue
-            if revenue_month_filter and _text(row.get("RevenueMonth")) != revenue_month_filter:
+            if revenue_month_filter:
+                row["RevenueMonth"] = revenue_month_filter
+            if not _text(row.get("RevenueMonth")):
                 continue
             yield index, row
         return
@@ -273,11 +264,10 @@ def _neo_revenue_import_rows(workbook, revenue_month_filter=""):
         ]
 
         for gross_header in gross_headers:
-            revenue_month = _revenue_month_from_header(gross_header)
+            header_month = _revenue_month_from_header(gross_header)
+            revenue_month = revenue_month_filter or header_month
 
             if not revenue_month:
-                continue
-            if not _selected_revenue_month_matches(revenue_month, revenue_month_filter):
                 continue
 
             for index, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
@@ -325,7 +315,7 @@ def _neo_revenue_import_rows(workbook, revenue_month_filter=""):
                     "CommissionPercent": _row_value(source, "CommissionPercent", "Commission %", "Commission"),
                     "Notes": _row_value(source, "Notes", "Remarks"),
                     "IncomeType": _row_value(source, "IncomeType", "Income Type") or "ARR",
-                    "RevenueMonth": revenue_month_filter or revenue_month,
+                    "RevenueMonth": revenue_month,
                     "RevenueAmount": revenue_amount,
                     "StatementRef": sheet.title,
                 }
@@ -503,7 +493,12 @@ async def import_neo_revenue_workbook(
         _commit(db, summary, "neorevenue", item.id, user.email)
 
     if matched_rows == 0:
-        _skip(summary, selected_month, f"No Neo Revenue rows found for {selected_month}")
+        _skip(
+            summary,
+            selected_month,
+            f"No Neo Revenue rows found for {selected_month}",
+            {"RevenueMonth": selected_month},
+        )
 
     return {
         "ok": True,
