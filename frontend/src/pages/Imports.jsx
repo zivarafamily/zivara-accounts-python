@@ -113,12 +113,12 @@ function excelCell(value, style = "") {
 function downloadNeoRevenueTemplate() {
   const headers = [
     "PAN", "Client Name", "Partner Name", "Date", "Product", "Tnx Type", "Scheme Name",
-    "Amount", "Commission %", "Remarks", "Gross Revenue Jun'26", "Income Type",
+    "Amount", "Commission %", "Remarks", "Gross Revenue", "Income Type",
   ];
   const rows = [
-    ["ABCDE1234F", "Sample Client One", "Manugopal A K", "30-Jun-26", "AIF", "Purchase", "NEO INFRA INCOME OPPORTUNITIES FUND II A1", "10000000", "1.78%", "", "178000", "Transactional"],
-    ["ABCDE1234F", "Sample Client One", "Manugopal A K", "30-Jun-26", "PMS", "Purchase", "Neo Multi-Asset Moderate Strategy", "55512299.93", "", "", "10265.97", "ARR"],
-    ["PQRST6789L", "Sample Client Two", "Manugopal A K", "30-Jun-26", "Mutual Fund", "Purchase", "HDFC Liquid Fund-Growth", "", "", "CAMS", "30.68", "ARR"],
+    ["ABCDE1234F", "Sample Client One", "Manugopal A K", "30-06-2026", "AIF", "Purchase", "NEO INFRA INCOME OPPORTUNITIES FUND II A1", "10000000", "1.78%", "", "178000", "Transactional"],
+    ["ABCDE1234F", "Sample Client One", "Manugopal A K", "30-06-2026", "PMS", "Purchase", "Neo Multi-Asset Moderate Strategy", "55512299.93", "", "", "10265.97", "ARR"],
+    ["PQRST6789L", "Sample Client Two", "Manugopal A K", "30-06-2026", "Mutual Fund", "Purchase", "HDFC Liquid Fund-Growth", "", "", "CAMS", "30.68", "ARR"],
   ];
   const headerHtml = headers.map(h => excelCell(h, "font-weight:bold;background:#17365D;color:#fff;border:1px solid #9EADCC;")).join("");
   const sampleHtml = rows.map(row => `<tr>${row.map(v => excelCell(v, "background:#EAF3F8;border:1px solid #D9E2F3;")).join("")}</tr>`).join("");
@@ -325,7 +325,7 @@ export default function Imports() {
           {neoRevenueFile && <button type="button" style={btn("ghost")} onClick={() => { setNeoRevenueFile(null); setResult(null); setNeoRevenueFileInputKey(key => key + 1); }}>Clear</button>}
         </form>
         <div style={{ color:"var(--muted)", fontSize:".75rem", marginTop:".65rem" }}>
-          Imports only the selected Gross Revenue month from the Neo statement.
+          The selected month and year above are used as the RevenueMonth for every imported row. The template uses a month-neutral Gross Revenue column.
         </div>
       </div>
 
