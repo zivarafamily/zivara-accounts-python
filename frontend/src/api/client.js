@@ -190,6 +190,7 @@ const getRoutes = {
   getNeoInvoices: "/neo-invoices",
 
   getBankAccounts: "/bank-accounts",
+  getBankTransactions: "/bank-transactions",
   getCashBook: "/cash-book",
 
   // Ledger Master
@@ -379,6 +380,15 @@ const postRoutes = {
   deleteCashEntry: [
     "DELETE",
     p => `/cash-book/${p.EntryID}`,
+  ],
+
+  updateBankTransaction: [
+    "PUT",
+    p => `/bank-transactions/${p.EntryID}`,
+  ],
+  deleteBankTransaction: [
+    "DELETE",
+    p => `/bank-transactions/${p.EntryID}`,
   ],
 
   // Ledger Master / Journal
