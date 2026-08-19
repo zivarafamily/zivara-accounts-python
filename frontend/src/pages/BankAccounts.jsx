@@ -43,6 +43,8 @@ export default function BankAccounts() {
   const { currentLLP } = useLLP();
   const [accounts, setAccounts]   = useState([]);
   const [ledgers, setLedgers]     = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [editTxnId, setEditTxnId] = useState(null);
   const [form, setForm]           = useState(initial);
   const [loading, setLoading]     = useState(false);
   const [formOpen, setFormOpen]   = useState(false);
@@ -54,9 +56,10 @@ export default function BankAccounts() {
   async function load() {
     setLoading(true);
     try {
-      const [bankResult, ledgerResult] = await Promise.allSettled([
+      const [bankResult, ledgerResult, txnResult] = await Promise.allSettled([
         apiGet("getBankAccounts"),
         apiGet("getLedgers"),
+        apiGet("getBankTransactions"),
       ]);
 
       if (bankResult.status === "fulfilled" && bankResult.value.ok) {
@@ -70,6 +73,10 @@ export default function BankAccounts() {
           )
         );
       }
+
+      if (txnResult.status === "fulfilled" && txnResult.value.ok) {
+        setTransactions(txnResult.value.data || []);
+      }
     } catch {}
     finally { setLoading(false); }
   }
@@ -80,6 +87,7 @@ export default function BankAccounts() {
 
   function openAdd() { setForm(initial); setEditId(null); setFormOpen(true); }
   function openTxn(acc = null) {
+    setEditTxnId(null);
     setTxnForm({
       ...txnInitial,
       BankAccountID: acc?.AccountID || "",
@@ -87,6 +95,22 @@ export default function BankAccounts() {
     });
     setTxnOpen(true);
   }
+  function openEditTxn(txn) {
+    setEditTxnId(txn.EntryID);
+    setTxnForm({
+      BankAccountID: txn.BankAccountID || "",
+      Date: txn.Date || "",
+      Type: txn.Type || "Payment",
+      AmountIn: txn.AmountIn || "",
+      AmountOut: txn.AmountOut || "",
+      ReferenceType: txn.ReferenceType || "Manual",
+      ReferenceID: txn.ReferenceID || "",
+      Description: txn.Description || "",
+      LedgerID: txn.LedgerID || "",
+    });
+    setTxnOpen(true);
+  }
+
   function openEdit(acc) {
     setForm({
       AccountName: acc.AccountName||"", BankName: acc.BankName||"",
@@ -123,19 +147,32 @@ export default function BankAccounts() {
     }
 
     try {
-      const r = await apiPost("saveCashEntry", txnForm);
+      if (editTxnId) {
+        const r = await apiPost("updateBankTransaction", {
+          ...txnForm,
+          EntryID: editTxnId,
+        });
 
-      if (!r.ok || !r.data?.EntryID) {
-        alert(r.error || "Error saving transaction");
-        return;
+        if (!r.ok) {
+          alert(r.error || "Error updating transaction");
+          return;
+        }
+      } else {
+        const r = await apiPost("saveCashEntry", txnForm);
+
+        if (!r.ok || !r.data?.EntryID) {
+          alert(r.error || "Error saving transaction");
+          return;
+        }
+
+        await apiPost("postCashToLedger", {
+          EntryID: r.data.EntryID,
+          LedgerID: txnForm.LedgerID,
+        });
       }
 
-      await apiPost("postCashToLedger", {
-        EntryID: r.data.EntryID,
-        LedgerID: txnForm.LedgerID,
-      });
-
       setTxnOpen(false);
+      setEditTxnId(null);
       setTxnForm(txnInitial);
       await load();
     } catch (err) {
@@ -153,6 +190,28 @@ export default function BankAccounts() {
       else alert(r.error || "Error saving");
     } catch (err) {
       alert(err.message || "Error saving bank account");
+    }
+  }
+
+  async function removeTransaction(txn) {
+    const label = txn.ReferenceID || txn.Description || txn.EntryID;
+    if (!window.confirm(`Delete bank transaction ${label}?`)) return;
+
+    try {
+      const r = await apiPost("deleteBankTransaction", {
+        EntryID: txn.EntryID,
+      });
+
+      if (r.ok) {
+        if (editTxnId === txn.EntryID) {
+          setTxnOpen(false);
+          setEditTxnId(null);
+          setTxnForm(txnInitial);
+        }
+        await load();
+      }
+    } catch (err) {
+      alert(err.message || "Unable to delete transaction");
     }
   }
 
@@ -239,7 +298,7 @@ export default function BankAccounts() {
 
       {txnOpen && (
         <div style={card}>
-          <h3 style={{ fontWeight:600, marginBottom:"1rem", color:"var(--text)" }}>New Bank Transaction</h3>
+          <h3 style={{ fontWeight:600, marginBottom:"1rem", color:"var(--text)" }}>{editTxnId ? "Edit Bank Transaction" : "New Bank Transaction"}</h3>
           <form onSubmit={saveTxn}>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))", gap:"1rem" }}>
               <div><label style={label}>Bank Account *</label>
@@ -279,8 +338,8 @@ export default function BankAccounts() {
               <div style={{ gridColumn:"span 2" }}><label style={label}>Description</label><input placeholder="Narration" value={txnForm.Description} onChange={e=>setTxn("Description", e.target.value)} /></div>
             </div>
             <div style={{ display:"flex", gap:".75rem", marginTop:"1.25rem" }}>
-              <button type="submit" style={btn()}>Save Transaction</button>
-              <button type="button" style={btn("ghost")} onClick={()=>setTxnOpen(false)}>Cancel</button>
+              <button type="submit" style={btn()}>{editTxnId ? "Update Transaction" : "Save Transaction"}</button>
+              <button type="button" style={btn("ghost")} onClick={()=>{ setTxnOpen(false); setEditTxnId(null); setTxnForm(txnInitial); }}>Cancel</button>
             </div>
           </form>
         </div>
@@ -347,6 +406,79 @@ export default function BankAccounts() {
               </tbody>
             </table>
           )}
+        </div>
+      </div>
+
+      <div style={{ ...card, padding:0, overflow:"hidden" }}>
+        <div style={{ padding:".9rem 1.25rem", borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <span style={{ fontWeight:600, fontSize:".875rem" }}>Bank Transactions</span>
+          <span style={{ fontSize:".75rem", color:"var(--muted)" }}>
+            {transactions.length} transaction{transactions.length!==1?"s":""}
+          </span>
+        </div>
+
+        <div style={{ overflowX:"auto" }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Bank Account</th>
+                <th>Ledger</th>
+                <th>Type</th>
+                <th>Amount In</th>
+                <th>Amount Out</th>
+                <th>Reference / UTR</th>
+                <th>Description</th>
+                <th>Closing Balance</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.length===0 ? (
+                <tr>
+                  <td colSpan="10" style={{ textAlign:"center", color:"var(--muted)", padding:"2.5rem" }}>
+                    No bank transactions entered yet
+                  </td>
+                </tr>
+              ) : transactions.map(txn => (
+                <tr key={txn.EntryID}>
+                  <td style={{ whiteSpace:"nowrap" }}>{txn.Date || "—"}</td>
+                  <td>
+                    <div style={{ fontWeight:600 }}>{txn.BankAccountName || "—"}</div>
+                    <div style={{ fontSize:".72rem", color:"var(--muted)" }}>{txn.BankName || ""}</div>
+                  </td>
+                  <td style={{ fontWeight:600, color:"var(--accent2)" }}>{txn.LedgerName || "—"}</td>
+                  <td>{txn.Type || "—"}</td>
+                  <td style={{ color:"var(--success)", fontWeight:600 }}>
+                    {Number(txn.AmountIn || 0) > 0 ? fmt(txn.AmountIn) : "—"}
+                  </td>
+                  <td style={{ color:"var(--danger)", fontWeight:600 }}>
+                    {Number(txn.AmountOut || 0) > 0 ? fmt(txn.AmountOut) : "—"}
+                  </td>
+                  <td style={{ fontSize:".8rem" }}>{txn.ReferenceID || "—"}</td>
+                  <td style={{ color:"var(--muted)", maxWidth:"220px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {txn.Description || "—"}
+                  </td>
+                  <td style={{ fontWeight:700 }}>{fmt(txn.ClosingBalance)}</td>
+                  <td style={{ whiteSpace:"nowrap" }}>
+                    <button
+                      onClick={()=>openEditTxn(txn)}
+                      style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--accent)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}
+                    >
+                      Edit
+                    </button>
+                    {" "}
+                    <button
+                      onClick={()=>removeTransaction(txn)}
+                      style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--danger)", borderRadius:"6px", padding:".3rem .7rem", fontSize:".75rem", cursor:"pointer" }}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
