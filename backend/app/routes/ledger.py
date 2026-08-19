@@ -449,6 +449,8 @@ def _bank_transaction_dict(db: Session, cash: CashBookEntry):
         "LedgerID": ledger_id,
         "LedgerName": ledger_name,
         "JournalID": journal.id if journal else "",
+        "Managed": cash.reference_type in LOCKED_ACCOUNTING_REFERENCE_TYPES,
+        "ManagedBy": cash.reference_type if cash.reference_type in LOCKED_ACCOUNTING_REFERENCE_TYPES else "",
     }
 
 
@@ -543,6 +545,24 @@ def _post_cash_journal(
     )
 
 
+LOCKED_ACCOUNTING_REFERENCE_TYPES = {
+    "Payable Payment",
+    "Payable Reimbursement",
+    "Expense Reimbursement",
+}
+
+
+def _block_managed_transaction_edit(cash: CashBookEntry):
+    if cash.reference_type in LOCKED_ACCOUNTING_REFERENCE_TYPES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This transaction is managed by {cash.reference_type}. "
+                "Edit or reverse it from the source module instead."
+            ),
+        )
+
+
 @router.get("/bank-transactions")
 def bank_transactions(
     bank_account_id: str = "",
@@ -606,6 +626,8 @@ def update_bank_transaction(
             status_code=404,
             detail="Bank transaction not found",
         )
+
+    _block_managed_transaction_edit(cash)
 
     old_bank = (
         db.get(BankAccount, cash.paid_by)
@@ -703,6 +725,8 @@ def delete_bank_transaction(
             status_code=404,
             detail="Bank transaction not found",
         )
+
+    _block_managed_transaction_edit(cash)
 
     bank = (
         db.get(BankAccount, cash.paid_by)
