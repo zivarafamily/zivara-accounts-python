@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.routes import auth, core, imports, uploads, ledger
-from app.services.accounting_sync import sync_existing_accounting_ledgers
+from app.services.accounting_sync import sync_existing_accounting_masters
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
@@ -27,9 +27,9 @@ app.include_router(ledger.router)
 
 @app.on_event("startup")
 def sync_accounting_masters():
-    # Idempotent accounting-only backfill.
-    # Does not read or write Neo Invoice / Neo Revenue tables.
-    sync_existing_accounting_ledgers()
+    # Master-ledger backfill only. No historical Payable/Expense transactions
+    # are posted automatically.
+    sync_existing_accounting_masters()
 
 
 app.mount(
