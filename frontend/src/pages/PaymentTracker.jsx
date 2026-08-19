@@ -3,7 +3,8 @@ import { apiGet, apiPost, uploadBill } from "../api/client";
 import { formatDate } from "../utils/format";
 import { useLLP } from "../context/LLPContext";
 
-const CATEGORIES = ["Travel Agency", "CA / Professional", "Consultant", "Contractor", "Office Purchase", "Software", "Rent", "Other"];
+const CATEGORIES = ["Travel Agency","CA / Professional","Consultant","Contractor","Office Purchase","Software","Rent","Other"];
+const PAYMENT_MODES = ["Bank","NEFT","RTGS","IMPS","UPI","Cheque","Cash"];
 const TDS_SECTIONS = [
   { section:"", label:"No TDS / Not applicable", rate:0 },
   { section:"393(1)-6(i)-1", label:"393(1) Table 6(i) - Contractor, individual/HUF payee (old 194C) - 1%", rate:1 },
@@ -15,12 +16,17 @@ const TDS_SECTIONS = [
   { section:"393(1)-8(ii)", label:"393(1) Table 8(ii) - Purchase of goods over threshold (old 194Q) - 0.1%", rate:0.1 },
 ];
 
+const emptyLine = () => ({
+  Particulars:"", TaxableAmount:"", GSTType:"IGST", GSTRate:"18",
+  CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", TCSAmount:"",
+});
+
 const initial = {
   VendorID:"", VendorName:"", VendorCategory:"Travel Agency", VendorGSTIN:"", VendorPAN:"",
-  BillNo:"", BillDate:new Date().toISOString().slice(0, 10), DueDate:"",
+  BillNo:"", BillDate:new Date().toISOString().slice(0,10), DueDate:"",
   ExpenseType:"Vendor Bill", Description:"",
   TaxableAmount:"", CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", GSTAmount:"", TCSAmount:"", GrossAmount:"",
-  LineItems:[{ Particulars:"", TaxableAmount:"", GSTType:"IGST", GSTRate:"18", CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", TCSAmount:"" }],
+  LineItems:[emptyLine()],
   TDSSection:"393(1)-6(i)-2", TDSRate:"2", TDSAmount:"",
   PaidAmount:"", PaymentDate:"", PaymentMode:"Bank", BankAccount:"", ReferenceNo:"",
   PaidByType:"Company", PaidByName:"", ReimburseTo:"", ReimbursementStatus:"Not Required",
@@ -30,72 +36,47 @@ const initial = {
 
 const card = { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius)", padding:"1.25rem" };
 const label = { display:"block", fontSize:".75rem", color:"var(--muted)", marginBottom:".35rem", fontWeight:500 };
-const btn = (v = "primary") => ({
-  padding:".55rem 1rem", borderRadius:"6px", border:v === "ghost" ? "1px solid var(--border)" : "none",
+const input = { width:"100%", boxSizing:"border-box" };
+const btn = (v="primary") => ({
+  padding:".55rem 1rem", borderRadius:"6px",
+  border:v==="ghost" ? "1px solid var(--border)" : "none",
   fontWeight:600, fontSize:".84rem", cursor:"pointer",
-  background:v === "primary" ? "var(--accent)" : "transparent",
-  color:v === "primary" ? "#fff" : "var(--muted)",
+  background:v==="primary" ? "var(--accent)" : "transparent",
+  color:v==="primary" ? "#fff" : "var(--muted)",
 });
 
 const num = value => {
   if (value == null || value === "") return 0;
-  const cleaned = String(value).replace(/[^0-9.-]/g, "");
+  const cleaned = String(value).replace(/[^0-9.-]/g,"");
   return cleaned && !isNaN(Number(cleaned)) ? Number(cleaned) : 0;
 };
 
-const fmt = n => n != null && n !== "" && !isNaN(num(n))
-  ? "₹" + num(n).toLocaleString("en-IN", { minimumFractionDigits: 2 })
-  : "—";
+const fmt = n => "₹" + Number(n || 0).toLocaleString("en-IN", {
+  minimumFractionDigits:2, maximumFractionDigits:2,
+});
 
-const tdsDeducted = row => num(row.TDSDeductedAmount);
-const tdsPending = row => Math.max(num(row.TDSAmount) - tdsDeducted(row), 0);
-
-const tdsDisplay = row => {
-  const parts = [];
-  if (row.TDSSection) parts.push(row.TDSSection);
-  if (num(row.TDSRate) > 0) parts.push(`${num(row.TDSRate).toLocaleString("en-IN")}%`);
-  parts.push(fmt(row.TDSAmount));
-  if (tdsPending(row) > 0) parts.push(`pending ${fmt(tdsPending(row))}`);
-  return parts.join(" · ");
-};
-
-function calc(form) {
-  const lineTotals = calcLineItems(form.LineItems || []);
-  const useLines = lineTotals.hasValues;
-  const taxable = useLines ? lineTotals.taxable : num(form.TaxableAmount);
-  const cgst = useLines ? lineTotals.cgst : num(form.CGSTAmount);
-  const sgst = useLines ? lineTotals.sgst : num(form.SGSTAmount);
-  const igst = useLines ? lineTotals.igst : num(form.IGSTAmount);
-  const gst = cgst + sgst + igst || num(form.GSTAmount);
-  const tcs = useLines ? lineTotals.tcs : num(form.TCSAmount);
-  const gross = num(form.GrossAmount) || taxable + gst + tcs;
-  const tdsRate = num(form.TDSRate);
-  const tds = form.TDSAmount !== "" ? num(form.TDSAmount) : Math.round(taxable * tdsRate) / 100;
-  const net = Math.max(gross - tds, 0);
-  return { taxable, cgst, sgst, igst, gst, tcs, gross, tds, net };
+function normalizeKey(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g," ");
 }
 
-function calcLineItems(items = []) {
-  return items.reduce((sum, item) => {
-    const { taxable, cgst, sgst, igst, tcs } = calcLineItem(item);
-    return {
-      taxable:sum.taxable + taxable,
-      cgst:sum.cgst + cgst,
-      sgst:sum.sgst + sgst,
-      igst:sum.igst + igst,
-      tcs:sum.tcs + tcs,
-      hasValues:sum.hasValues || taxable > 0 || cgst > 0 || sgst > 0 || igst > 0 || tcs > 0,
-    };
-  }, { taxable:0, cgst:0, sgst:0, igst:0, tcs:0, hasValues:false });
+function reimbursementRequired(value) {
+  return normalizeKey(value || "Company") !== "company";
 }
 
-function calcLineItem(item = {}) {
+function bankPaymentRequired(form) {
+  return num(form.PaidAmount) > 0 &&
+    !reimbursementRequired(form.PaidByType) &&
+    normalizeKey(form.PaymentMode) !== "cash";
+}
+
+function calcLineItem(item={}) {
   const taxable = num(item.TaxableAmount);
   const rate = num(item.GSTRate);
   let cgst = num(item.CGSTAmount);
   let sgst = num(item.SGSTAmount);
   let igst = num(item.IGSTAmount);
   const tcs = num(item.TCSAmount);
+
   if (!cgst && !sgst && !igst && taxable && rate) {
     const gst = Math.round(taxable * rate) / 100;
     if (item.GSTType === "CGST_SGST") {
@@ -105,908 +86,445 @@ function calcLineItem(item = {}) {
       igst = gst;
     }
   }
-  return { taxable, cgst, sgst, igst, tcs, total:taxable + cgst + sgst + igst + tcs };
+  return { taxable,cgst,sgst,igst,tcs,total:taxable+cgst+sgst+igst+tcs };
 }
 
-function statusColor(status) {
-  return { Pending:"var(--warning)", "Part Paid":"var(--accent2)", Paid:"var(--success)", Cancelled:"var(--danger)" }[status] || "var(--muted)";
+function calc(form) {
+  const lines = (form.LineItems || []).reduce((s,item) => {
+    const x = calcLineItem(item);
+    return {
+      taxable:s.taxable+x.taxable, cgst:s.cgst+x.cgst, sgst:s.sgst+x.sgst,
+      igst:s.igst+x.igst, tcs:s.tcs+x.tcs,
+      has:s.has || x.taxable>0 || x.cgst>0 || x.sgst>0 || x.igst>0 || x.tcs>0,
+    };
+  },{taxable:0,cgst:0,sgst:0,igst:0,tcs:0,has:false});
+
+  const taxable = lines.has ? lines.taxable : num(form.TaxableAmount);
+  const cgst = lines.has ? lines.cgst : num(form.CGSTAmount);
+  const sgst = lines.has ? lines.sgst : num(form.SGSTAmount);
+  const igst = lines.has ? lines.igst : num(form.IGSTAmount);
+  const gst = cgst + sgst + igst || num(form.GSTAmount);
+  const tcs = lines.has ? lines.tcs : num(form.TCSAmount);
+  const gross = num(form.GrossAmount) || taxable + gst + tcs;
+  const tds = form.TDSAmount !== ""
+    ? num(form.TDSAmount)
+    : Math.round(taxable * num(form.TDSRate)) / 100;
+  const net = Math.max(gross - tds,0);
+
+  return { taxable,cgst,sgst,igst,gst,tcs,gross,tds,net };
 }
 
-function Badge({ value }) {
-  const color = statusColor(value);
-  return <span style={{ background:color+"22", color, padding:".2rem .6rem", borderRadius:"99px", fontSize:".72rem", fontWeight:700, whiteSpace:"nowrap" }}>{value || "Pending"}</span>;
+function Badge({value}) {
+  const color = {Pending:"var(--warning)","Part Paid":"var(--accent2)",Paid:"var(--success)",Cancelled:"var(--danger)"}[value] || "var(--muted)";
+  return <span style={{background:color+"22",color,padding:".2rem .6rem",borderRadius:"99px",fontSize:".72rem",fontWeight:700}}>{value || "Pending"}</span>;
 }
 
-function reimbursementRequired(paidByType) {
-  return normalizeKey(paidByType || "Company") !== "company";
-}
-
-function normalizeKey(value) {
-  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function compactVendorKey(value) {
-  return normalizeKey(value).replace(/[^a-z0-9]/g, "");
-}
-
-function payableVendorKey(row) {
-  return compactVendorKey(row.VendorName) || row.VendorID;
-}
-
-function compareBillNo(a, b) {
-  const billA = String(a.BillNo || "").trim();
-  const billB = String(b.BillNo || "").trim();
-  const byBill = billA.localeCompare(billB, undefined, { numeric:true, sensitivity:"base" });
-  if (byBill !== 0) return byBill;
-  return String(a.BillDate || "").localeCompare(String(b.BillDate || ""));
-}
-
-function csvCell(value) {
-  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+function BankBalance({account, amount}) {
+  if (!account) return null;
+  const current = num(account.CurrentBalance);
+  const after = current - num(amount);
+  return (
+    <div style={{
+      marginTop:".4rem", padding:".55rem .7rem", border:"1px solid var(--border)",
+      borderRadius:"6px", fontSize:".72rem", lineHeight:1.5,
+    }}>
+      <div style={{color:"var(--muted)"}}>Current Bank Balance</div>
+      <strong style={{color:current>=0 ? "var(--success)" : "var(--danger)"}}>{fmt(current)}</strong>
+      {num(amount)>0 && <>
+        <span style={{color:"var(--muted)"}}> · After payment </span>
+        <strong style={{color:after>=0 ? "var(--success)" : "var(--danger)"}}>{fmt(after)}</strong>
+      </>}
+    </div>
+  );
 }
 
 export default function PaymentTracker() {
   const { currentLLP } = useLLP();
-  const [rows, setRows] = useState([]);
-  const [vendors, setVendors] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState(initial);
-  const [vendorChoice, setVendorChoice] = useState("");
-  const [vendorFilter, setVendorFilter] = useState("");
-  const [billFilter, setBillFilter] = useState("");
-  const [status, setStatus] = useState("");
-  const [category, setCategory] = useState("");
-  const [error, setError] = useState("");
-  const [billFile, setBillFile] = useState(null);
-  const [uploadMessage, setUploadMessage] = useState("");
-  const [batchOpen, setBatchOpen] = useState(false);
-  const [batchForm, setBatchForm] = useState({
-    VendorKey:"",
-    PayableIDs:[],
-    PaidAmount:"",
-    TDSMode:"net_after_tds",
-    PaymentDate:new Date().toISOString().slice(0, 10),
-    PaymentMode:"Bank",
-    BankAccount:"",
-    ReferenceNo:"",
-    PaidByType:"Company",
-    PaidByName:"",
-    ReimburseTo:"",
+  const [rows,setRows] = useState([]);
+  const [vendors,setVendors] = useState([]);
+  const [banks,setBanks] = useState([]);
+  const [partners,setPartners] = useState([]);
+  const [loading,setLoading] = useState(false);
+  const [saving,setSaving] = useState(false);
+  const [error,setError] = useState("");
+  const [open,setOpen] = useState(false);
+  const [editId,setEditId] = useState(null);
+  const [form,setForm] = useState(initial);
+  const [vendorChoice,setVendorChoice] = useState("");
+  const [billFile,setBillFile] = useState(null);
+  const [vendorFilter,setVendorFilter] = useState("");
+  const [statusFilter,setStatusFilter] = useState("");
+  const [batchOpen,setBatchOpen] = useState(false);
+  const [batch,setBatch] = useState({
+    VendorID:"", PayableIDs:[], PaidAmount:"", PaymentDate:new Date().toISOString().slice(0,10),
+    PaymentMode:"Bank", BankAccount:"", ReferenceNo:"", PaidByType:"Company",
+    PaidByName:"", ReimburseTo:"", TDSMode:"net_after_tds",
   });
 
   async function load() {
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
-      const [payRes, vendorRes] = await Promise.allSettled([
+      const results = await Promise.allSettled([
         apiGet("getLLPPayables"),
         apiGet("getVendors"),
+        apiGet("getBankAccounts"),
+        apiGet("getPartners"),
       ]);
-      if (payRes.status === "fulfilled" && payRes.value.ok) {
-        setRows(payRes.value.data || []);
-      } else if (payRes.status === "rejected") {
-        setError(payRes.reason?.message || "Unable to load payables");
-      }
-      if (vendorRes.status === "fulfilled" && vendorRes.value.ok) {
-        setVendors((vendorRes.value.data || []).filter(v => v.Status !== "Inactive"));
-      }
-    } finally {
-      setLoading(false);
-    }
+      const [p,v,b,pt] = results;
+      if (p.status==="fulfilled" && p.value.ok) setRows(p.value.data || []);
+      if (v.status==="fulfilled" && v.value.ok) setVendors((v.value.data || []).filter(x=>x.Status!=="Inactive"));
+      if (b.status==="fulfilled" && b.value.ok) setBanks((b.value.data || []).filter(x=>x.IsActive!=="No"));
+      if (pt.status==="fulfilled" && pt.value.ok) setPartners((pt.value.data || []).filter(x=>x.Status!=="Inactive"));
+    } catch(err) {
+      setError(err.message || "Unable to load Payment Tracker");
+    } finally { setLoading(false); }
   }
 
-  useEffect(() => { load(); }, [currentLLP?.llpId]);
+  useEffect(()=>{ load(); },[currentLLP?.llpId,currentLLP?.LLPID]);
 
-  const vendorFilterOptions = useMemo(() => {
-    const map = new Map();
-    rows.forEach(row => {
-      const key = payableVendorKey(row);
-      if (!key) return;
-      const current = map.get(key) || { key, name:row.VendorName || "Unknown Vendor", count:0 };
-      current.count += 1;
-      map.set(key, current);
-    });
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [rows]);
-
-  const billFilterOptions = useMemo(() => {
-    const sourceRows = vendorFilter ? rows.filter(row => payableVendorKey(row) === vendorFilter) : rows;
-    const map = new Map();
-    sourceRows.forEach(row => {
-      const billNo = String(row.BillNo || "").trim();
-      if (!billNo) return;
-      map.set(billNo, billNo);
-    });
-    return Array.from(map.values()).sort((a, b) => a.localeCompare(b, undefined, { numeric:true }));
-  }, [rows, vendorFilter]);
-
-  const payerOptions = useMemo(() => Array.from(new Set(rows.flatMap(row => [
-    row.PaidByName,
-    row.ReimburseTo,
-    row.SettlementTo,
-  ]).map(v => String(v || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [rows]);
-
-  const filtered = useMemo(() => {
-    return rows.filter(row => {
-      const billNo = String(row.BillNo || "").trim();
-      return (!vendorFilter || payableVendorKey(row) === vendorFilter) &&
-        (!billFilter || billNo === billFilter) &&
-        (!status || row.Status === status) &&
-        (!category || row.VendorCategory === category);
-      }).sort(compareBillNo);
-  }, [rows, vendorFilter, billFilter, status, category]);
-
-  const filteredSummary = useMemo(() => filtered.reduce((sum, row) => ({
-    grossAmount:sum.grossAmount + num(row.GrossAmount),
-    tdsAmount:sum.tdsAmount + num(row.TDSAmount),
-    tdsDeductedAmount:sum.tdsDeductedAmount + tdsDeducted(row),
-    tdsPendingAmount:sum.tdsPendingAmount + tdsPending(row),
-    netPayable:sum.netPayable + num(row.NetPayable),
-    balanceAmount:sum.balanceAmount + num(row.BalanceAmount),
-  }), { grossAmount:0, tdsAmount:0, tdsDeductedAmount:0, tdsPendingAmount:0, netPayable:0, balanceAmount:0 }), [filtered]);
-
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const setBatch = (k, v) => setBatchForm(p => ({ ...p, [k]: v }));
-
-  const outstandingPayables = useMemo(
-    () => rows.filter(row => row.Status !== "Paid" && row.Status !== "Cancelled" && num(row.BalanceAmount || row.NetPayable) > 0),
-    [rows]
+  const partnerNames = useMemo(
+    ()=>[...new Set(partners.map(x=>String(x.PartnerName||"").trim()).filter(Boolean))].sort(),
+    [partners]
   );
 
-  const vendorBatchOptions = useMemo(() => {
-    const map = new Map();
-    outstandingPayables.forEach(row => {
-      const key = payableVendorKey(row);
-      if (!key) return;
-      const current = map.get(key) || { key, name:row.VendorName || "Unknown Vendor", count:0, total:0 };
-      current.count += 1;
-      current.total += num(row.BalanceAmount || row.NetPayable);
-      map.set(key, current);
-    });
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [outstandingPayables]);
-
-  const batchVendorRows = useMemo(
-    () => outstandingPayables
-      .filter(row => batchForm.VendorKey && payableVendorKey(row) === batchForm.VendorKey)
-      .sort(compareBillNo),
-    [outstandingPayables, batchForm.VendorKey]
+  const filtered = useMemo(
+    ()=>rows.filter(r=>
+      (!vendorFilter || r.VendorID===vendorFilter || normalizeKey(r.VendorName)===normalizeKey(vendors.find(v=>v.VendorID===vendorFilter)?.VendorName)) &&
+      (!statusFilter || r.Status===statusFilter)
+    ),
+    [rows,vendorFilter,statusFilter,vendors]
   );
 
-  const selectedBatchTotal = useMemo(
-    () => batchVendorRows
-      .filter(row => batchForm.PayableIDs.includes(row.PayableID))
-      .reduce((sum, row) => sum + num(row.BalanceAmount || row.NetPayable), 0),
-    [batchVendorRows, batchForm.PayableIDs]
-  );
-  const selectedBatchGross = useMemo(
-    () => batchVendorRows
-      .filter(row => batchForm.PayableIDs.includes(row.PayableID))
-      .reduce((sum, row) => sum + num(row.GrossAmount), 0),
-    [batchVendorRows, batchForm.PayableIDs]
-  );
-  const selectedBatchTDS = useMemo(
-    () => batchVendorRows
-      .filter(row => batchForm.PayableIDs.includes(row.PayableID))
-      .reduce((sum, row) => sum + num(row.TDSAmount), 0),
-    [batchVendorRows, batchForm.PayableIDs]
-  );
-  const selectedBatchPaymentTarget = batchForm.TDSMode === "gross_pending_tds" ? selectedBatchGross : selectedBatchTotal;
+  const totals = useMemo(()=>filtered.reduce((s,r)=>({
+    gross:s.gross+num(r.GrossAmount),
+    tds:s.tds+num(r.TDSAmount),
+    paid:s.paid+num(r.PaidAmount),
+    balance:s.balance+num(r.BalanceAmount),
+  }),{gross:0,tds:0,paid:0,balance:0}),[filtered]);
 
-  function batchTotalFor(payableIds, sourceRows = batchVendorRows) {
-    return sourceRows
-      .filter(row => payableIds.includes(row.PayableID))
-      .reduce((sum, row) => sum + num(row.BalanceAmount || row.NetPayable), 0);
-  }
+  const amounts = calc(form);
+  const selectedBank = banks.find(b=>b.AccountID===form.BankAccount);
+  const selectedBatchBank = banks.find(b=>b.AccountID===batch.BankAccount);
 
-  function batchGrossTotalFor(payableIds, sourceRows = batchVendorRows) {
-    return sourceRows
-      .filter(row => payableIds.includes(row.PayableID))
-      .reduce((sum, row) => sum + num(row.GrossAmount), 0);
-  }
-
-  function batchPaymentTarget(payableIds, sourceRows = batchVendorRows, tdsMode = batchForm.TDSMode) {
-    return tdsMode === "gross_pending_tds" ? batchGrossTotalFor(payableIds, sourceRows) : batchTotalFor(payableIds, sourceRows);
+  function set(k,v) {
+    setForm(p=>({...p,[k]:v}));
   }
 
   function openAdd() {
-    setForm(initial);
-    setVendorChoice("");
+    setEditId(null); setVendorChoice(""); setBillFile(null); setForm({...initial,LineItems:[emptyLine()]}); setOpen(true);
+  }
+
+  function openEdit(row) {
+    const vendor = vendors.find(v=>v.VendorID===row.VendorID) ||
+      vendors.find(v=>normalizeKey(v.VendorName)===normalizeKey(row.VendorName));
+    setVendorChoice(vendor?.VendorID || "__new__");
+    setEditId(row.PayableID);
     setBillFile(null);
-    setUploadMessage("");
-    setEditId(null);
+    setForm({
+      ...initial,
+      VendorID:vendor?.VendorID || row.VendorID || "",
+      VendorName:row.VendorName || "",
+      VendorCategory:row.VendorCategory || "Other",
+      VendorGSTIN:row.VendorGSTIN || "",
+      VendorPAN:row.VendorPAN || "",
+      BillNo:row.BillNo || "",
+      BillDate:String(row.BillDate || "").slice(0,10),
+      DueDate:String(row.DueDate || "").slice(0,10),
+      ExpenseType:row.ExpenseType || "Vendor Bill",
+      Description:row.Description || "",
+      TaxableAmount:row.TaxableAmount || "",
+      CGSTAmount:row.CGSTAmount || "",
+      SGSTAmount:row.SGSTAmount || "",
+      IGSTAmount:row.IGSTAmount || "",
+      GSTAmount:row.GSTAmount || "",
+      TCSAmount:row.TCSAmount || "",
+      GrossAmount:row.GrossAmount || "",
+      LineItems:Array.isArray(row.LineItems) && row.LineItems.length ? row.LineItems : [emptyLine()],
+      TDSSection:row.TDSSection || "",
+      TDSRate:row.TDSRate || "",
+      TDSAmount:row.TDSAmount || "",
+      PaidAmount:row.PaidAmount || "",
+      PaymentDate:String(row.PaymentDate || "").slice(0,10),
+      PaymentMode:row.PaymentMode || "Bank",
+      BankAccount:row.BankAccount || "",
+      ReferenceNo:row.ReferenceNo || "",
+      PaidByType:row.PaidByType || "Company",
+      PaidByName:row.PaidByName || "",
+      ReimburseTo:row.ReimburseTo || row.SettlementTo || "",
+      ReimbursementStatus:row.ReimbursementStatus || "Not Required",
+      ChallanNo:row.ChallanNo || "",
+      ChallanDate:String(row.ChallanDate || "").slice(0,10),
+      InterestAmount:row.InterestAmount || "",
+      Status:row.Status || "Pending",
+      Notes:row.Notes || "",
+    });
     setOpen(true);
   }
 
-  function openBatchPay() {
-    const first = vendorBatchOptions[0];
-    const firstRows = first ? outstandingPayables.filter(row => payableVendorKey(row) === first.key).sort(compareBillNo) : [];
-    const payableIds = firstRows.map(row => row.PayableID);
-    setBatchForm({
-      VendorKey:first?.key || "",
-      PayableIDs:payableIds,
-      PaidAmount:batchTotalFor(payableIds, firstRows).toFixed(2),
-      TDSMode:"net_after_tds",
-      PaymentDate:new Date().toISOString().slice(0, 10),
-      PaymentMode:"Bank",
-      BankAccount:"",
-      ReferenceNo:"",
-      PaidByType:"Company",
-      PaidByName:"",
-      ReimburseTo:"",
+  function chooseVendor(id) {
+    setVendorChoice(id);
+    if (id==="__new__") {
+      setForm(p=>({...p,VendorID:"",VendorName:"",VendorCategory:"Other",VendorGSTIN:"",VendorPAN:""}));
+      return;
+    }
+    const v=vendors.find(x=>x.VendorID===id);
+    if (v) setForm(p=>({...p,VendorID:v.VendorID,VendorName:v.VendorName,VendorCategory:v.Category||"Other",VendorGSTIN:v.GSTIN||"",VendorPAN:v.PAN||""}));
+  }
+
+  function updateLine(index,key,value) {
+    setForm(p=>{
+      const LineItems=[...(p.LineItems||[])];
+      LineItems[index]={...LineItems[index],[key]:value};
+      return {...p,LineItems};
+    });
+  }
+
+  function validatePayment(f) {
+    if (num(f.PaidAmount)<=0) return;
+    if (!f.PaymentDate) throw new Error("Payment Date is required when Paid Amount is entered");
+    if (!f.PaymentMode) throw new Error("Payment Mode is required when Paid Amount is entered");
+    if (!f.PaidByType) throw new Error("Paid By Type is required when Paid Amount is entered");
+
+    if (reimbursementRequired(f.PaidByType)) {
+      if (!String(f.PaidByName||"").trim()) throw new Error("Actual Paid By is required for Partner/Staff/Other payments");
+      if (!String(f.ReimburseTo||f.PaidByName||"").trim()) throw new Error("Reimburse To is required for personal payments");
+    } else if (normalizeKey(f.PaymentMode)!=="cash") {
+      if (!f.BankAccount) throw new Error("Select the Zivara Bank Account used for payment");
+      if (!String(f.ReferenceNo||"").trim()) throw new Error("Reference / UTR is required for bank payment");
+    }
+  }
+
+  async function save(e) {
+    e.preventDefault(); setSaving(true); setError("");
+    try {
+      validatePayment(form);
+      let payload={...form};
+      if (!form.VendorName) throw new Error("Vendor is required");
+
+      if (!form.VendorID) {
+        const existing=vendors.find(v=>normalizeKey(v.VendorName)===normalizeKey(form.VendorName));
+        if (existing) {
+          payload={...payload,VendorID:existing.VendorID,VendorName:existing.VendorName,VendorCategory:existing.Category||payload.VendorCategory,VendorGSTIN:existing.GSTIN||payload.VendorGSTIN,VendorPAN:existing.PAN||payload.VendorPAN};
+        } else {
+          const vr=await apiPost("saveVendor",{VendorName:form.VendorName,Category:form.VendorCategory,GSTIN:form.VendorGSTIN,PAN:form.VendorPAN,Status:"Active"});
+          payload={...payload,VendorID:vr.data?.VendorID||""};
+        }
+      }
+
+      const a=calc(form);
+      const personal=reimbursementRequired(form.PaidByType);
+      payload={
+        ...payload,
+        TaxableAmount:a.taxable,CGSTAmount:a.cgst,SGSTAmount:a.sgst,IGSTAmount:a.igst,GSTAmount:a.gst,TCSAmount:a.tcs,
+        GrossAmount:a.gross,TDSAmount:a.tds,NetPayable:a.net,
+        BankAccount:(!personal && normalizeKey(form.PaymentMode)!=="cash") ? form.BankAccount : "",
+        PaidByName:personal ? form.PaidByName : (num(form.PaidAmount)>0 ? "Company" : ""),
+        ReimburseTo:personal ? (form.ReimburseTo || form.PaidByName) : "",
+        ReimbursementStatus:personal && num(form.PaidAmount)>0 ? "Pending" : "Not Required",
+      };
+
+      const r=await apiPost(editId ? "updateLLPPayable" : "saveLLPPayable", editId ? {...payload,PayableID:editId} : payload);
+      const id=editId || r.data?.PayableID;
+      if (billFile && id) await uploadBill(billFile,{payable_id:id,source_type:"payable",source_id:id});
+
+      setOpen(false); setEditId(null); setForm(initial); setVendorChoice(""); await load();
+    } catch(err) {
+      setError(err.message || "Unable to save payable");
+    } finally { setSaving(false); }
+  }
+
+  async function remove(row) {
+    if (!confirm(`Delete payable ${row.BillNo || row.VendorName}?`)) return;
+    try { await apiPost("deleteLLPPayable",{PayableID:row.PayableID}); await load(); }
+    catch(err){ setError(err.message); }
+  }
+
+  const outstanding=rows.filter(r=>r.Status!=="Paid" && r.Status!=="Cancelled" && num(r.BalanceAmount||r.NetPayable)>0);
+  const batchVendors=useMemo(()=>{
+    const m=new Map();
+    outstanding.forEach(r=>{
+      const key=r.VendorID||normalizeKey(r.VendorName);
+      const x=m.get(key)||{key,name:r.VendorName,count:0,total:0};
+      x.count++; x.total+=num(r.BalanceAmount||r.NetPayable); m.set(key,x);
+    });
+    return [...m.values()].sort((a,b)=>a.name.localeCompare(b.name));
+  },[rows]);
+
+  const batchRows=outstanding.filter(r=>(r.VendorID||normalizeKey(r.VendorName))===batch.VendorID);
+  const batchSelected=batchRows.filter(r=>batch.PayableIDs.includes(r.PayableID));
+  const batchNet=batchSelected.reduce((s,r)=>s+num(r.BalanceAmount||r.NetPayable),0);
+
+  function openBatch(){
+    setBatch({
+      VendorID:"",PayableIDs:[],PaidAmount:"",PaymentDate:new Date().toISOString().slice(0,10),
+      PaymentMode:"Bank",BankAccount:"",ReferenceNo:"",PaidByType:"Company",PaidByName:"",ReimburseTo:"",TDSMode:"net_after_tds"
     });
     setBatchOpen(true);
   }
 
-  function openEdit(row) {
-    const matchedVendor = vendors.find(v =>
-      (row.VendorGSTIN && v.GSTIN && normalizeKey(row.VendorGSTIN) === normalizeKey(v.GSTIN)) ||
-      (row.VendorName && normalizeKey(row.VendorName) === normalizeKey(v.VendorName))
-    );
-    setForm({
-      VendorID: matchedVendor?.VendorID || "",
-      VendorName: row.VendorName || "",
-      VendorCategory: row.VendorCategory || "Other",
-      VendorGSTIN: row.VendorGSTIN || "",
-      VendorPAN: row.VendorPAN || "",
-      BillNo: row.BillNo || "",
-      BillDate: String(row.BillDate || "").slice(0, 10),
-      DueDate: String(row.DueDate || "").slice(0, 10),
-      ExpenseType: row.ExpenseType || "Vendor Bill",
-      Description: row.Description || "",
-      TaxableAmount: row.TaxableAmount || "",
-      CGSTAmount: row.CGSTAmount || "",
-      SGSTAmount: row.SGSTAmount || "",
-      IGSTAmount: row.IGSTAmount || "",
-      GSTAmount: row.GSTAmount || "",
-      TCSAmount: row.TCSAmount || "",
-      GrossAmount: row.GrossAmount || "",
-      LineItems: Array.isArray(row.LineItems) && row.LineItems.length ? row.LineItems : [{ Particulars:"", TaxableAmount:"", GSTType:"IGST", GSTRate:"18", CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", TCSAmount:"" }],
-      TDSSection: row.TDSSection || "",
-      TDSRate: row.TDSRate || "",
-      TDSAmount: row.TDSAmount || "",
-      PaidAmount: row.PaidAmount || "",
-      PaymentDate: String(row.PaymentDate || "").slice(0, 10),
-      PaymentMode: row.PaymentMode || "Bank",
-      BankAccount: row.BankAccount || "",
-      ReferenceNo: row.ReferenceNo || "",
-      PaidByType: row.PaidByType || "Company",
-      PaidByName: row.PaidByName || "",
-      ReimburseTo: row.ReimburseTo || row.SettlementTo || "",
-      ReimbursementStatus: row.ReimbursementStatus || "Not Required",
-      ChallanNo: row.ChallanNo || "",
-      ChallanDate: String(row.ChallanDate || "").slice(0, 10),
-      InterestAmount: row.InterestAmount || "",
-      Status: row.Status || "Pending",
-      Notes: row.Notes || "",
-    });
-    setVendorChoice(matchedVendor?.VendorID || "__new__");
-    setBillFile(null);
-    setUploadMessage("");
-    setEditId(row.PayableID);
-    setOpen(true);
+  function chooseBatchVendor(key){
+    const list=outstanding.filter(r=>(r.VendorID||normalizeKey(r.VendorName))===key);
+    setBatch(p=>({...p,VendorID:key,PayableIDs:list.map(r=>r.PayableID),PaidAmount:list.reduce((s,r)=>s+num(r.BalanceAmount||r.NetPayable),0).toFixed(2)}));
   }
 
-  function applyVendorChoice(vendorId) {
-    setVendorChoice(vendorId);
-    if (vendorId === "__new__") {
-      setForm(p => ({ ...p, VendorID:"", VendorName:"", VendorCategory:"Travel Agency", VendorGSTIN:"", VendorPAN:"" }));
-      return;
-    }
-    if (!vendorId) {
-      setForm(p => ({ ...p, VendorID:"", VendorName:"", VendorGSTIN:"", VendorPAN:"" }));
-      return;
-    }
-    const v = vendors.find(x => x.VendorID === vendorId);
-    if (!v) return;
-    setForm(p => ({
-      ...p,
-      VendorID: v.VendorID || "",
-      VendorName: v.VendorName || p.VendorName,
-      VendorCategory: v.Category || p.VendorCategory,
-      VendorGSTIN: v.GSTIN || p.VendorGSTIN,
-      VendorPAN: v.PAN || p.VendorPAN,
-    }));
-  }
-
-  function findExistingVendorFromForm() {
-    const name = normalizeKey(form.VendorName);
-    const gstin = normalizeKey(form.VendorGSTIN);
-    return vendors.find(v =>
-      (gstin && normalizeKey(v.GSTIN) === gstin) ||
-      (name && normalizeKey(v.VendorName) === name)
-    );
-  }
-
-  function applyTDS(section) {
-    const opt = TDS_SECTIONS.find(x => x.section === section);
-    setForm(p => ({ ...p, TDSSection:section, TDSRate: opt ? String(opt.rate) : p.TDSRate, TDSAmount:"" }));
-  }
-
-  function syncLineTotals(items) {
-    const totals = calcLineItems(items);
-    if (!totals.hasValues) return { LineItems:items };
-    const gst = totals.cgst + totals.sgst + totals.igst;
-    const gross = totals.taxable + gst + totals.tcs;
-    return {
-      LineItems:items,
-      TaxableAmount:totals.taxable ? totals.taxable.toFixed(2) : "",
-      CGSTAmount:totals.cgst ? totals.cgst.toFixed(2) : "",
-      SGSTAmount:totals.sgst ? totals.sgst.toFixed(2) : "",
-      IGSTAmount:totals.igst ? totals.igst.toFixed(2) : "",
-      GSTAmount:gst ? gst.toFixed(2) : "",
-      TCSAmount:totals.tcs ? totals.tcs.toFixed(2) : "",
-      GrossAmount:gross ? gross.toFixed(2) : "",
-      TDSAmount:"",
-    };
-  }
-
-  function updateLineItem(index, key, value) {
-    setForm(p => {
-      const items = [...(p.LineItems || [])];
-      items[index] = { ...items[index], [key]:value };
-      return { ...p, ...syncLineTotals(items) };
-    });
-  }
-
-  function addLineItem() {
-    setForm(p => ({ ...p, LineItems:[...(p.LineItems || []), { Particulars:"", TaxableAmount:"", GSTType:"IGST", GSTRate:"18", CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", TCSAmount:"" }] }));
-  }
-
-  function removeLineItem(index) {
-    setForm(p => {
-      const items = (p.LineItems || []).filter((_, i) => i !== index);
-      const nextItems = items.length ? items : [{ Particulars:"", TaxableAmount:"", GSTType:"IGST", GSTRate:"18", CGSTAmount:"", SGSTAmount:"", IGSTAmount:"", TCSAmount:"" }];
-      return { ...p, ...syncLineTotals(nextItems) };
-    });
-  }
-
-  async function save(e) {
+  async function saveBatch(e){
     e.preventDefault();
-    setSaving(true);
-    setError("");
-    try {
-      let vendorPayload = { ...form };
-      if (!form.VendorName) throw new Error("Vendor is required");
-      if (!form.VendorID) {
-        const existingVendor = findExistingVendorFromForm();
-        if (existingVendor) {
-          vendorPayload = {
-            ...vendorPayload,
-            VendorID: existingVendor.VendorID || "",
-            VendorName: existingVendor.VendorName || vendorPayload.VendorName,
-            VendorCategory: existingVendor.Category || vendorPayload.VendorCategory,
-            VendorGSTIN: existingVendor.GSTIN || vendorPayload.VendorGSTIN,
-            VendorPAN: existingVendor.PAN || vendorPayload.VendorPAN,
-          };
-        } else {
-          const vendorRes = await apiPost("saveVendor", {
-            VendorName: form.VendorName,
-            Category: form.VendorCategory,
-            GSTIN: form.VendorGSTIN,
-            PAN: form.VendorPAN,
-            Status: "Active",
-          });
-          const savedVendor = vendorRes.data || {};
-          vendorPayload = {
-            ...vendorPayload,
-            VendorID: savedVendor.VendorID || "",
-            VendorName: savedVendor.VendorName || vendorPayload.VendorName,
-            VendorCategory: savedVendor.Category || vendorPayload.VendorCategory,
-            VendorGSTIN: savedVendor.GSTIN || vendorPayload.VendorGSTIN,
-            VendorPAN: savedVendor.PAN || vendorPayload.VendorPAN,
-          };
-        }
-      }
-      const amounts = calc(form);
-      const needsReimbursement = reimbursementRequired(form.PaidByType);
-      const payload = {
-        ...vendorPayload,
-        TaxableAmount: amounts.taxable,
-        CGSTAmount: amounts.cgst,
-        SGSTAmount: amounts.sgst,
-        IGSTAmount: amounts.igst,
-        GSTAmount: amounts.gst,
-        TCSAmount: amounts.tcs,
-        GrossAmount: amounts.gross,
-        TDSAmount: amounts.tds,
-        NetPayable: amounts.net,
-        PaidByType: form.PaidByType || "Company",
-        PaidByName: needsReimbursement ? form.PaidByName : (form.PaidAmount ? "Company" : form.PaidByName),
-        ReimburseTo: needsReimbursement ? (form.ReimburseTo || form.PaidByName) : "",
-        ReimbursementStatus: needsReimbursement && num(form.PaidAmount) > 0 ? (form.ReimbursementStatus === "Reimbursed" ? "Reimbursed" : "Pending") : "Not Required",
-      };
-      const saved = await apiPost(editId ? "updateLLPPayable" : "saveLLPPayable", editId ? { ...payload, PayableID: editId } : payload);
-      const payableId = editId || saved.data?.PayableID;
-      if (billFile && payableId) {
-        const uploaded = await uploadBill(billFile, {
-          payable_id: payableId,
-          source_type: "payable",
-          source_id: payableId,
-        });
-        setUploadMessage(uploaded.message || "Bill uploaded");
-        setBillFile(null);
-      }
-      setOpen(false);
-      setEditId(null);
-      setForm(initial);
-      setVendorChoice("");
-      await load();
-    } catch (err) {
-      setError(err.message || "Unable to save payable");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function markPaid(row) {
-    const paidByType = window.prompt("Who paid this vendor bill? Enter Company, Partner, Staff, or Other", row.PaidByType || "Company");
-    if (paidByType === null) return;
-    const needsReimbursement = reimbursementRequired(paidByType);
-    let paidByName = row.PaidByName || "";
-    let reimburseTo = row.ReimburseTo || row.SettlementTo || "";
-    if (needsReimbursement) {
-      paidByName = window.prompt("Actual paid by name", paidByName);
-      if (paidByName === null) return;
-      reimburseTo = window.prompt("Company should reimburse to", reimburseTo || paidByName);
-      if (reimburseTo === null) return;
-    }
-    const ref = window.prompt(`Payment reference / UTR for ${row.VendorName || row.BillNo || "bill"}`);
-    if (ref === null) return;
-    setSaving(true);
-    try {
-      await apiPost("markLLPPayablePaid", {
-        PayableID: row.PayableID,
-        PaidAmount: row.NetPayable,
-        PaymentDate: new Date().toISOString().slice(0, 10),
-        PaymentMode: row.PaymentMode || "Bank",
-        BankAccount: row.BankAccount || "",
-        ReferenceNo: ref,
-        PaidByType: paidByType || "Company",
-        PaidByName: needsReimbursement ? paidByName : "Company",
-        ReimburseTo: needsReimbursement ? (reimburseTo || paidByName) : "",
+    try{
+      validatePayment(batch);
+      if(!batch.PayableIDs.length) throw new Error("Select at least one payable");
+      await apiPost("batchPayLLPPayables",{
+        PayableIDs:batch.PayableIDs,PaidAmount:batch.PaidAmount,TDSMode:batch.TDSMode,
+        PaymentDate:batch.PaymentDate,PaymentMode:batch.PaymentMode,
+        BankAccount:reimbursementRequired(batch.PaidByType) ? "" : batch.BankAccount,
+        ReferenceNo:batch.ReferenceNo,PaidByType:batch.PaidByType,
+        PaidByName:reimbursementRequired(batch.PaidByType)?batch.PaidByName:"Company",
+        ReimburseTo:reimbursementRequired(batch.PaidByType)?(batch.ReimburseTo||batch.PaidByName):"",
       });
-      await load();
-    } catch (err) {
-      setError(err.message || "Unable to mark paid");
-    } finally {
-      setSaving(false);
-    }
+      setBatchOpen(false); await load();
+    }catch(err){setError(err.message);}
   }
-
-  async function removePayable(row) {
-    if (!window.confirm(`Delete payable bill ${row.BillNo || row.VendorName}?`)) return;
-    setSaving(true);
-    setError("");
-    try {
-      await apiPost("deleteLLPPayable", { PayableID:row.PayableID });
-      await load();
-    } catch (err) {
-      setError(err.message || "Unable to delete payable");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function applyBatchVendor(vendorKey) {
-    const payableRows = outstandingPayables.filter(row => payableVendorKey(row) === vendorKey).sort(compareBillNo);
-    const payableIds = payableRows.map(row => row.PayableID);
-    setBatchForm(p => ({
-      ...p,
-      VendorKey:vendorKey,
-      PayableIDs:payableIds,
-      PaidAmount:batchPaymentTarget(payableIds, payableRows, p.TDSMode).toFixed(2),
-    }));
-  }
-
-  function setBatchTDSMode(tdsMode) {
-    setBatchForm(p => ({ ...p, TDSMode:tdsMode, PaidAmount:batchPaymentTarget(p.PayableIDs, batchVendorRows, tdsMode).toFixed(2) }));
-  }
-
-  function toggleBatchBill(payableId) {
-    setBatchForm(p => {
-      const nextPayableIDs = p.PayableIDs.includes(payableId)
-        ? p.PayableIDs.filter(id => id !== payableId)
-        : [...p.PayableIDs, payableId];
-      return {
-        ...p,
-        PayableIDs:nextPayableIDs,
-        PaidAmount:batchPaymentTarget(nextPayableIDs, batchVendorRows, p.TDSMode).toFixed(2),
-      };
-    });
-  }
-
-  function setAllBatchBills(checked) {
-    const payableIds = checked ? batchVendorRows.map(row => row.PayableID) : [];
-    setBatchForm(p => ({ ...p, PayableIDs:payableIds, PaidAmount:batchPaymentTarget(payableIds, batchVendorRows, p.TDSMode).toFixed(2) }));
-  }
-
-  async function saveBatchPayment(e) {
-    e.preventDefault();
-    if (!batchForm.PayableIDs.length) {
-      setError("Select at least one bill for batch payment");
-      return;
-    }
-    const paidAmount = num(batchForm.PaidAmount);
-    if (paidAmount <= 0) {
-      setError("Paid amount must be greater than zero");
-      return;
-    }
-    if (paidAmount > selectedBatchPaymentTarget) {
-      setError(`Paid amount cannot exceed selected ${batchForm.TDSMode === "gross_pending_tds" ? "gross" : "net"} amount ${fmt(selectedBatchPaymentTarget)}. Select the missing bill or record the extra separately.`);
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      const needsReimbursement = reimbursementRequired(batchForm.PaidByType);
-      await apiPost("batchPayLLPPayables", {
-        PayableIDs:batchForm.PayableIDs,
-        PaidAmount:batchForm.PaidAmount,
-        TDSMode:batchForm.TDSMode,
-        PaymentDate:batchForm.PaymentDate,
-        PaymentMode:batchForm.PaymentMode,
-        BankAccount:batchForm.BankAccount,
-        ReferenceNo:batchForm.ReferenceNo,
-        PaidByType:batchForm.PaidByType || "Company",
-        PaidByName:needsReimbursement ? batchForm.PaidByName : "Company",
-        ReimburseTo:needsReimbursement ? (batchForm.ReimburseTo || batchForm.PaidByName) : "",
-      });
-      setBatchOpen(false);
-      await load();
-    } catch (err) {
-      setError(err.message || "Unable to save batch payment");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function exportFilteredCSV() {
-    const headers = [
-      "Vendor", "Category", "Bill No", "Bill Date", "Taxable Amount", "CGST", "SGST", "IGST", "GST Amount", "TCS", "Gross Amount",
-      "TDS Section", "TDS Rate (%)", "Expected TDS", "TDS Deducted", "Pending TDS", "Net Payable", "Paid Amount", "Balance Amount",
-      "Status", "Payment Date", "Payment Mode", "Bank Account", "Reference / UTR", "Challan No",
-      "Challan Date", "Interest Amount", "Notes",
-    ];
-    const dataRows = filtered.map(row => [
-      row.VendorName, row.VendorCategory, row.BillNo, formatDate(row.BillDate), row.TaxableAmount,
-      row.CGSTAmount, row.SGSTAmount, row.IGSTAmount, row.GSTAmount, row.TCSAmount, row.GrossAmount,
-      row.TDSSection, row.TDSRate, row.TDSAmount, tdsDeducted(row), tdsPending(row), row.NetPayable,
-      row.PaidAmount, row.BalanceAmount, row.Status, formatDate(row.PaymentDate), row.PaymentMode,
-      row.BankAccount, row.ReferenceNo, row.ChallanNo, formatDate(row.ChallanDate), row.InterestAmount,
-      row.Notes,
-    ]);
-    const summaryRows = [
-      ["Summary"],
-      ["Gross Bills", filteredSummary.grossAmount],
-      ["Expected TDS", filteredSummary.tdsAmount],
-      ["TDS Deducted", filteredSummary.tdsDeductedAmount],
-      ["Pending TDS", filteredSummary.tdsPendingAmount],
-      ["Net Payable", filteredSummary.netPayable],
-      ["Balance Due", filteredSummary.balanceAmount],
-      [],
-    ];
-    const csv = [
-      ...summaryRows.map(row => row.map(csvCell).join(",")),
-      headers.map(csvCell).join(","),
-      ...dataRows.map(row => row.map(csvCell).join(",")),
-    ].join("\r\n");
-    const blob = new Blob(["\ufeff", csv], { type:"text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `payment-tracker-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  const amounts = calc(form);
-  const kpis = [
-    { label:"Gross Bills", value:fmt(filteredSummary.grossAmount), color:"var(--accent2)" },
-    { label:"Expected TDS", value:fmt(filteredSummary.tdsAmount), color:"var(--warning)" },
-    { label:"Pending TDS", value:fmt(filteredSummary.tdsPendingAmount), color:"var(--danger)" },
-    { label:"Net Payable", value:fmt(filteredSummary.netPayable), color:"var(--accent)" },
-    { label:"Balance Due", value:fmt(filteredSummary.balanceAmount), color:"var(--danger)" },
-  ];
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:"1.25rem" }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"1rem", flexWrap:"wrap" }}>
+    <div style={{display:"flex",flexDirection:"column",gap:"1.25rem"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"1rem"}}>
         <div>
-          <h2 style={{ fontWeight:700, fontSize:"1.25rem", color:"var(--text)" }}>Payment Tracker</h2>
-          <p style={{ color:"var(--muted)", fontSize:".8rem", marginTop:".2rem" }}>LLP vendor bills, TDS deduction, net payable, and payment status</p>
+          <h2 style={{fontWeight:700,fontSize:"1.25rem"}}>Payment Tracker</h2>
+          <p style={{color:"var(--muted)",fontSize:".8rem"}}>Vendor bills, GST/TDS, payment status and accounting-linked bank payments</p>
         </div>
-        <div style={{ display:"flex", gap:".6rem", flexWrap:"wrap" }}>
-          <button style={btn("ghost")} onClick={openBatchPay} disabled={!vendorBatchOptions.length}>Batch Pay Vendor</button>
+        <div style={{display:"flex",gap:".6rem"}}>
+          <button style={btn("ghost")} disabled={!batchVendors.length} onClick={openBatch}>Batch Pay Vendor</button>
           <button style={btn()} onClick={openAdd}>+ Add Bill</button>
         </div>
       </div>
 
-      {error && <div style={{ ...card, borderColor:"var(--danger)", color:"var(--danger)" }}>{error}</div>}
+      {error && <div style={{...card,borderColor:"var(--danger)",color:"var(--danger)"}}>{error}</div>}
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:"1rem" }}>
-        {kpis.map(k => (
-          <div key={k.label} style={{ ...card, padding:".9rem 1rem" }}>
-            <div style={{ fontSize:".7rem", color:"var(--muted)", fontWeight:700, textTransform:"uppercase" }}>{k.label}</div>
-            <div style={{ fontSize:"1.3rem", fontWeight:800, color:k.color, marginTop:".25rem" }}>{k.value}</div>
-          </div>
-        ))}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:"1rem"}}>
+        {[["Gross Bills",totals.gross],["TDS",totals.tds],["Paid",totals.paid],["Balance Due",totals.balance]].map(([name,val])=>
+          <div key={name} style={card}><div style={{fontSize:".7rem",color:"var(--muted)",fontWeight:700}}>{name.toUpperCase()}</div><div style={{fontSize:"1.25rem",fontWeight:800,marginTop:".25rem"}}>{fmt(val)}</div></div>
+        )}
       </div>
 
-      <div style={{ ...card, display:"flex", gap:".75rem", alignItems:"center", flexWrap:"wrap" }}>
-        <select
-          style={{ maxWidth:280 }}
-          value={vendorFilter}
-          onChange={e=>{ setVendorFilter(e.target.value); setBillFilter(""); }}
-        >
+      <div style={{...card,display:"flex",gap:".75rem",flexWrap:"wrap"}}>
+        <select style={{maxWidth:260}} value={vendorFilter} onChange={e=>setVendorFilter(e.target.value)}>
           <option value="">All vendors</option>
-          {vendorFilterOptions.map(v => <option key={v.key} value={v.key}>{v.name} ({v.count})</option>)}
+          {vendors.map(v=><option key={v.VendorID} value={v.VendorID}>{v.VendorName}</option>)}
         </select>
-        <select style={{ maxWidth:230 }} value={billFilter} onChange={e=>setBillFilter(e.target.value)}>
-          <option value="">All bills</option>
-          {billFilterOptions.map(billNo => <option key={billNo} value={billNo}>{billNo}</option>)}
+        <select style={{maxWidth:180}} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>
+          <option value="">All statuses</option><option>Pending</option><option>Part Paid</option><option>Paid</option><option>Cancelled</option>
         </select>
-        <select style={{ maxWidth:170 }} value={status} onChange={e=>setStatus(e.target.value)}>
-          <option value="">All statuses</option>
-          {["Pending","Part Paid","Paid","Cancelled"].map(s => <option key={s}>{s}</option>)}
-        </select>
-        <select style={{ maxWidth:190 }} value={category} onChange={e=>setCategory(e.target.value)}>
-          <option value="">All categories</option>
-          {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-        </select>
-        {(vendorFilter || billFilter || status || category) && <button style={btn("ghost")} onClick={()=>{ setVendorFilter(""); setBillFilter(""); setStatus(""); setCategory(""); }}>Clear</button>}
-        <button style={btn("ghost")} onClick={exportFilteredCSV} disabled={!filtered.length}>Export Excel</button>
-        <span style={{ marginLeft:"auto", fontSize:".8rem", color:"var(--muted)" }}>{filtered.length} bill{filtered.length !== 1 ? "s" : ""}</span>
+        <span style={{marginLeft:"auto",color:"var(--muted)",fontSize:".8rem"}}>{filtered.length} bill(s)</span>
       </div>
 
-      <div style={{ ...card, padding:0, overflow:"hidden" }}>
-        <div style={{ overflowX:"auto" }}>
-          {loading ? (
-            <p style={{ padding:"2rem", color:"var(--muted)", textAlign:"center" }}>Loading...</p>
-          ) : filtered.length === 0 ? (
-            <p style={{ padding:"2rem", color:"var(--muted)", textAlign:"center" }}>No payable bills found.</p>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Vendor</th><th>Category</th><th>Bill</th><th>Bill Date</th><th>Gross</th><th>TDS</th><th>Net Payable</th><th>Paid</th><th>Paid By</th><th>Reimburse To</th><th>Balance</th><th>Status</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(row => (
-                  <tr key={row.PayableID}>
-                    <td style={{ fontWeight:700, minWidth:170 }}>{row.VendorName || "—"}</td>
-                    <td>{row.VendorCategory || "—"}</td>
-                    <td style={{ color:"var(--accent2)", whiteSpace:"nowrap" }}>{row.BillNo || "—"}</td>
-                    <td style={{ whiteSpace:"nowrap" }}>{formatDate(row.BillDate)}</td>
-                    <td style={{ fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.GrossAmount)}</td>
-                    <td title={row.TDSSectionLabel || row.TDSSection || ""} style={{ color:"var(--warning)", whiteSpace:"nowrap" }}>{tdsDisplay(row)}</td>
-                    <td style={{ color:"var(--accent)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.NetPayable)}</td>
-                    <td style={{ color:"var(--success)", whiteSpace:"nowrap" }}>{fmt(row.PaidAmount)}</td>
-                    <td style={{ whiteSpace:"nowrap" }}>{row.PaidByType === "Company" ? "Company" : `${row.PaidByName || "—"} (${row.PaidByType || "Other"})`}</td>
-                    <td style={{ color:row.ReimburseTo || row.SettlementTo ? "var(--accent)" : "var(--muted)", whiteSpace:"nowrap" }}>{row.ReimburseTo || row.SettlementTo || "—"}</td>
-                    <td style={{ color:num(row.BalanceAmount) > 0 ? "var(--danger)" : "var(--muted)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.BalanceAmount)}</td>
-                    <td><Badge value={row.Status} /></td>
-                    <td style={{ whiteSpace:"nowrap" }}>
-                      <button style={{ ...btn("ghost"), padding:".3rem .6rem" }} onClick={()=>openEdit(row)}>Edit</button>{" "}
-                      {row.Status !== "Paid" && row.Status !== "Cancelled" && <button style={{ ...btn("ghost"), padding:".3rem .6rem", color:"var(--success)" }} onClick={()=>markPaid(row)} disabled={saving}>Pay</button>}
-                      {" "}
-                      <button style={{ ...btn("ghost"), padding:".3rem .6rem", color:"var(--danger)" }} onClick={()=>removePayable(row)} disabled={saving}>Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
+      <div style={{...card,padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}>
+        {loading ? <p style={{padding:"2rem",textAlign:"center"}}>Loading...</p> :
+        <table><thead><tr><th>Vendor</th><th>Category</th><th>Bill</th><th>Bill Date</th><th>Gross</th><th>TDS</th><th>Net Payable</th><th>Paid</th><th>Bank / Paid By</th><th>Balance</th><th>Status</th><th></th></tr></thead>
+        <tbody>{filtered.length ? filtered.map(r=><tr key={r.PayableID}>
+          <td style={{fontWeight:700}}>{r.VendorName}</td><td>{r.VendorCategory||"—"}</td><td>{r.BillNo||"—"}</td><td>{formatDate(r.BillDate)}</td>
+          <td>{fmt(r.GrossAmount)}</td><td>{fmt(r.TDSAmount)}</td><td style={{fontWeight:700}}>{fmt(r.NetPayable)}</td><td>{fmt(r.PaidAmount)}</td>
+          <td>{r.PaidByType==="Company" ? (banks.find(b=>b.AccountID===r.BankAccount)?.AccountName || r.BankAccount || "Company") : `${r.PaidByName||"—"} (${r.PaidByType||"Other"})`}</td>
+          <td style={{fontWeight:700}}>{fmt(r.BalanceAmount)}</td><td><Badge value={r.Status}/></td>
+          <td style={{whiteSpace:"nowrap"}}><button style={btn("ghost")} onClick={()=>openEdit(r)}>Edit</button>{" "}<button style={{...btn("ghost"),color:"var(--danger)"}} onClick={()=>remove(r)}>Delete</button></td>
+        </tr>) : <tr><td colSpan="12" style={{padding:"2rem",textAlign:"center"}}>No payable bills.</td></tr>}</tbody></table>}
+      </div></div>
 
-      {batchOpen && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.65)", zIndex:90, padding:"2rem 1rem", overflowY:"auto" }}>
-          <div style={{ ...card, maxWidth:900, margin:"0 auto" }}>
-            <h3 style={{ fontWeight:700, marginBottom:"1rem" }}>Batch Vendor Payment</h3>
-            <form onSubmit={saveBatchPayment}>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:".85rem", marginBottom:"1rem" }}>
-                <div>
-                  <label style={label}>Vendor</label>
-                  <select value={batchForm.VendorKey} onChange={e=>applyBatchVendor(e.target.value)} required>
-                    <option value="">— Select vendor —</option>
-                    {vendorBatchOptions.map(v => <option key={v.key} value={v.key}>{v.name} · {v.count} bill{v.count !== 1 ? "s" : ""} · {fmt(v.total)}</option>)}
+      {open && <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:90,padding:"2rem 1rem",overflowY:"auto"}}>
+        <div style={{...card,maxWidth:980,margin:"0 auto"}}>
+          <h3>{editId?"Edit Payable Bill":"New Payable Bill"}</h3>
+          <form onSubmit={save}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:".85rem"}}>
+              <div><label style={label}>Vendor *</label><select style={input} required value={vendorChoice} onChange={e=>chooseVendor(e.target.value)}><option value="">— Select vendor —</option>{vendors.map(v=><option key={v.VendorID} value={v.VendorID}>{v.VendorName} · {v.Category||"Other"}</option>)}<option value="__new__">+ Add new vendor</option></select></div>
+              {vendorChoice==="__new__" && <><div><label style={label}>New Vendor Name *</label><input style={input} required value={form.VendorName} onChange={e=>set("VendorName",e.target.value)}/></div><div><label style={label}>Category</label><select style={input} value={form.VendorCategory} onChange={e=>set("VendorCategory",e.target.value)}>{CATEGORIES.map(x=><option key={x}>{x}</option>)}</select></div></>}
+              <div><label style={label}>Bill No</label><input style={input} value={form.BillNo} onChange={e=>set("BillNo",e.target.value)}/></div>
+              <div><label style={label}>Bill Date *</label><input style={input} type="date" required value={form.BillDate} onChange={e=>set("BillDate",e.target.value)}/></div>
+              <div><label style={label}>Due Date</label><input style={input} type="date" value={form.DueDate} onChange={e=>set("DueDate",e.target.value)}/></div>
+
+              <div style={{gridColumn:"1/-1",border:"1px solid var(--border)",borderRadius:"6px",padding:".8rem"}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:".65rem"}}><strong>Tax / GST line items</strong><button type="button" style={btn("ghost")} onClick={()=>setForm(p=>({...p,LineItems:[...(p.LineItems||[]),emptyLine()]}))}>+ Add line</button></div>
+                {(form.LineItems||[]).map((item,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"2fr repeat(4,1fr) auto",gap:".55rem",alignItems:"end",marginBottom:".55rem"}}>
+                  <div><label style={label}>Particulars</label><input style={input} value={item.Particulars||""} onChange={e=>updateLine(i,"Particulars",e.target.value)}/></div>
+                  <div><label style={label}>Taxable</label><input style={input} value={item.TaxableAmount||""} onChange={e=>updateLine(i,"TaxableAmount",e.target.value)}/></div>
+                  <div><label style={label}>GST Type</label><select style={input} value={item.GSTType||"IGST"} onChange={e=>updateLine(i,"GSTType",e.target.value)}><option value="IGST">IGST</option><option value="CGST_SGST">CGST + SGST</option><option value="None">No GST</option></select></div>
+                  <div><label style={label}>GST %</label><input style={input} value={item.GSTRate||""} onChange={e=>updateLine(i,"GSTRate",e.target.value)}/></div>
+                  <div><label style={label}>Line Total</label><input style={input} readOnly value={fmt(calcLineItem(item).total)}/></div>
+                  <button type="button" style={{...btn("ghost"),color:"var(--danger)"}} onClick={()=>setForm(p=>({...p,LineItems:p.LineItems.filter((_,idx)=>idx!==i).length?p.LineItems.filter((_,idx)=>idx!==i):[emptyLine()]}))}>Remove</button>
+                </div>)}
+              </div>
+
+              <div><label style={label}>Taxable Value</label><input style={input} value={form.TaxableAmount} onChange={e=>set("TaxableAmount",e.target.value)}/></div>
+              <div><label style={label}>CGST</label><input style={input} value={form.CGSTAmount} onChange={e=>set("CGSTAmount",e.target.value)}/></div>
+              <div><label style={label}>SGST</label><input style={input} value={form.SGSTAmount} onChange={e=>set("SGSTAmount",e.target.value)}/></div>
+              <div><label style={label}>IGST</label><input style={input} value={form.IGSTAmount} onChange={e=>set("IGSTAmount",e.target.value)}/></div>
+              <div><label style={label}>Gross Bill</label><input style={input} readOnly value={fmt(amounts.gross)}/></div>
+              <div><label style={label}>TDS Section</label><select style={input} value={form.TDSSection} onChange={e=>{const x=TDS_SECTIONS.find(t=>t.section===e.target.value);setForm(p=>({...p,TDSSection:e.target.value,TDSRate:String(x?.rate??p.TDSRate),TDSAmount:""}))}}>{TDS_SECTIONS.map(x=><option key={x.section||"none"} value={x.section}>{x.label}</option>)}</select></div>
+              <div><label style={label}>TDS Rate (%)</label><input style={input} type="number" step=".01" value={form.TDSRate} onChange={e=>set("TDSRate",e.target.value)}/></div>
+              <div><label style={label}>TDS Amount</label><input style={input} type="number" step=".01" value={form.TDSAmount} placeholder={String(amounts.tds)} onChange={e=>set("TDSAmount",e.target.value)}/></div>
+
+              <div style={{gridColumn:"1/-1",marginTop:".3rem",fontWeight:700}}>Payment Details <span style={{fontWeight:400,color:"var(--muted)",fontSize:".75rem"}}>— only required when Paid Amount &gt; 0</span></div>
+              <div><label style={label}>Paid Amount</label><input style={input} type="number" min="0" step=".01" value={form.PaidAmount} onChange={e=>set("PaidAmount",e.target.value)}/></div>
+              {num(form.PaidAmount)>0 && <>
+                <div><label style={label}>Payment Date *</label><input style={input} type="date" required value={form.PaymentDate} onChange={e=>set("PaymentDate",e.target.value)}/></div>
+                <div><label style={label}>Paid By Type *</label><select style={input} value={form.PaidByType} onChange={e=>setForm(p=>({...p,PaidByType:e.target.value,PaidByName:e.target.value==="Company"?"Company":"",ReimburseTo:"",BankAccount:e.target.value==="Company"?p.BankAccount:""}))}><option>Company</option><option>Partner</option><option>Staff</option><option>Other</option></select></div>
+                <div><label style={label}>Payment Mode *</label><select style={input} value={form.PaymentMode} onChange={e=>set("PaymentMode",e.target.value)}>{PAYMENT_MODES.map(x=><option key={x}>{x}</option>)}</select></div>
+
+                {!reimbursementRequired(form.PaidByType) && normalizeKey(form.PaymentMode)!=="cash" && <div>
+                  <label style={label}>Zivara Bank Account *</label>
+                  <select style={input} required value={form.BankAccount} onChange={e=>set("BankAccount",e.target.value)}>
+                    <option value="">— Select bank account —</option>
+                    {banks.map(b=><option key={b.AccountID} value={b.AccountID}>{b.AccountName} · {b.BankName} · ...{String(b.AccountNumber||"").slice(-4)}</option>)}
                   </select>
-                </div>
-                <div><label style={label}>Payment Date</label><input type="date" value={batchForm.PaymentDate} onChange={e=>setBatch("PaymentDate", e.target.value)} required /></div>
-                <div><label style={label}>Payment Mode</label><select value={batchForm.PaymentMode} onChange={e=>setBatch("PaymentMode", e.target.value)}>{["Bank","NEFT","RTGS","IMPS","UPI","Cheque","Cash"].map(o => <option key={o}>{o}</option>)}</select></div>
-                <div><label style={label}>Bank Account</label><input value={batchForm.BankAccount} onChange={e=>setBatch("BankAccount", e.target.value)} /></div>
-                <div><label style={label}>Reference / UTR</label><input value={batchForm.ReferenceNo} onChange={e=>setBatch("ReferenceNo", e.target.value)} /></div>
-                <div><label style={label}>Paid By Type</label><select value={batchForm.PaidByType} onChange={e=>setBatchForm(p => ({ ...p, PaidByType:e.target.value, PaidByName:e.target.value === "Company" ? "Company" : p.PaidByName, ReimburseTo:e.target.value === "Company" ? "" : p.ReimburseTo }))}>{["Company","Partner","Staff","Other"].map(o => <option key={o}>{o}</option>)}</select></div>
-                {reimbursementRequired(batchForm.PaidByType) && (
-                  <>
-                    <div><label style={label}>Actual Paid By</label><input list="payable-payer-options" value={batchForm.PaidByName} onChange={e=>setBatch("PaidByName", e.target.value)} placeholder="Manu / Dinu / X" /></div>
-                    <div><label style={label}>Reimburse To</label><input list="payable-payer-options" value={batchForm.ReimburseTo} onChange={e=>setBatch("ReimburseTo", e.target.value)} placeholder="Defaults to actual payer" /></div>
-                  </>
-                )}
-                <div>
-                  <label style={label}>TDS Treatment</label>
-                  <select value={batchForm.TDSMode} onChange={e=>setBatchTDSMode(e.target.value)}>
-                    <option value="net_after_tds">Pay net after TDS</option>
-                    <option value="gross_pending_tds">Pay gross, keep TDS pending</option>
-                  </select>
-                </div>
-                <div><label style={label}>Paid Amount</label><input type="number" min="0" step="0.01" value={batchForm.PaidAmount} onChange={e=>setBatch("PaidAmount", e.target.value)} /></div>
-              </div>
+                  <BankBalance account={selectedBank} amount={form.PaidAmount}/>
+                </div>}
 
-              <div style={{ border:"1px solid var(--border)", borderRadius:"6px", overflow:"hidden" }}>
-                <div style={{ padding:".75rem 1rem", display:"flex", alignItems:"center", justifyContent:"space-between", gap:"1rem", flexWrap:"wrap", borderBottom:"1px solid var(--border)" }}>
-                  <label style={{ display:"flex", alignItems:"center", gap:".5rem", color:"var(--text)", fontSize:".85rem", fontWeight:700 }}>
-                    <input type="checkbox" checked={batchVendorRows.length > 0 && batchForm.PayableIDs.length === batchVendorRows.length} onChange={e=>setAllBatchBills(e.target.checked)} />
-                    Select all bills
-                  </label>
-                  <span style={{ color:"var(--accent)", fontWeight:800 }}>{batchForm.PayableIDs.length} selected · Gross {fmt(selectedBatchGross)} · TDS {fmt(selectedBatchTDS)} · Net {fmt(selectedBatchTotal)} · Paying {fmt(batchForm.PaidAmount)}</span>
-                </div>
-                <div style={{ maxHeight:320, overflowY:"auto" }}>
-                  {batchVendorRows.length === 0 ? (
-                    <p style={{ padding:"1.5rem", color:"var(--muted)", textAlign:"center" }}>No outstanding bills for this vendor.</p>
-                  ) : (
-                    <table>
-                      <thead><tr><th></th><th>Bill</th><th>Bill Date</th><th>Gross</th><th>TDS</th><th>Net / Balance</th><th>Status</th></tr></thead>
-                      <tbody>
-                        {batchVendorRows.map(row => (
-                          <tr key={row.PayableID}>
-                            <td><input type="checkbox" checked={batchForm.PayableIDs.includes(row.PayableID)} onChange={()=>toggleBatchBill(row.PayableID)} /></td>
-                            <td style={{ color:"var(--accent2)", whiteSpace:"nowrap" }}>{row.BillNo || "—"}</td>
-                            <td style={{ whiteSpace:"nowrap" }}>{formatDate(row.BillDate)}</td>
-                            <td style={{ whiteSpace:"nowrap" }}>{fmt(row.GrossAmount)}</td>
-                            <td style={{ color:"var(--warning)", whiteSpace:"nowrap" }}>{fmt(row.TDSAmount)}</td>
-                            <td style={{ color:"var(--danger)", fontWeight:700, whiteSpace:"nowrap" }}>{fmt(row.BalanceAmount || row.NetPayable)}</td>
-                            <td><Badge value={row.Status} /></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </div>
+                {!reimbursementRequired(form.PaidByType) && normalizeKey(form.PaymentMode)!=="cash" && <div><label style={label}>Reference / UTR *</label><input style={input} required value={form.ReferenceNo} onChange={e=>set("ReferenceNo",e.target.value)} placeholder="Bank UTR / cheque / reference"/></div>}
 
-              <div style={{ display:"flex", justifyContent:"flex-end", gap:".75rem", marginTop:"1.25rem", flexWrap:"wrap" }}>
-                <button type="button" style={btn("ghost")} onClick={()=>setBatchOpen(false)}>Cancel</button>
-                <button type="submit" style={btn()} disabled={saving || !batchForm.PayableIDs.length}>{saving ? "Saving..." : "Mark Selected Paid"}</button>
-              </div>
-            </form>
-          </div>
+                {reimbursementRequired(form.PaidByType) && <>
+                  <div><label style={label}>Actual Paid By *</label><select style={input} required value={form.PaidByName} onChange={e=>setForm(p=>({...p,PaidByName:e.target.value,ReimburseTo:p.ReimburseTo||e.target.value}))}><option value="">— Select / choose payer —</option>{partnerNames.map(x=><option key={x}>{x}</option>)}</select></div>
+                  <div><label style={label}>Reimburse To *</label><select style={input} required value={form.ReimburseTo} onChange={e=>set("ReimburseTo",e.target.value)}><option value="">— Select person —</option>{partnerNames.map(x=><option key={x}>{x}</option>)}</select></div>
+                  <div><label style={label}>Reimbursement Status</label><input style={input} readOnly value={form.ReimbursementStatus==="Reimbursed"?"Reimbursed":"Pending"}/></div>
+                </>}
+              </>}
+
+              <div style={{gridColumn:"1/-1"}}><label style={label}>Description</label><input style={input} value={form.Description} onChange={e=>set("Description",e.target.value)}/></div>
+              <div><label style={label}>Challan No</label><input style={input} value={form.ChallanNo} onChange={e=>set("ChallanNo",e.target.value)}/></div>
+              <div><label style={label}>Challan Date</label><input style={input} type="date" value={form.ChallanDate} onChange={e=>set("ChallanDate",e.target.value)}/></div>
+              <div style={{gridColumn:"1/-1"}}><label style={label}>Upload Bill</label><input style={input} type="file" accept=".pdf,.png,.jpg,.jpeg,.xls,.xlsx,.csv" onChange={e=>setBillFile(e.target.files?.[0]||null)}/></div>
+              <div style={{gridColumn:"1/-1"}}><label style={label}>Notes</label><input style={input} value={form.Notes} onChange={e=>set("Notes",e.target.value)}/></div>
+            </div>
+
+            <div style={{...card,marginTop:"1rem",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:".6rem"}}>
+              <div>Taxable<br/><strong>{fmt(amounts.taxable)}</strong></div>
+              <div>GST Input<br/><strong>{fmt(amounts.gst)}</strong></div>
+              <div>Gross<br/><strong>{fmt(amounts.gross)}</strong></div>
+              <div>Less TDS<br/><strong>{fmt(amounts.tds)}</strong></div>
+              <div>Net Payable<br/><strong style={{color:"var(--success)"}}>{fmt(amounts.net)}</strong></div>
+            </div>
+
+            <div style={{display:"flex",justifyContent:"flex-end",gap:".75rem",marginTop:"1rem"}}><button type="button" style={btn("ghost")} onClick={()=>setOpen(false)}>Cancel</button><button type="submit" style={btn()} disabled={saving}>{saving?"Saving...":editId?"Update Bill":"Save Bill"}</button></div>
+          </form>
         </div>
-      )}
+      </div>}
 
-      {open && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.65)", zIndex:90, padding:"2rem 1rem", overflowY:"auto" }}>
-          <div style={{ ...card, maxWidth:920, margin:"0 auto" }}>
-            <h3 style={{ fontWeight:700, marginBottom:"1rem" }}>{editId ? "Edit Payable Bill" : "New Payable Bill"}</h3>
-            <form onSubmit={save}>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:".85rem" }}>
-                <div>
-                  <label style={label}>Vendor *</label>
-                  <select value={vendorChoice} onChange={e=>applyVendorChoice(e.target.value)} required>
-                    <option value="">— Select vendor —</option>
-                    {vendors.map(v => <option key={v.VendorID} value={v.VendorID}>{v.VendorName}{v.Category ? ` · ${v.Category}` : ""}</option>)}
-                    <option value="__new__">+ Add new vendor</option>
-                  </select>
-                </div>
-                {vendorChoice === "__new__" && (
-                  <>
-                    <div><label style={label}>New Vendor Name *</label><input value={form.VendorName} onChange={e=>set("VendorName", e.target.value)} required /></div>
-                    <div><label style={label}>Category</label><select value={form.VendorCategory} onChange={e=>set("VendorCategory", e.target.value)}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></div>
-                    <div><label style={label}>Vendor GSTIN</label><input value={form.VendorGSTIN} onChange={e=>set("VendorGSTIN", e.target.value.toUpperCase())} maxLength={15} /></div>
-                    <div><label style={label}>Vendor PAN</label><input value={form.VendorPAN} onChange={e=>set("VendorPAN", e.target.value.toUpperCase())} maxLength={10} /></div>
-                  </>
-                )}
-                {vendorChoice && vendorChoice !== "__new__" && (
-                  <>
-                    <div><label style={label}>Category</label><input value={form.VendorCategory || ""} readOnly /></div>
-                    <div><label style={label}>Vendor GSTIN</label><input value={form.VendorGSTIN || ""} readOnly /></div>
-                    <div><label style={label}>Vendor PAN</label><input value={form.VendorPAN || ""} onChange={e=>set("VendorPAN", e.target.value.toUpperCase())} maxLength={10} /></div>
-                  </>
-                )}
-                <div><label style={label}>Bill No</label><input value={form.BillNo} onChange={e=>set("BillNo", e.target.value)} /></div>
-                <div><label style={label}>Bill Date *</label><input type="date" value={form.BillDate} onChange={e=>set("BillDate", e.target.value)} required /></div>
-                <div><label style={label}>Due Date</label><input type="date" value={form.DueDate} onChange={e=>set("DueDate", e.target.value)} /></div>
-                <div style={{ gridColumn:"1 / -1", border:"1px solid var(--border)", borderRadius:"6px", padding:".8rem", display:"flex", flexDirection:"column", gap:".65rem" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:".75rem", flexWrap:"wrap" }}>
-                    <strong style={{ fontSize:".85rem" }}>Tax / GST line items</strong>
-                    <button type="button" style={{ ...btn("ghost"), padding:".35rem .65rem" }} onClick={addLineItem}>+ Add line</button>
-                  </div>
-                  {(form.LineItems || []).map((item, index) => (
-                    <div key={index} style={{ display:"grid", gridTemplateColumns:"minmax(160px,1.5fr) repeat(5,minmax(105px,1fr)) auto", gap:".55rem", alignItems:"end" }}>
-                      <div><label style={label}>Particulars</label><input value={item.Particulars || ""} onChange={e=>updateLineItem(index, "Particulars", e.target.value)} placeholder="Service / item" /></div>
-                      <div><label style={label}>Taxable</label><input inputMode="decimal" value={item.TaxableAmount || ""} onChange={e=>updateLineItem(index, "TaxableAmount", e.target.value)} /></div>
-                      <div><label style={label}>GST Type</label><select value={item.GSTType || "IGST"} onChange={e=>updateLineItem(index, "GSTType", e.target.value)}><option value="IGST">IGST</option><option value="CGST_SGST">CGST + SGST</option><option value="None">No GST</option></select></div>
-                      <div><label style={label}>GST %</label><input inputMode="decimal" value={item.GSTRate || ""} onChange={e=>updateLineItem(index, "GSTRate", e.target.value)} /></div>
-                      <div><label style={label}>TCS</label><input inputMode="decimal" value={item.TCSAmount || ""} onChange={e=>updateLineItem(index, "TCSAmount", e.target.value)} /></div>
-                      <div><label style={label}>Line Total</label><input readOnly value={fmt(calcLineItem(item).total)} /></div>
-                      <button type="button" style={{ ...btn("ghost"), padding:".45rem .55rem", color:"var(--danger)" }} onClick={()=>removeLineItem(index)}>Remove</button>
-                    </div>
-                  ))}
-                  <div style={{ fontSize:".72rem", color:"var(--muted)" }}>
-                    Use separate rows when one invoice has 18% GST for one item and 5% GST for another. Totals below are calculated from these rows.
-                  </div>
-                </div>
-                <div><label style={label}>Taxable Value</label><input inputMode="decimal" value={form.TaxableAmount} onChange={e=>set("TaxableAmount", e.target.value)} /></div>
-                <div><label style={label}>CGST</label><input inputMode="decimal" value={form.CGSTAmount} onChange={e=>set("CGSTAmount", e.target.value)} /></div>
-                <div><label style={label}>SGST</label><input inputMode="decimal" value={form.SGSTAmount} onChange={e=>set("SGSTAmount", e.target.value)} /></div>
-                <div><label style={label}>IGST</label><input inputMode="decimal" value={form.IGSTAmount} onChange={e=>set("IGSTAmount", e.target.value)} /></div>
-                <div><label style={label}>TCS</label><input inputMode="decimal" value={form.TCSAmount} onChange={e=>set("TCSAmount", e.target.value)} /></div>
-                <div><label style={label}>GST Total</label><input type="text" value={fmt(amounts.gst)} readOnly /></div>
-                <div><label style={label}>Gross Bill Amount</label><input type="text" value={fmt(amounts.gross)} readOnly /></div>
-                <div>
-                  <label style={label}>TDS Section</label>
-                  <select value={form.TDSSection} onChange={e=>applyTDS(e.target.value)}>{TDS_SECTIONS.map(s => <option key={s.section || "none"} value={s.section}>{s.label}</option>)}</select>
-                  <div style={{ fontSize:".68rem", color:"var(--muted)", marginTop:".25rem" }}>
-                    From 1 Apr 2026, TDS uses Section 393 table items. Section 394 is for TCS.
-                  </div>
-                </div>
-                <div><label style={label}>TDS Rate (%)</label><input type="number" min="0" step="0.01" value={form.TDSRate} onChange={e=>{ set("TDSRate", e.target.value); set("TDSAmount", ""); }} /></div>
-                <div><label style={label}>TDS Amount</label><input type="number" min="0" step="0.01" value={form.TDSAmount} onChange={e=>set("TDSAmount", e.target.value)} placeholder={String(amounts.tds)} /></div>
-                <div><label style={label}>Paid Amount</label><input type="number" min="0" step="0.01" value={form.PaidAmount} onChange={e=>set("PaidAmount", e.target.value)} /></div>
-                <div><label style={label}>Payment Date</label><input type="date" value={form.PaymentDate} onChange={e=>set("PaymentDate", e.target.value)} /></div>
-                <div><label style={label}>Payment Mode</label><select value={form.PaymentMode} onChange={e=>set("PaymentMode", e.target.value)}>{["Bank","NEFT","RTGS","IMPS","UPI","Cheque","Cash"].map(o => <option key={o}>{o}</option>)}</select></div>
-                <div><label style={label}>Bank Account</label><input value={form.BankAccount} onChange={e=>set("BankAccount", e.target.value)} /></div>
-                <div><label style={label}>Reference / UTR</label><input value={form.ReferenceNo} onChange={e=>set("ReferenceNo", e.target.value)} /></div>
-                <div><label style={label}>Paid By Type</label><select value={form.PaidByType} onChange={e=>setForm(p => ({ ...p, PaidByType:e.target.value, PaidByName:e.target.value === "Company" ? "Company" : p.PaidByName, ReimburseTo:e.target.value === "Company" ? "" : p.ReimburseTo }))}>{["Company","Partner","Staff","Other"].map(o => <option key={o}>{o}</option>)}</select></div>
-                {reimbursementRequired(form.PaidByType) && (
-                  <>
-                    <div>
-                      <label style={label}>Actual Paid By</label>
-                      <input list="payable-payer-options" value={form.PaidByName} onChange={e=>set("PaidByName", e.target.value)} placeholder="Manu / Dinu / X" />
-                    </div>
-                    <div>
-                      <label style={label}>Reimburse To</label>
-                      <input list="payable-payer-options" value={form.ReimburseTo} onChange={e=>set("ReimburseTo", e.target.value)} placeholder="Defaults to actual payer" />
-                    </div>
-                    <div><label style={label}>Reimbursement Status</label><input value={form.ReimbursementStatus || "Pending"} readOnly /></div>
-                  </>
-                )}
-                <datalist id="payable-payer-options">
-                  {payerOptions.map(name => <option key={name} value={name} />)}
-                </datalist>
-                <div><label style={label}>Challan No</label><input value={form.ChallanNo} onChange={e=>set("ChallanNo", e.target.value)} /></div>
-                <div><label style={label}>Challan Date</label><input type="date" value={form.ChallanDate} onChange={e=>set("ChallanDate", e.target.value)} /></div>
-                <div><label style={label}>Interest, If Any</label><input type="number" min="0" step="0.01" value={form.InterestAmount} onChange={e=>set("InterestAmount", e.target.value)} /></div>
-                <div style={{ gridColumn:"1 / -1" }}><label style={label}>Description</label><input value={form.Description} onChange={e=>set("Description", e.target.value)} placeholder="e.g. Flight booking for LLP travel / CA audit fees" /></div>
-                <div style={{ gridColumn:"1 / -1" }}>
-                  <label style={label}>Upload Bill</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg,.xls,.xlsx,.csv"
-                    onChange={e => setBillFile(e.target.files?.[0] || null)}
-                  />
-                  <div style={{ fontSize:".7rem", color:"var(--muted)", marginTop:".25rem" }}>
-                    PDF, PNG, JPG, JPEG, XLS, XLSX, CSV
-                  </div>
-                  {uploadMessage && <div style={{ color:"var(--success)", fontSize:".8rem", marginTop:".4rem" }}>{uploadMessage}</div>}
-                </div>
-                <div style={{ gridColumn:"1 / -1" }}><label style={label}>Notes</label><input value={form.Notes} onChange={e=>set("Notes", e.target.value)} /></div>
-              </div>
-
-              <div style={{ marginTop:"1rem", padding:".75rem 1rem", border:"1px solid var(--border)", borderRadius:"6px", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:".75rem" }}>
-                <div><span style={{ color:"var(--muted)", fontSize:".72rem" }}>Taxable</span><br/><strong>{fmt(amounts.taxable)}</strong></div>
-                <div><span style={{ color:"var(--muted)", fontSize:".72rem" }}>GST Input</span><br/><strong style={{ color:"var(--accent2)" }}>{fmt(amounts.gst)}</strong></div>
-                <div><span style={{ color:"var(--muted)", fontSize:".72rem" }}>TCS</span><br/><strong>{fmt(amounts.tcs)}</strong></div>
-                <div><span style={{ color:"var(--muted)", fontSize:".72rem" }}>Gross</span><br/><strong>{fmt(amounts.gross)}</strong></div>
-                <div><span style={{ color:"var(--muted)", fontSize:".72rem" }}>Less TDS</span><br/><strong style={{ color:"var(--warning)" }}>{fmt(amounts.tds)}</strong></div>
-                <div><span style={{ color:"var(--muted)", fontSize:".72rem" }}>Net Payable</span><br/><strong style={{ color:"var(--success)" }}>{fmt(amounts.net)}</strong></div>
-              </div>
-
-              <div style={{ display:"flex", justifyContent:"flex-end", gap:".75rem", marginTop:"1.25rem", flexWrap:"wrap" }}>
-                <button type="button" style={btn("ghost")} onClick={()=>{ setOpen(false); setVendorChoice(""); }}>Cancel</button>
-                <button type="submit" style={btn()} disabled={saving}>{saving ? "Saving..." : editId ? "Update Bill" : "Save Bill"}</button>
-              </div>
-            </form>
-          </div>
+      {batchOpen && <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:90,padding:"2rem 1rem",overflowY:"auto"}}>
+        <div style={{...card,maxWidth:900,margin:"0 auto"}}>
+          <h3>Batch Vendor Payment</h3>
+          <form onSubmit={saveBatch}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:".85rem"}}>
+              <div><label style={label}>Vendor</label><select style={input} required value={batch.VendorID} onChange={e=>chooseBatchVendor(e.target.value)}><option value="">— Select vendor —</option>{batchVendors.map(v=><option key={v.key} value={v.key}>{v.name} · {v.count} bills · {fmt(v.total)}</option>)}</select></div>
+              <div><label style={label}>Payment Date *</label><input style={input} type="date" required value={batch.PaymentDate} onChange={e=>setBatch(p=>({...p,PaymentDate:e.target.value}))}/></div>
+              <div><label style={label}>Paid By Type *</label><select style={input} value={batch.PaidByType} onChange={e=>setBatch(p=>({...p,PaidByType:e.target.value,BankAccount:e.target.value==="Company"?p.BankAccount:"",PaidByName:"",ReimburseTo:""}))}><option>Company</option><option>Partner</option><option>Staff</option><option>Other</option></select></div>
+              <div><label style={label}>Payment Mode *</label><select style={input} value={batch.PaymentMode} onChange={e=>setBatch(p=>({...p,PaymentMode:e.target.value}))}>{PAYMENT_MODES.map(x=><option key={x}>{x}</option>)}</select></div>
+              {!reimbursementRequired(batch.PaidByType) && normalizeKey(batch.PaymentMode)!=="cash" && <div><label style={label}>Zivara Bank Account *</label><select style={input} required value={batch.BankAccount} onChange={e=>setBatch(p=>({...p,BankAccount:e.target.value}))}><option value="">— Select bank —</option>{banks.map(b=><option key={b.AccountID} value={b.AccountID}>{b.AccountName} · {b.BankName} · ...{String(b.AccountNumber||"").slice(-4)}</option>)}</select><BankBalance account={selectedBatchBank} amount={batch.PaidAmount}/></div>}
+              {!reimbursementRequired(batch.PaidByType) && normalizeKey(batch.PaymentMode)!=="cash" && <div><label style={label}>Reference / UTR *</label><input style={input} required value={batch.ReferenceNo} onChange={e=>setBatch(p=>({...p,ReferenceNo:e.target.value}))}/></div>}
+              {reimbursementRequired(batch.PaidByType) && <><div><label style={label}>Actual Paid By *</label><select style={input} required value={batch.PaidByName} onChange={e=>setBatch(p=>({...p,PaidByName:e.target.value,ReimburseTo:e.target.value}))}><option value="">— Select payer —</option>{partnerNames.map(x=><option key={x}>{x}</option>)}</select></div><div><label style={label}>Reimburse To *</label><select style={input} required value={batch.ReimburseTo} onChange={e=>setBatch(p=>({...p,ReimburseTo:e.target.value}))}><option value="">— Select person —</option>{partnerNames.map(x=><option key={x}>{x}</option>)}</select></div></>}
+              <div><label style={label}>Paid Amount</label><input style={input} type="number" step=".01" min="0" value={batch.PaidAmount} onChange={e=>setBatch(p=>({...p,PaidAmount:e.target.value}))}/></div>
+            </div>
+            <div style={{marginTop:"1rem",border:"1px solid var(--border)",borderRadius:"6px",overflow:"hidden"}}><table><thead><tr><th></th><th>Bill</th><th>Date</th><th>Balance</th></tr></thead><tbody>{batchRows.map(r=><tr key={r.PayableID}><td><input type="checkbox" checked={batch.PayableIDs.includes(r.PayableID)} onChange={e=>setBatch(p=>({...p,PayableIDs:e.target.checked?[...p.PayableIDs,r.PayableID]:p.PayableIDs.filter(id=>id!==r.PayableID)}))}/></td><td>{r.BillNo}</td><td>{formatDate(r.BillDate)}</td><td>{fmt(r.BalanceAmount||r.NetPayable)}</td></tr>)}</tbody></table></div>
+            <div style={{marginTop:".6rem",fontWeight:700}}>Selected balance: {fmt(batchNet)}</div>
+            <div style={{display:"flex",justifyContent:"flex-end",gap:".75rem",marginTop:"1rem"}}><button type="button" style={btn("ghost")} onClick={()=>setBatchOpen(false)}>Cancel</button><button type="submit" style={btn()}>Post Payment</button></div>
+          </form>
         </div>
-      )}
+      </div>}
     </div>
   );
 }
