@@ -407,3 +407,332 @@ def post_cash_to_ledger(
     audit(db, user.email, "journal", "post-cash", journal.id)
     db.commit()
     return {"ok": True, "JournalID": journal.id, "LedgerID": counter.id}
+
+
+def _bank_transaction_dict(db: Session, cash: CashBookEntry):
+    bank = db.get(BankAccount, cash.paid_by) if cash.paid_by else None
+    journal = db.query(JournalEntry).filter(
+        JournalEntry.llp_id == cash.llp_id,
+        JournalEntry.source_type == "cash_book",
+        JournalEntry.source_id == cash.id,
+    ).first()
+
+    ledger_id = ""
+    ledger_name = ""
+    if journal:
+        lines = db.query(JournalLine).filter(
+            JournalLine.journal_entry_id == journal.id
+        ).all()
+        source_key = f"bank:{bank.id}" if bank else "cash"
+        for line in lines:
+            ledger = db.get(Ledger, line.ledger_id)
+            if ledger and ledger.system_key != source_key:
+                ledger_id = ledger.id
+                ledger_name = ledger.ledger_name
+                break
+
+    return {
+        "EntryID": cash.id,
+        "LLPID": cash.llp_id,
+        "Date": iso(cash.entry_date),
+        "Type": cash.entry_type,
+        "OpeningBalance": money(cash.opening_balance),
+        "AmountIn": money(cash.amount_in),
+        "AmountOut": money(cash.amount_out),
+        "ClosingBalance": money(cash.closing_balance),
+        "ReferenceType": cash.reference_type,
+        "ReferenceID": cash.reference_id,
+        "Description": cash.description,
+        "BankAccountID": bank.id if bank else "",
+        "BankAccountName": bank.account_name if bank else "",
+        "BankName": bank.bank_name if bank else "",
+        "LedgerID": ledger_id,
+        "LedgerName": ledger_name,
+        "JournalID": journal.id if journal else "",
+    }
+
+
+def _recalculate_bank_ledger_balance(db: Session, bank: BankAccount):
+    rows = db.query(CashBookEntry).filter(
+        CashBookEntry.llp_id == bank.llp_id,
+        CashBookEntry.paid_by == bank.id,
+    ).order_by(
+        CashBookEntry.entry_date,
+        CashBookEntry.created_at,
+        CashBookEntry.id,
+    ).all()
+
+    balance = dec(bank.opening_balance)
+    for row in rows:
+        row.opening_balance = balance
+        balance = balance + dec(row.amount_in) - dec(row.amount_out)
+        row.closing_balance = balance
+
+    bank.current_balance = balance
+
+
+def _post_cash_journal(
+    db: Session,
+    cash: CashBookEntry,
+    counter: Ledger,
+    user_email: str,
+):
+    source = _source_ledger(db, cash.llp_id, cash)
+
+    amount_in = dec(cash.amount_in)
+    amount_out = dec(cash.amount_out)
+
+    if amount_in <= 0 and amount_out <= 0:
+        raise HTTPException(status_code=400, detail="Transaction has no amount")
+
+    _delete_source_journal(
+        db,
+        cash.llp_id,
+        "cash_book",
+        cash.id,
+    )
+
+    if amount_in > 0:
+        lines = [
+            {
+                "LedgerID": source.id,
+                "Debit": amount_in,
+                "Credit": 0,
+                "Particulars": cash.description,
+            },
+            {
+                "LedgerID": counter.id,
+                "Debit": 0,
+                "Credit": amount_in,
+                "Particulars": cash.description,
+            },
+        ]
+    else:
+        lines = [
+            {
+                "LedgerID": counter.id,
+                "Debit": amount_out,
+                "Credit": 0,
+                "Particulars": cash.description,
+            },
+            {
+                "LedgerID": source.id,
+                "Debit": 0,
+                "Credit": amount_out,
+                "Particulars": cash.description,
+            },
+        ]
+
+    return _save_journal(
+        db,
+        cash.llp_id,
+        user_email,
+        {
+            "Date": iso(cash.entry_date),
+            "VoucherType": (
+                "Bank"
+                if source.system_key.startswith("bank:")
+                else "Cash"
+            ),
+            "VoucherNo": cash.reference_id or cash.id,
+            "Narration": cash.description,
+            "SourceType": "cash_book",
+            "SourceID": cash.id,
+            "Lines": lines,
+        },
+    )
+
+
+@router.get("/bank-transactions")
+def bank_transactions(
+    bank_account_id: str = "",
+    db: Session = Depends(get_db),
+    llp_id: str | None = Depends(get_llp_id),
+    _: User = Depends(current_user),
+):
+    q = db.query(CashBookEntry)
+
+    if llp_id:
+        q = q.filter(CashBookEntry.llp_id == llp_id)
+
+    if bank_account_id:
+        bank = db.get(BankAccount, bank_account_id)
+        if not bank or (llp_id and bank.llp_id != llp_id):
+            raise HTTPException(
+                status_code=404,
+                detail="Bank account not found",
+            )
+        q = q.filter(CashBookEntry.paid_by == bank_account_id)
+    else:
+        bank_ids = [
+            row.id
+            for row in (
+                db.query(BankAccount)
+                .filter(BankAccount.llp_id == llp_id)
+                .all()
+                if llp_id
+                else db.query(BankAccount).all()
+            )
+        ]
+        if not bank_ids:
+            return {"ok": True, "data": []}
+        q = q.filter(CashBookEntry.paid_by.in_(bank_ids))
+
+    rows = q.order_by(
+        CashBookEntry.entry_date.desc(),
+        CashBookEntry.created_at.desc(),
+    ).all()
+
+    return {
+        "ok": True,
+        "data": [
+            _bank_transaction_dict(db, row)
+            for row in rows
+        ],
+    }
+
+
+@router.put("/bank-transactions/{entry_id}")
+def update_bank_transaction(
+    entry_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    llp_id: str = Depends(require_llp_id),
+    user: User = Depends(current_user),
+):
+    cash = db.get(CashBookEntry, entry_id)
+    if not cash or cash.llp_id != llp_id:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank transaction not found",
+        )
+
+    old_bank = (
+        db.get(BankAccount, cash.paid_by)
+        if cash.paid_by
+        else None
+    )
+
+    bank_id = payload.get("BankAccountID") or cash.paid_by
+    bank = db.get(BankAccount, bank_id) if bank_id else None
+
+    if not bank or bank.llp_id != llp_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Select a valid bank account",
+        )
+
+    counter = db.get(Ledger, payload.get("LedgerID"))
+    if not counter or counter.llp_id != llp_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Select a valid ledger",
+        )
+
+    amount_in = dec(payload.get("AmountIn"))
+    amount_out = dec(payload.get("AmountOut"))
+
+    if amount_in <= 0 and amount_out <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter either Amount In or Amount Out",
+        )
+    if amount_in > 0 and amount_out > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Use either Amount In or Amount Out, not both",
+        )
+
+    cash.entry_date = parse_date(payload.get("Date"))
+    cash.entry_type = payload.get("Type") or "Payment"
+    cash.amount_in = amount_in
+    cash.amount_out = amount_out
+    cash.reference_type = payload.get("ReferenceType") or "Manual"
+    cash.reference_id = payload.get("ReferenceID") or ""
+    cash.description = payload.get("Description") or ""
+    cash.paid_by = bank.id
+
+    db.flush()
+
+    if old_bank:
+        _recalculate_bank_ledger_balance(db, old_bank)
+
+    if not old_bank or old_bank.id != bank.id:
+        _recalculate_bank_ledger_balance(db, bank)
+    else:
+        _recalculate_bank_ledger_balance(db, bank)
+
+    journal = _post_cash_journal(
+        db,
+        cash,
+        counter,
+        user.email,
+    )
+
+    audit(
+        db,
+        user.email,
+        "banktransactions",
+        "update",
+        cash.id,
+    )
+    db.commit()
+
+    return {
+        "ok": True,
+        "data": _bank_transaction_dict(db, cash),
+        "JournalID": journal.id,
+    }
+
+
+@router.delete("/bank-transactions/{entry_id}")
+def delete_bank_transaction(
+    entry_id: str,
+    db: Session = Depends(get_db),
+    llp_id: str = Depends(require_llp_id),
+    user: User = Depends(require_roles(
+        "super_admin",
+        "admin",
+        "managing_partner",
+    )),
+):
+    cash = db.get(CashBookEntry, entry_id)
+
+    if not cash or cash.llp_id != llp_id:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank transaction not found",
+        )
+
+    bank = (
+        db.get(BankAccount, cash.paid_by)
+        if cash.paid_by
+        else None
+    )
+
+    _delete_source_journal(
+        db,
+        cash.llp_id,
+        "cash_book",
+        cash.id,
+    )
+
+    db.delete(cash)
+    db.flush()
+
+    if bank:
+        _recalculate_bank_ledger_balance(db, bank)
+
+    audit(
+        db,
+        user.email,
+        "banktransactions",
+        "delete",
+        entry_id,
+    )
+    db.commit()
+
+    return {
+        "ok": True,
+        "message": "Bank transaction deleted",
+    }
