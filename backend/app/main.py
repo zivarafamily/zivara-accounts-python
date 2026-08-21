@@ -6,6 +6,7 @@ from app.config import get_settings
 from app.routes import auth, core, imports, uploads, ledger
 from app.services import accounting_sync
 from app.services import payables_roundoff  # noqa: F401 - installs Payables v2 hooks
+from app.services import neo_invoice_accounting  # noqa: F401 - NEW Neo invoice accounting hook
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
