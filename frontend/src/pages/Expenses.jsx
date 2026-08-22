@@ -31,6 +31,19 @@ const btn=(primary=true)=>({
   color:primary?"#fff":"var(--muted)"
 });
 const fmt=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+const escapeHtml=value=>String(value??"")
+  .replaceAll("&","&amp;")
+  .replaceAll("<","&lt;")
+  .replaceAll(">","&gt;")
+  .replaceAll('"',"&quot;");
+
+const exportDate=value=>{
+  const raw=String(value||"").slice(0,10);
+  if(!raw)return "";
+  const [y,m,d]=raw.split("-");
+  return y&&m&&d?`${d}-${m}-${y}`:raw;
+};
 const STATUS_COLOR={Draft:"var(--muted)",Submitted:"var(--warning)",Approved:"var(--success)",Reimbursed:"var(--accent2)",Paid:"var(--accent2)",Recovered:"var(--warning)"};
 
 function Badge({value}){
@@ -197,6 +210,80 @@ export default function Expenses(){
     catch(err){alert(err.message||"Unable to delete expense")}
   }
 
+  function exportExcel(){
+    if(!filtered.length){alert("No expenses to export.");return}
+    const rows=filtered.map(e=>[
+      exportDate(e.Date),
+      e.ExpenseType||"",
+      e.Category||"",
+      Number(e.Amount||0).toFixed(2),
+      e.PaidBy||"",
+      e.ReimburseTo||e.SettlementTo||e.PaidBy||"",
+      e.PaymentMode||"",
+      e.Status||"",
+      e.VendorOrPerson||"",
+      e.Description||"",
+      Number(e.TaxableValue||0).toFixed(2),
+      Number(e.GSTAmount||0).toFixed(2)
+    ]);
+    const headers=["Date","Type","Category","Amount","Paid By","Reimburse To","Mode","Status","Vendor / Person","Description","Taxable Value","GST"];
+    const table=`<table><thead><tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${
+      rows.map(r=>`<tr>${r.map(v=>`<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join("")
+    }</tbody></table>`;
+    const html=`<html><head><meta charset="utf-8"></head><body>${table}</body></html>`;
+    const blob=new Blob([html],{type:"application/vnd.ms-excel;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=`partner-staff-expenses-${fromDate||"all"}-to-${toDate||"latest"}.xls`;
+    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  }
+
+  function exportPDF(){
+    if(!filtered.length){alert("No expenses to export.");return}
+    const w=window.open("","_blank","width=1200,height=800");
+    if(!w){alert("Please allow pop-ups to export PDF.");return}
+    const filterSummary=[
+      fromDate?`From ${exportDate(fromDate)}`:"",
+      toDate?`To ${exportDate(toDate)}`:"",
+      filterPerson?`Paid By: ${filterPerson}`:"",
+      filterStatus?`Status: ${filterStatus}`:"",
+      search?`Search: ${search}`:""
+    ].filter(Boolean).join(" · ")||"All records";
+    const bodyRows=filtered.map(e=>`<tr>
+      <td>${escapeHtml(exportDate(e.Date))}</td>
+      <td>${escapeHtml(e.ExpenseType||"")}</td>
+      <td>${escapeHtml(e.Category||"")}</td>
+      <td class="num">${escapeHtml(Number(e.Amount||0).toFixed(2))}</td>
+      <td>${escapeHtml(e.PaidBy||"")}</td>
+      <td>${escapeHtml(e.ReimburseTo||e.SettlementTo||e.PaidBy||"")}</td>
+      <td>${escapeHtml(e.PaymentMode||"")}</td>
+      <td>${escapeHtml(e.Status||"")}</td>
+      <td>${escapeHtml(e.Description||"")}</td>
+    </tr>`).join("");
+    w.document.write(`<!doctype html><html><head><title>Partner / Staff Expenses</title>
+      <style>
+        body{font-family:Arial,sans-serif;color:#111;padding:20px;font-size:11px}
+        h1{font-size:20px;margin:0 0 4px}.muted{color:#666;margin-bottom:12px}
+        .summary{display:flex;gap:24px;margin:10px 0 16px;font-size:12px}
+        table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;vertical-align:top}
+        th{background:#eee;text-align:left}.num{text-align:right;white-space:nowrap}
+        @page{size:landscape;margin:10mm}
+      </style></head><body>
+      <h1>Zivara Family Office LLP — Partner / Staff Expenses</h1>
+      <div class="muted">${escapeHtml(filterSummary)}</div>
+      <div class="summary">
+        <div><strong>Records:</strong> ${filtered.length}</div>
+        <div><strong>Total:</strong> ${escapeHtml(fmt(totals.amount))}</div>
+        <div><strong>GST:</strong> ${escapeHtml(fmt(totals.gst))}</div>
+      </div>
+      <table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Amount</th><th>Paid By</th><th>Reimburse To</th><th>Mode</th><th>Status</th><th>Description</th></tr></thead>
+      <tbody>${bodyRows}</tbody></table>
+      <script>window.onload=()=>{window.print();}<\/script>
+      </body></html>`);
+    w.document.close();
+  }
+
   const accountingExpenseName={
     Food:"Food Expenses",Hotel:"Hotel Expenses",Travel:"Travel Expenses",
     Office:"Office Expenses",Vendor:"Other Expenses",SalaryAdvance:"Staff Advances",Misc:"Other Expenses"
@@ -227,9 +314,13 @@ export default function Expenses(){
     </div>
 
     <div style={{...card,padding:0,overflow:"hidden"}}>
-      <div style={{padding:".85rem 1rem",fontWeight:700,borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",gap:"1rem"}}>
+      <div style={{padding:".85rem 1rem",fontWeight:700,borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",gap:"1rem",flexWrap:"wrap"}}>
         <span>All Expenses <span style={{fontWeight:400,color:"var(--muted)"}}>· {filtered.length} records</span></span>
-        <span style={{fontSize:".72rem",fontWeight:400,color:"var(--muted)"}}>Newest date first</span>
+        <div style={{display:"flex",alignItems:"center",gap:".5rem",flexWrap:"wrap"}}>
+          <span style={{fontSize:".72rem",fontWeight:400,color:"var(--muted)"}}>Newest date first</span>
+          <button style={btn(false)} onClick={exportExcel}>Export Excel</button>
+          <button style={btn(false)} onClick={exportPDF}>Export PDF</button>
+        </div>
       </div>
       <div style={{overflowX:"auto"}}>
         {loading?<p style={{padding:"2rem",textAlign:"center",color:"var(--muted)"}}>Loading...</p>:
