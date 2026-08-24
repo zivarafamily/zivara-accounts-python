@@ -1,4 +1,5 @@
 import { useEffect,useMemo,useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { apiGet,apiPost } from "../api/client";
 
 const card={background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:"1.25rem"};
@@ -20,7 +21,31 @@ function typeForGroup(g){
   return"";
 }
 
+function sourceAction(row){
+  const source=String(row.SourceType||"").toLowerCase();
+  const voucher=String(row.VoucherType||"").toLowerCase();
+  const id=row.SourceID||row.JournalID||"";
+
+  if(source==="expense"||voucher==="expense")
+    return {label:"Edit Expense",path:`/expenses?edit=${encodeURIComponent(row.SourceID||"")}`};
+
+  if(["payable","purchase","vendor_bill"].includes(source)||voucher==="purchase")
+    return {label:"Edit Vendor Bill",path:`/payment-tracker?edit=${encodeURIComponent(row.SourceID||"")}`};
+
+  if(source==="cash_book"||["bank","cash","payment","receipt"].includes(voucher))
+    return {label:"Edit Transaction",path:`/transactions?edit=${encodeURIComponent(row.SourceID||"")}`};
+
+  if(source==="manual")
+    return {label:"Edit Journal",path:`/journal-entries?edit=${encodeURIComponent(row.JournalID||id)}`};
+
+  if(source.includes("neo")||voucher.includes("invoice"))
+    return {label:"View Source",path:"/neoinvoices"};
+
+  return null;
+}
+
 export default function Ledgers(){
+  const navigate=useNavigate();
   const[rows,setRows]=useState([]),[selected,setSelected]=useState(""),[statement,setStatement]=useState([]),[search,setSearch]=useState(""),[open,setOpen]=useState(false),[editId,setEditId]=useState(""),[form,setForm]=useState(initial),[customGroup,setCustomGroup]=useState(false);
 
   async function load(){const r=await apiGet("getLedgers");if(r.ok)setRows(r.data||[])}
@@ -37,6 +62,12 @@ export default function Ledgers(){
   function changeGroup(v){if(v==="__CUSTOM__"){setCustomGroup(true);setForm(p=>({...p,GroupName:""}));return}const t=typeForGroup(v);setCustomGroup(false);setForm(p=>({...p,GroupName:v,AccountType:t||p.AccountType}))}
   async function save(e){e.preventDefault();if(!form.GroupName.trim())return alert("Select or enter a Group");const r=await apiPost(editId?"updateLedger":"saveLedger",editId?{...form,LedgerID:editId}:form);const id=r.data?.LedgerID||editId;setOpen(false);await load();if(id)await pick(id)}
   async function del(){if(!ledger||!confirm(`Delete ledger "${ledger.LedgerName}"?`))return;try{await apiPost("deleteLedger",{LedgerID:ledger.LedgerID});setSelected("");setStatement([]);await load()}catch(err){alert(err.message)}}
+
+  function openSource(r){
+    const action=sourceAction(r);
+    if(!action)return;
+    navigate(action.path,{state:{sourceId:r.SourceID||"",journalId:r.JournalID||"",fromLedger:ledger?.LedgerID||""}});
+  }
 
   function exportExcel(){
     if(!ledger)return;
@@ -97,7 +128,21 @@ export default function Ledgers(){
         </div>
       </div>
       <div style={{...card,padding:0,overflow:"hidden"}}>
-        <table><thead><tr><th>Date</th><th>Voucher</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>{statement.length?statement.map((r,i)=><tr key={`${r.JournalID}-${i}`}><td>{r.Date||"—"}</td><td>{r.VoucherType}{r.VoucherNo?` · ${r.VoucherNo}`:""}</td><td>{r.Narration||r.Particulars||"—"}</td><td>{Number(r.Debit||0)>0?fmt(r.Debit):"—"}</td><td>{Number(r.Credit||0)>0?fmt(r.Credit):"—"}</td><td>{fmt(r.RunningBalance)} {r.BalanceSide}</td></tr>):<tr><td colSpan="6" style={{padding:"2rem",textAlign:"center"}}>No transactions</td></tr>}</tbody></table>
+        <table>
+          <thead><tr><th>Date</th><th>Voucher</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Action</th></tr></thead>
+          <tbody>{statement.length?statement.map((r,i)=>{
+            const action=sourceAction(r);
+            return <tr key={`${r.JournalID}-${i}`}>
+              <td>{r.Date||"—"}</td>
+              <td>{r.VoucherType}{r.VoucherNo?` · ${r.VoucherNo}`:""}</td>
+              <td>{r.Narration||r.Particulars||"—"}</td>
+              <td>{Number(r.Debit||0)>0?fmt(r.Debit):"—"}</td>
+              <td>{Number(r.Credit||0)>0?fmt(r.Credit):"—"}</td>
+              <td>{fmt(r.RunningBalance)} {r.BalanceSide}</td>
+              <td style={{whiteSpace:"nowrap"}}>{action?<button style={btn()} onClick={()=>openSource(r)}>{action.label}</button>:<span style={{fontSize:".72rem",color:"var(--muted)"}}>Protected</span>}</td>
+            </tr>
+          }):<tr><td colSpan="7" style={{padding:"2rem",textAlign:"center"}}>No transactions</td></tr>}</tbody>
+        </table>
       </div>
     </>}
   </div>
