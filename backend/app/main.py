@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
-from app.routes import auth, core, imports, uploads, ledger
+from app.routes import auth, core, imports, uploads, ledger, manual_journal
 from app.services import accounting_sync
 
 try:
@@ -33,6 +33,7 @@ app.include_router(core.router)
 app.include_router(imports.router)
 app.include_router(uploads.router)
 app.include_router(ledger.router)
+app.include_router(manual_journal.router)
 
 
 def _sync_accounting_startup():
