@@ -33,7 +33,8 @@ function bucket(expense){
 
 export default function PartnerStaffStatement(){
   const {currentLLP}=useLLP();
-  const[expenses,setExpenses]=useState([]);\n  const[bankRows,setBankRows]=useState([]);
+  const[expenses,setExpenses]=useState([]);
+  const[bankRows,setBankRows]=useState([]);
   const[ledgers,setLedgers]=useState([]);
   const[partners,setPartners]=useState([]);
   const[users,setUsers]=useState([]);
@@ -55,7 +56,8 @@ export default function PartnerStaffStatement(){
       setExpenses(e.data||[]);
       setLedgers(l.data||[]);
       setPartners((p.data||[]).filter(x=>x.Status!=="Inactive"));
-      setUsers((u.data||[]).filter(x=>x.Status!=="Inactive"));\n      setBankRows(b.data||[]);
+      setUsers((u.data||[]).filter(x=>x.Status!=="Inactive"));
+      setBankRows(b.data||[]);
     }catch(err){setError(err.message||"Unable to load report data")}
     finally{setLoading(false)}
   }
