@@ -132,6 +132,7 @@ export default function PartnerStaffStatement(){
 
   const expenseTotal=useMemo(()=>personExpenses.reduce((s,x)=>s+Number(x.Amount||0),0),[personExpenses]);
   const reimbursedTotal=useMemo(()=>reimbursementRows.reduce((s,x)=>s+Number(x.Debit||0),0),[reimbursementRows]);
+  const reimbursementBalance=Math.max(0,expenseTotal-reimbursedTotal);
   const otherTransferTotal=useMemo(()=>otherTransferRows.reduce((s,x)=>s+Number(x.Debit||0),0),[otherTransferRows]);
   const byCategory=useMemo(()=>{
     const x={"Travel":0,"Hotel":0,"Food":0,"Misc / Other":0};
@@ -170,6 +171,7 @@ export default function PartnerStaffStatement(){
       ["From",from||"Start"],["To",to||"Latest"],
       ["Total Personal Expenses",expenseTotal.toFixed(2)],
       ["Expense Reimbursed",reimbursedTotal.toFixed(2)],
+      ["Balance Due",reimbursementBalance.toFixed(2)],
       ["Other Transfers / Advances",otherTransferTotal.toFixed(2)],
       ["Current Ledger Balance",closing],
       [],["EXPENSE HISTORY"],
@@ -198,7 +200,9 @@ export default function PartnerStaffStatement(){
       <div class="muted">${esc(person)} · ${esc(from||"Start")} to ${esc(to||"Latest")}</div>
       <div class="cards">
         <div class="c">Personal Expenses<div class="v">${esc(fmt(expenseTotal))}</div></div>
-        <div class="c">Expense Reimbursed<div class="v">${esc(fmt(reimbursedTotal))}</div></div><div class="c">Other Transfers / Advances<div class="v">${esc(fmt(otherTransferTotal))}</div></div>
+        <div class="c">Expense Reimbursed<div class="v">${esc(fmt(reimbursedTotal))}</div></div>
+        <div class="c">Balance Due<div class="v">${esc(fmt(reimbursementBalance))}</div></div>
+        <div class="c">Other Transfers / Advances<div class="v">${esc(fmt(otherTransferTotal))}</div></div>
         <div class="c">Current Ledger Balance<div class="v">${esc(closing)}</div></div>
         <div class="c">Travel<div class="v">${esc(fmt(byCategory.Travel))}</div></div>
         <div class="c">Hotel<div class="v">${esc(fmt(byCategory.Hotel))}</div></div>
@@ -230,8 +234,23 @@ export default function PartnerStaffStatement(){
 
     {loading?<div style={card}>Loading...</div>:<>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:".7rem"}}>
-        <div style={toneCard()}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>PERSONAL EXPENSES</div><div style={toneValue("neutral")}>{fmt(expenseTotal)}</div></div>
-        <div style={toneCard("green")}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>EXPENSE REIMBURSED</div><div style={toneValue("green")}>{fmt(reimbursedTotal)}</div></div>
+        <div style={{...toneCard(),gridColumn:"span 2",padding:"1rem 1.1rem"}}>
+          <div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:800,marginBottom:".7rem"}}>EXPENSE SETTLEMENT</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(120px,1fr))",gap:".8rem"}}>
+            <div>
+              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>PERSONAL EXPENSES</div>
+              <div style={toneValue("neutral")}>{fmt(expenseTotal)}</div>
+            </div>
+            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".8rem"}}>
+              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>EXPENSE REIMBURSED</div>
+              <div style={toneValue("green")}>{fmt(reimbursedTotal)}</div>
+            </div>
+            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".8rem"}}>
+              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>BALANCE DUE</div>
+              <div style={toneValue(reimbursementBalance>0?"amber":"green")}>{fmt(reimbursementBalance)}</div>
+            </div>
+          </div>
+        </div>
         <div style={toneCard("amber")}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>OTHER TRANSFERS / ADVANCES</div><div style={toneValue("amber")}>{fmt(otherTransferTotal)}</div></div>
         {[["Travel",byCategory.Travel],["Hotel",byCategory.Hotel],["Food",byCategory.Food],["Misc / Other",byCategory["Misc / Other"]]].map(([k,v])=><div key={k} style={toneCard()}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>{k.toUpperCase()}</div><div style={toneValue("neutral")}>{fmt(v)}</div></div>)}
         <div style={toneCard(closingRow?.BalanceSide==="Cr"?"amber":"blue")}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>CURRENT LEDGER BALANCE</div><div style={toneValue(closingRow?.BalanceSide==="Cr"?"amber":"blue")}>{closing}</div></div>
