@@ -132,6 +132,11 @@ export default function Expenses(){
   const gstTotal=Number(form.CGSTAmount||0)+Number(form.SGSTAmount||0)+Number(form.IGSTAmount||0);
   const set=(k,v)=>setForm(p=>({...p,[k]:v}));
 
+  function changeFromDate(value){
+    setFromDate(value);
+    setToDate(value||"");
+  }
+
   function inferPayerType(name){
     return staffNames.includes(name)?"Staff":"Partner";
   }
@@ -299,8 +304,8 @@ export default function Expenses(){
     </div>
 
     <div style={{...card,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".7rem",alignItems:"end"}}>
-      <div><label style={label}>From</label><input style={inp} type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)}/></div>
-      <div><label style={label}>To</label><input style={inp} type="date" value={toDate} onChange={e=>setToDate(e.target.value)}/></div>
+      <div><label style={label}>From</label><input style={inp} type="date" value={fromDate} onChange={e=>changeFromDate(e.target.value)}/></div>
+      <div><label style={label}>To</label><input style={inp} type="date" min={fromDate||undefined} value={toDate} onChange={e=>setToDate(e.target.value)}/></div>
       <div><label style={label}>Paid By</label><select style={inp} value={filterPerson} onChange={e=>setFilterPerson(e.target.value)}><option value="">All people</option>{allPeople.map(x=><option key={x}>{x}</option>)}</select></div>
       <div><label style={label}>Status</label><select style={inp} value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}><option value="">All statuses</option>{["Draft","Submitted","Approved","Reimbursed"].map(x=><option key={x}>{x}</option>)}</select></div>
       <div style={{gridColumn:"span 2"}}><label style={label}>Search</label><input style={inp} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Type, category, vendor, description..."/></div>
