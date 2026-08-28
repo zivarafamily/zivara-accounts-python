@@ -2,14 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "../api/client";
 import { useLLP } from "../context/LLPContext";
 
-const card={background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:"1rem",height:"100%",boxSizing:"border-box"};
+const card={background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:"1rem"};
 const inp={width:"100%",boxSizing:"border-box",padding:".55rem .7rem",background:"var(--input)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:"6px"};
 const btn=(p=false)=>({padding:".55rem .9rem",borderRadius:"6px",cursor:"pointer",fontWeight:650,border:p?"none":"1px solid var(--border)",background:p?"var(--accent)":"transparent",color:p?"#fff":"var(--muted)"});
 const toneCard=(tone="neutral")=>({...card,borderColor:tone==="green"?"#22c55e66":tone==="amber"?"#f59e0b66":tone==="blue"?"#38bdf866":"var(--border)",background:tone==="green"?"#22c55e12":tone==="amber"?"#f59e0b12":tone==="blue"?"#38bdf812":"var(--card)"});
-const toneValue=tone=>({fontSize:"1rem",fontWeight:800,marginTop:".15rem",color:tone==="green"?"#4ade80":tone==="amber"?"#fbbf24":tone==="blue"?"#38bdf8":"var(--text)",lineHeight:1.15,wordBreak:"break-word"});
-const labelStyle={fontSize:".62rem",color:"var(--muted)",fontWeight:700,letterSpacing:".02em",textTransform:"uppercase"};
-const settleValue=tone=>({fontSize:".92rem",fontWeight:800,marginTop:".12rem",color:tone==="green"?"#4ade80":tone==="amber"?"#fbbf24":tone==="blue"?"#38bdf8":"var(--text)",lineHeight:1.15,whiteSpace:"nowrap"});
-const settleLabel={fontSize:".58rem",color:"var(--muted)",fontWeight:700,letterSpacing:".02em",textTransform:"uppercase"};
+const toneValue=tone=>({fontSize:"1.12rem",fontWeight:800,marginTop:".2rem",color:tone==="green"?"#4ade80":tone==="amber"?"#fbbf24":tone==="blue"?"#38bdf8":"var(--text)"});
 const fmt=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
 const fyStart="2026-04-01";
 const esc=s=>String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
@@ -24,6 +21,15 @@ const getPurpose=text=>{
   return "Advance / Transfer";
 };
 const cleanNarration=text=>String(text||"").replace(/\s*\[Purpose:\s*[^\]]+\]\s*/ig," ").replace(/\s+/g," ").trim();
+const journalMeta=(text,label)=>{
+  const m=String(text||"").match(new RegExp(`\\[${label}:\\s*([^\\]]+)\\]`,"i"));
+  return m?m[1].trim():"";
+};
+const cleanJournalMeta=text=>String(text||"")
+  .replace(/\s*\[JournalType:\s*[^\]]+\]/ig,"")
+  .replace(/\s*\[From:\s*[^\]]+\]/ig,"")
+  .replace(/\s*\[To:\s*[^\]]+\]/ig,"")
+  .replace(/\s+/g," ").trim();
 
 function bucket(expense){
   const t=String(expense.ExpenseType||"").trim().toLowerCase();
@@ -130,12 +136,36 @@ export default function PartnerStaffStatement(){
     return {...r,_bank:bank,_purpose:getPurpose(narration),_narration:cleanNarration(narration)};
   }).sort((a,b)=>String(b.Date||"").localeCompare(String(a.Date||""))),[statement,bankRows,from,to,personLedger]);
 
+  const managementJournals=useMemo(()=>statement.filter(r=>{
+    const d=String(r.Date||"").slice(0,10);
+    const source=String(r.SourceType||"").toLowerCase(),voucher=String(r.VoucherType||"").toLowerCase();
+    if(!(source==="manual"||voucher==="journal"))return false;
+    if(from&&d<from)return false;if(to&&d>to)return false;
+    return true;
+  }).map(r=>{
+    const text=String(r.Narration||r.Particulars||"");
+    let type=journalMeta(text,"JournalType");
+    if(!type){
+      const n=text.toLowerCase();
+      type=n.includes("refund")||n.includes("cancel")?"Refund / Cancellation":
+        ((n.includes("paid to")||n.includes(" paid "))&&(n.includes("dinu")||n.includes("manu")||n.includes("manugopal")))?"Inter-person Settlement":
+        n.includes("opening")?"Opening Adjustment":"General Adjustment";
+    }
+    return {...r,_journalType:type,_from:journalMeta(text,"From"),_to:journalMeta(text,"To"),_clean:cleanJournalMeta(text)};
+  }),[statement,from,to]);
+
+  const refundTotal=useMemo(()=>managementJournals.filter(r=>r._journalType==="Refund / Cancellation"&&Number(r.Debit||0)>0).reduce((a,r)=>a+Number(r.Debit||0),0),[managementJournals]);
+  const receivedFromPersonTotal=useMemo(()=>managementJournals.filter(r=>r._journalType==="Inter-person Settlement"&&Number(r.Debit||0)>0).reduce((a,r)=>a+Number(r.Debit||0),0),[managementJournals]);
+  const paidToPersonTotal=useMemo(()=>managementJournals.filter(r=>r._journalType==="Inter-person Settlement"&&Number(r.Credit||0)>0).reduce((a,r)=>a+Number(r.Credit||0),0),[managementJournals]);
+  const otherAdjustmentNet=useMemo(()=>managementJournals.filter(r=>!["Refund / Cancellation","Inter-person Settlement"].includes(r._journalType)).reduce((a,r)=>a+Number(r.Credit||0)-Number(r.Debit||0),0),[managementJournals]);
+
   const reimbursementRows=useMemo(()=>repayments.filter(r=>r._purpose==="Expense Reimbursement"),[repayments]);
   const otherTransferRows=useMemo(()=>repayments.filter(r=>r._purpose!=="Expense Reimbursement"),[repayments]);
 
   const expenseTotal=useMemo(()=>personExpenses.reduce((s,x)=>s+Number(x.Amount||0),0),[personExpenses]);
   const reimbursedTotal=useMemo(()=>reimbursementRows.reduce((s,x)=>s+Number(x.Debit||0),0),[reimbursementRows]);
-  const reimbursementBalance=Math.max(0,expenseTotal-reimbursedTotal);
+  const managementBalance=expenseTotal-reimbursedTotal-refundTotal-receivedFromPersonTotal+paidToPersonTotal+otherAdjustmentNet;
+  const reimbursementBalance=Math.max(0,managementBalance);
   const otherTransferTotal=useMemo(()=>otherTransferRows.reduce((s,x)=>s+Number(x.Debit||0),0),[otherTransferRows]);
   const byCategory=useMemo(()=>{
     const x={"Travel":0,"Hotel":0,"Food":0,"Misc / Other":0};
@@ -144,6 +174,7 @@ export default function PartnerStaffStatement(){
   },[personExpenses]);
 
   const opening=Number(personLedger?.OpeningBalance||0);
+  const openingSigned=(personLedger?.OpeningSide==="Cr"?opening:-opening);
   const closingRow=statement.length?statement[statement.length-1]:null;
   const closing=closingRow?`${fmt(closingRow.RunningBalance)} ${closingRow.BalanceSide}`:personLedger?`${fmt(opening)} ${personLedger.OpeningSide}`:"—";
 
@@ -172,8 +203,12 @@ export default function PartnerStaffStatement(){
       ["Partner / Staff Statement",person],
       ["From",from||"Start"],["To",to||"Latest"],
       ["Total Personal Expenses",expenseTotal.toFixed(2)],
-      ["Expense Reimbursed",reimbursedTotal.toFixed(2)],
-      ["Balance Due",reimbursementBalance.toFixed(2)],
+      ["Paid Directly by Zivara",reimbursedTotal.toFixed(2)],
+      ["Refunds / Cancellations",refundTotal.toFixed(2)],
+      ["Received from Another Person",receivedFromPersonTotal.toFixed(2)],
+      ["Paid to Another Person",paidToPersonTotal.toFixed(2)],
+      ["Other Adjustments Net",otherAdjustmentNet.toFixed(2)],
+      ["Management Net Due",reimbursementBalance.toFixed(2)],
       ["Other Transfers / Advances",otherTransferTotal.toFixed(2)],
       ["Current Ledger Balance",closing],
       [],["EXPENSE HISTORY"],
@@ -235,44 +270,47 @@ export default function PartnerStaffStatement(){
     </div>
 
     {loading?<div style={card}>Loading...</div>:<>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(12,minmax(0,1fr))",gap:".7rem",alignItems:"stretch"}}>
-        <div style={{...toneCard(),gridColumn:"span 6",minHeight:108,padding:".85rem 1rem",display:"flex",flexDirection:"column"}}>
-          <div style={{...settleLabel,marginBottom:".55rem"}}>Expense Settlement</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:".55rem",flex:1,alignItems:"end"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:".7rem"}}>
+        <div style={{...toneCard(),gridColumn:"span 2",padding:"1rem 1.1rem"}}>
+          <div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:800,marginBottom:".7rem"}}>EXPENSE SETTLEMENT</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(120px,1fr))",gap:".8rem"}}>
             <div>
-              <div style={settleLabel}>Personal Expenses</div>
-              <div style={settleValue("neutral")}>{fmt(expenseTotal)}</div>
+              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>PERSONAL EXPENSES</div>
+              <div style={toneValue("neutral")}>{fmt(expenseTotal)}</div>
             </div>
-            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".55rem"}}>
-              <div style={settleLabel}>Expense Reimbursed</div>
-              <div style={settleValue("green")}>{fmt(reimbursedTotal)}</div>
+            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".8rem"}}>
+              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>EXPENSE REIMBURSED</div>
+              <div style={toneValue("green")}>{fmt(reimbursedTotal)}</div>
             </div>
-            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".55rem"}}>
-              <div style={settleLabel}>Balance Due</div>
-              <div style={settleValue(reimbursementBalance>0?"amber":"green")}>{fmt(reimbursementBalance)}</div>
+            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".8rem"}}>
+              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>BALANCE DUE</div>
+              <div style={toneValue(reimbursementBalance>0?"amber":"green")}>{fmt(reimbursementBalance)}</div>
             </div>
           </div>
         </div>
+        <div style={toneCard("amber")}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>OTHER TRANSFERS / ADVANCES</div><div style={toneValue("amber")}>{fmt(otherTransferTotal)}</div></div>
+        {[["Travel",byCategory.Travel],["Hotel",byCategory.Hotel],["Food",byCategory.Food],["Misc / Other",byCategory["Misc / Other"]]].map(([k,v])=><div key={k} style={toneCard()}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>{k.toUpperCase()}</div><div style={toneValue("neutral")}>{fmt(v)}</div></div>)}
+        <div style={toneCard(closingRow?.BalanceSide==="Cr"?"amber":"blue")}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>CURRENT LEDGER BALANCE</div><div style={toneValue(closingRow?.BalanceSide==="Cr"?"amber":"blue")}>{closing}</div></div>
+      </div>
 
-        <div style={{...toneCard("amber"),gridColumn:"span 3",minHeight:118,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
-          <div style={labelStyle}>Other Transfers / Advances</div>
-          <div style={toneValue("amber")}>{fmt(otherTransferTotal)}</div>
+      <div style={{...card,padding:"1rem"}}>
+        <div style={{fontWeight:800,marginBottom:".75rem"}}>Settlement Reconciliation · {person}</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:".65rem"}}>
+          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>PERSONALLY SPENT</div><strong>{fmt(expenseTotal)}</strong></div>
+          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>LESS: REFUNDS</div><strong>{fmt(refundTotal)}</strong></div>
+          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>LESS: RECEIVED FROM PERSON</div><strong>{fmt(receivedFromPersonTotal)}</strong></div>
+          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>LESS: PAID BY ZIVARA</div><strong>{fmt(reimbursedTotal)}</strong></div>
+          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>ADD: PAID TO ANOTHER PERSON</div><strong>{fmt(paidToPersonTotal)}</strong></div>
+          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>OTHER ADJUSTMENTS NET</div><strong>{fmt(otherAdjustmentNet)}</strong></div>
+          <div style={{padding:".6rem",border:"1px solid var(--border)",borderRadius:"7px"}}><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:800}}>MANAGEMENT NET DUE</div><div style={{fontSize:"1.05rem",fontWeight:850,marginTop:".15rem"}}>{fmt(reimbursementBalance)}</div></div>
+          <div style={{padding:".6rem",border:"1px solid var(--border)",borderRadius:"7px"}}><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:800}}>ACCOUNTING LEDGER BALANCE</div><div style={{fontSize:"1.05rem",fontWeight:850,marginTop:".15rem"}}>{closing}</div></div>
         </div>
-
-        <div style={{...toneCard(closingRow?.BalanceSide==="Cr"?"amber":"blue"),gridColumn:"span 3",minHeight:118,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
-          <div style={labelStyle}>Current Ledger Balance</div>
-          <div style={toneValue(closingRow?.BalanceSide==="Cr"?"amber":"blue")}>{closing}</div>
-        </div>
-
-        {[["Travel",byCategory.Travel],["Hotel",byCategory.Hotel],["Food",byCategory.Food],["Misc / Other",byCategory["Misc / Other"]]].map(([k,v])=>(
-          <div key={k} style={{...toneCard(),gridColumn:"span 3",minHeight:92,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
-            <div style={labelStyle}>{k}</div>
-            <div style={toneValue("neutral")}>{fmt(v)}</div>
-          </div>
-        ))}
+        <div style={{fontSize:".72rem",color:"var(--muted)",marginTop:".7rem"}}>Management Net Due explains who actually spent, received refunds, received money from another person, or was paid by Zivara. Accounting Ledger Balance remains the final control balance.</div>
       </div>
 
       <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Expense History · {personExpenses.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Status</th></tr></thead><tbody>{personExpenses.length?personExpenses.map(e=><tr key={e.ExpenseID}><td>{dmy(e.Date)}</td><td>{bucket(e)}</td><td>{e.Description||e.VendorOrPerson||"—"}</td><td style={{fontWeight:700}}>{fmt(e.Amount)}</td><td>{e.PaidBy||"—"}</td><td>{e.Status||"—"}</td></tr>):<tr><td colSpan="6" style={{padding:"1.5rem",textAlign:"center"}}>No expenses for the selected filters.</td></tr>}</tbody></table></div></div>
+
+      <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Refund / Inter-person / Adjustment History · {managementJournals.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th>Narration</th><th>Debit</th><th>Credit</th></tr></thead><tbody>{managementJournals.length?managementJournals.map((r,i)=><tr key={`${r.JournalID}-${i}`}><td>{dmy(r.Date)}</td><td>{r._journalType}</td><td>{r._from||"—"}</td><td>{r._to||"—"}</td><td>{r._clean||"—"}</td><td>{Number(r.Debit||0)>0?fmt(r.Debit):"—"}</td><td>{Number(r.Credit||0)>0?fmt(r.Credit):"—"}</td></tr>):<tr><td colSpan="7" style={{padding:"1.5rem",textAlign:"center"}}>No refund or inter-person journal entries in the selected period.</td></tr>}</tbody></table></div></div>
 
       <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Repayment / Transfer History · {repayments.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Reference / UTR</th><th>Narration</th><th>Purpose</th><th>Amount</th></tr></thead><tbody>{repayments.length?repayments.map((r,i)=><tr key={`${r.JournalID}-${i}`}><td>{dmy(r.Date)}</td><td>{r._bank?.ReferenceID||r.VoucherNo||r.SourceID||"—"}</td><td>{r._narration||"—"}</td><td><select style={{...inp,minWidth:190}} value={r._purpose} disabled={!r._bank} onChange={e=>markPurpose(r,e.target.value)}>{PURPOSES.map(x=><option key={x}>{x}</option>)}</select></td><td style={{fontWeight:700}}>{fmt(r.Debit)}</td></tr>):<tr><td colSpan="5" style={{padding:"1.5rem",textAlign:"center"}}>No bank/cash transfers found in the selected period.</td></tr>}</tbody></table></div></div>
 
