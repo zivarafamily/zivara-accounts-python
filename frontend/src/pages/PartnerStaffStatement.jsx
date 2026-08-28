@@ -164,7 +164,9 @@ export default function PartnerStaffStatement(){
 
   const expenseTotal=useMemo(()=>personExpenses.reduce((s,x)=>s+Number(x.Amount||0),0),[personExpenses]);
   const reimbursedTotal=useMemo(()=>reimbursementRows.reduce((s,x)=>s+Number(x.Debit||0),0),[reimbursementRows]);
-  const managementBalance=expenseTotal-reimbursedTotal-refundTotal-receivedFromPersonTotal+paidToPersonTotal+otherAdjustmentNet;
+  const ownClaimAfterRefunds=expenseTotal-refundTotal-receivedFromPersonTotal+otherAdjustmentNet;
+  const totalClaimBeforeZivara=ownClaimAfterRefunds+paidToPersonTotal;
+  const managementBalance=totalClaimBeforeZivara-reimbursedTotal;
   const reimbursementBalance=Math.max(0,managementBalance);
   const otherTransferTotal=useMemo(()=>otherTransferRows.reduce((s,x)=>s+Number(x.Debit||0),0),[otherTransferRows]);
   const byCategory=useMemo(()=>{
@@ -202,13 +204,14 @@ export default function PartnerStaffStatement(){
     const rows=[
       ["Partner / Staff Statement",person],
       ["From",from||"Start"],["To",to||"Latest"],
-      ["Total Personal Expenses",expenseTotal.toFixed(2)],
+      ["Own Expenses Paid Personally",expenseTotal.toFixed(2)],
       ["Paid Directly by Zivara",reimbursedTotal.toFixed(2)],
       ["Refunds / Cancellations",refundTotal.toFixed(2)],
       ["Received from Another Person",receivedFromPersonTotal.toFixed(2)],
       ["Paid to Another Person",paidToPersonTotal.toFixed(2)],
       ["Other Adjustments Net",otherAdjustmentNet.toFixed(2)],
-      ["Management Net Due",reimbursementBalance.toFixed(2)],
+      ["Total Claim Before Zivara Payment",totalClaimBeforeZivara.toFixed(2)],
+      ["Net Amount Due",reimbursementBalance.toFixed(2)],
       ["Other Transfers / Advances",otherTransferTotal.toFixed(2)],
       ["Current Ledger Balance",closing],
       [],["EXPENSE HISTORY"],
@@ -270,40 +273,29 @@ export default function PartnerStaffStatement(){
     </div>
 
     {loading?<div style={card}>Loading...</div>:<>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:".8rem",alignItems:"stretch"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(330px,1fr))",gap:".8rem",alignItems:"stretch"}}>
         <div style={{...card,padding:"1rem 1.1rem",minWidth:0}}>
-          <div style={{fontWeight:800,fontSize:".9rem",marginBottom:".8rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{person} · Settlement Summary</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(135px,1fr))",gap:".8rem"}}>
-            <div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>PERSONALLY SPENT</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",overflowWrap:"anywhere"}}>{fmt(expenseTotal)}</div></div>
-            <div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>LESS: REFUNDS / CANCELLATIONS</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",color:"#4ade80",overflowWrap:"anywhere"}}>{fmt(refundTotal)}</div></div>
-            <div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>LESS: RECEIVED FROM ANOTHER PERSON</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",color:"#4ade80",overflowWrap:"anywhere"}}>{fmt(receivedFromPersonTotal)}</div></div>
-            <div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>LESS: PAID DIRECTLY BY ZIVARA</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",color:"#4ade80",overflowWrap:"anywhere"}}>{fmt(reimbursedTotal)}</div></div>
-            {paidToPersonTotal>0&&<div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>ADD: PAID TO ANOTHER PERSON</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",color:"#fbbf24",overflowWrap:"anywhere"}}>{fmt(paidToPersonTotal)}</div></div>}
-            {Math.abs(otherAdjustmentNet)>0.005&&<div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>OTHER ADJUSTMENTS NET</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",overflowWrap:"anywhere"}}>{fmt(Math.abs(otherAdjustmentNet))}</div></div>}
+          <div style={{fontWeight:800,fontSize:".92rem",marginBottom:".8rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{person} · Settlement Summary</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:".8rem"}}>
+            <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>OWN EXPENSES PAID PERSONALLY</div><div style={{fontSize:"1rem",fontWeight:800,marginTop:".15rem"}}>{fmt(expenseTotal)}</div></div>
+            <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>LESS: REFUNDS / CANCELLATIONS</div><div style={{fontSize:"1rem",fontWeight:800,marginTop:".15rem",color:"#4ade80"}}>{fmt(refundTotal)}</div></div>
+            {receivedFromPersonTotal>0&&<div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>LESS: RECEIVED FROM ANOTHER PERSON</div><div style={{fontSize:"1rem",fontWeight:800,marginTop:".15rem",color:"#4ade80"}}>{fmt(receivedFromPersonTotal)}</div></div>}
+            {paidToPersonTotal>0&&<div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>ADD: PAID TO ANOTHER PERSON ON BEHALF OF ZIVARA</div><div style={{fontSize:"1rem",fontWeight:800,marginTop:".15rem",color:"#fbbf24"}}>{fmt(paidToPersonTotal)}</div></div>}
+            {Math.abs(otherAdjustmentNet)>0.005&&<div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>OTHER ADJUSTMENTS NET</div><div style={{fontSize:"1rem",fontWeight:800,marginTop:".15rem"}}>{fmt(Math.abs(otherAdjustmentNet))}</div></div>}
           </div>
-          <div style={{marginTop:".9rem",paddingTop:".8rem",borderTop:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",gap:".8rem",flexWrap:"wrap"}}>
-            <div style={{minWidth:0}}>
-              <div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>NET AMOUNT DUE TO {String(person||"").toUpperCase()}</div>
-              <div style={{fontSize:"1.3rem",fontWeight:850,color:"#fbbf24",marginTop:".12rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{fmt(reimbursementBalance)}</div>
-            </div>
-            <div style={{fontSize:".72rem",fontWeight:700,color:"var(--success)",lineHeight:1.35,whiteSpace:"normal",overflowWrap:"anywhere",maxWidth:300}}>
-              ✓ Reconciled with ledger · {closing}
-            </div>
+          <div style={{marginTop:".85rem",padding:".75rem",border:"1px solid var(--border)",borderRadius:"8px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:".75rem"}}>
+            <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3}}>TOTAL CLAIM BEFORE ZIVARA PAYMENT</div><div style={{fontSize:"1.08rem",fontWeight:850,marginTop:".15rem"}}>{fmt(Math.max(0,totalClaimBeforeZivara))}</div></div>
+            <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3}}>LESS: PAID DIRECTLY BY ZIVARA</div><div style={{fontSize:"1.08rem",fontWeight:850,marginTop:".15rem",color:"#4ade80"}}>{fmt(reimbursedTotal)}</div></div>
+            <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3}}>NET AMOUNT DUE</div><div style={{fontSize:"1.28rem",fontWeight:900,marginTop:".12rem",color:reimbursementBalance>0?"#fbbf24":"#4ade80"}}>{fmt(reimbursementBalance)}</div></div>
           </div>
+          <div style={{marginTop:".7rem",fontSize:".72rem",color:"var(--success)",fontWeight:700,lineHeight:1.4,whiteSpace:"normal",overflowWrap:"anywhere"}}>Accounting ledger control balance: {closing}</div>
         </div>
-
         <div style={{...card,padding:"1rem 1.1rem",minWidth:0}}>
-          <div style={{fontWeight:800,fontSize:".9rem",marginBottom:".8rem"}}>Expense Mix</div>
+          <div style={{fontWeight:800,fontSize:".92rem",marginBottom:".8rem"}}>Expense Mix</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:".9rem"}}>
-            {[["Travel",byCategory.Travel],["Hotel",byCategory.Hotel],["Food",byCategory.Food],["Misc / Other",byCategory["Misc / Other"]]].map(([k,v])=><div key={k} style={{minWidth:0}}>
-              <div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>{k.toUpperCase()}</div>
-              <div style={{fontSize:"1rem",fontWeight:800,marginTop:".15rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{fmt(v)}</div>
-            </div>)}
+            {[["Travel",byCategory.Travel],["Hotel",byCategory.Hotel],["Food",byCategory.Food],["Misc / Other",byCategory["Misc / Other"]]].map(([k,v])=><div key={k} style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>{k.toUpperCase()}</div><div style={{fontSize:"1rem",fontWeight:800,marginTop:".15rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{fmt(v)}</div></div>)}
           </div>
-          {otherTransferTotal>0&&<div style={{marginTop:".9rem",paddingTop:".75rem",borderTop:"1px solid var(--border)",minWidth:0}}>
-            <div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>OTHER TRANSFERS / ADVANCES</div>
-            <div style={{fontSize:"1rem",fontWeight:800,color:"#fbbf24",marginTop:".15rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{fmt(otherTransferTotal)}</div>
-          </div>}
+          {otherTransferTotal>0&&<div style={{marginTop:".9rem",paddingTop:".75rem",borderTop:"1px solid var(--border)"}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700}}>OTHER TRANSFERS / ADVANCES</div><div style={{fontSize:"1rem",fontWeight:800,color:"#fbbf24",marginTop:".15rem"}}>{fmt(otherTransferTotal)}</div></div>}
         </div>
       </div>
 
