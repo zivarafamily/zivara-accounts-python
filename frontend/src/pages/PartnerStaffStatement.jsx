@@ -201,58 +201,54 @@ export default function PartnerStaffStatement(){
 
   function exportExcel(){
     if(!person)return;
-    const rows=[
-      ["Partner / Staff Statement",person],
-      ["From",from||"Start"],["To",to||"Latest"],
-      ["Own Expenses Paid Personally",expenseTotal.toFixed(2)],
-      ["Paid Directly by Zivara",reimbursedTotal.toFixed(2)],
-      ["Refunds / Cancellations",refundTotal.toFixed(2)],
-      ["Received from Another Person",receivedFromPersonTotal.toFixed(2)],
-      ["Paid to Another Person",paidToPersonTotal.toFixed(2)],
-      ["Other Adjustments Net",otherAdjustmentNet.toFixed(2)],
-      ["Total Claim Before Zivara Payment",totalClaimBeforeZivara.toFixed(2)],
-      ["Net Amount Due",reimbursementBalance.toFixed(2)],
-      ["Other Transfers / Advances",otherTransferTotal.toFixed(2)],
-      ["Current Ledger Balance",closing],
-      [],["EXPENSE HISTORY"],
-      ["Date","Category","Description","Amount","Paid By","Status"],
-      ...personExpenses.map(e=>[dmy(e.Date),bucket(e),e.Description||e.VendorOrPerson||"",Number(e.Amount||0).toFixed(2),e.PaidBy||"",e.Status||""]),
-      [],["REPAYMENT / TRANSFER HISTORY"],
-      ["Date","Reference / UTR","Narration","Purpose","Amount"],
-      ...repayments.map(r=>[dmy(r.Date),r._bank?.ReferenceID||r.VoucherNo||r.SourceID||"",r._narration||"",r._purpose,Number(r.Debit||0).toFixed(2)])
-    ];
-    const table=`<table>${rows.map(r=>`<tr>${r.map(v=>`<td>${esc(v)}</td>`).join("")}</tr>`).join("")}</table>`;
-    const blob=new Blob([`<html><head><meta charset="utf-8"></head><body>${table}</body></html>`],{type:"application/vnd.ms-excel;charset=utf-8"});
-    const url=URL.createObjectURL(blob),a=document.createElement("a");
-    a.href=url;a.download=`${person.replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-expense-statement.xls`;
-    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    const n=x=>Number(x||0).toFixed(2);
+    const html=`<html><head><meta charset="utf-8"><style>
+      body{font-family:Arial;font-size:11pt}table{border-collapse:collapse;margin-bottom:16px}
+      td,th{border:1px solid #bbb;padding:6px 8px;vertical-align:top}th{background:#e9edf3;text-align:left}
+      .title{font-size:16pt;font-weight:700;border:none}.section{font-weight:700;background:#e9edf3}
+      .amt{text-align:right;mso-number-format:"₹"#,##0.00}.total{font-weight:700;background:#f3f5f7}.net{font-weight:800;background:#fff2cc}
+    </style></head><body>
+    <table><tr><td class="title" colspan="2">${esc(person)} — Partner / Staff Settlement Statement</td></tr><tr><td>From</td><td>${esc(dmy(from)||"Start")}</td></tr><tr><td>To</td><td>${esc(dmy(to)||"Latest")}</td></tr></table>
+    <table><tr><td class="section" colspan="2">Settlement Summary</td></tr>
+      <tr><td>Own Expenses Paid Personally</td><td class="amt">${n(expenseTotal)}</td></tr>
+      <tr><td>Less: Refunds / Cancellations</td><td class="amt">${n(refundTotal)}</td></tr>
+      <tr><td>Less: Received from Another Person</td><td class="amt">${n(receivedFromPersonTotal)}</td></tr>
+      <tr><td>Add: Paid to Another Person on behalf of Zivara</td><td class="amt">${n(paidToPersonTotal)}</td></tr>
+      ${Math.abs(otherAdjustmentNet)>0.005?`<tr><td>Other Adjustments Net</td><td class="amt">${n(otherAdjustmentNet)}</td></tr>`:""}
+      <tr class="total"><td>Total Claim Before Zivara Payment</td><td class="amt">${n(totalClaimBeforeZivara)}</td></tr>
+      <tr><td>Less: Paid Directly by Zivara</td><td class="amt">${n(reimbursedTotal)}</td></tr>
+      <tr class="net"><td>NET AMOUNT DUE</td><td class="amt">${n(reimbursementBalance)}</td></tr>
+    </table>
+    <table><tr><td class="section" colspan="2">Expense Mix</td></tr><tr><td>Travel</td><td class="amt">${n(byCategory.Travel)}</td></tr><tr><td>Hotel</td><td class="amt">${n(byCategory.Hotel)}</td></tr><tr><td>Food</td><td class="amt">${n(byCategory.Food)}</td></tr><tr><td>Misc / Other</td><td class="amt">${n(byCategory["Misc / Other"])}</td></tr>${otherTransferTotal>0?`<tr><td>Other Transfers / Advances</td><td class="amt">${n(otherTransferTotal)}</td></tr>`:""}</table>
+    <table><tr><td class="section" colspan="6">Expense Transactions</td></tr><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Status</th></tr>${personExpenses.map(e=>`<tr><td>${esc(dmy(e.Date))}</td><td>${esc(bucket(e))}</td><td>${esc(e.Description||e.VendorOrPerson||"")}</td><td class="amt">${n(e.Amount)}</td><td>${esc(e.PaidBy||"")}</td><td>${esc(e.Status||"")}</td></tr>`).join("")}</table>
+    <table><tr><td class="section" colspan="7">Refund / Inter-person / Adjustment Transactions</td></tr><tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th>Narration</th><th>Debit</th><th>Credit</th></tr>${managementJournals.length?managementJournals.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r._journalType)}</td><td>${esc(r._from||"")}</td><td>${esc(r._to||"")}</td><td>${esc(r._clean||"")}</td><td class="amt">${Number(r.Debit||0)>0?n(r.Debit):""}</td><td class="amt">${Number(r.Credit||0)>0?n(r.Credit):""}</td></tr>`).join(""):`<tr><td colspan="7">No journal settlement transactions</td></tr>`}</table>
+    <table><tr><td class="section" colspan="5">Zivara Payment / Transfer Transactions</td></tr><tr><th>Date</th><th>Reference / UTR</th><th>Narration</th><th>Purpose</th><th>Amount</th></tr>${repayments.length?repayments.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r._bank?.ReferenceID||r.VoucherNo||r.SourceID||"")}</td><td>${esc(r._narration||"")}</td><td>${esc(r._purpose)}</td><td class="amt">${n(r.Debit)}</td></tr>`).join(""):`<tr><td colspan="5">No Zivara payment / transfer transactions</td></tr>`}</table>
+    </body></html>`;
+    const blob=new Blob([html],{type:"application/vnd.ms-excel;charset=utf-8"}),url=URL.createObjectURL(blob),link=document.createElement("a");
+    link.href=url;link.download=`${person.replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-settlement-statement.xls`;document.body.appendChild(link);link.click();link.remove();URL.revokeObjectURL(url);
   }
 
   function exportPDF(){
     if(!person)return;
     const w=window.open("","_blank","width=1200,height=850");if(!w)return alert("Please allow pop-ups to export PDF.");
-    const expenseRows=personExpenses.map(e=>`<tr><td>${esc(dmy(e.Date))}</td><td>${esc(bucket(e))}</td><td>${esc(e.Description||e.VendorOrPerson||"")}</td><td class="n">${esc(fmt(e.Amount))}</td><td>${esc(e.Status||"")}</td></tr>`).join("");
-    const repayRows=repayments.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r._bank?.ReferenceID||r.VoucherNo||r.SourceID||"")}</td><td>${esc(r._narration||"")}</td><td>${esc(r._purpose)}</td><td class="n">${esc(fmt(r.Debit))}</td></tr>`).join("");
-    w.document.write(`<!doctype html><html><head><title>${esc(person)} Statement</title><style>
-      body{font-family:Arial,sans-serif;padding:20px;font-size:11px;color:#111}h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;margin-top:20px}.muted{color:#666}.cards{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0}.c{border:1px solid #bbb;padding:8px 12px;min-width:145px}.v{font-weight:700;font-size:13px;margin-top:3px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;vertical-align:top}th{background:#eee;text-align:left}.n{text-align:right;white-space:nowrap}@page{size:landscape;margin:10mm}
+    const expenseRows=personExpenses.map(e=>`<tr><td>${esc(dmy(e.Date))}</td><td>${esc(bucket(e))}</td><td>${esc(e.Description||e.VendorOrPerson||"")}</td><td class="num">${esc(fmt(e.Amount))}</td><td>${esc(e.Status||"")}</td></tr>`).join("");
+    const journalRows=managementJournals.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r._journalType)}</td><td>${esc(r._from||"—")}</td><td>${esc(r._to||"—")}</td><td>${esc(r._clean||"—")}</td><td class="num">${Number(r.Debit||0)>0?esc(fmt(r.Debit)):"—"}</td><td class="num">${Number(r.Credit||0)>0?esc(fmt(r.Credit)):"—"}</td></tr>`).join("");
+    const paymentRows=repayments.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r._bank?.ReferenceID||r.VoucherNo||r.SourceID||"")}</td><td>${esc(r._narration||"")}</td><td>${esc(r._purpose)}</td><td class="num">${esc(fmt(r.Debit))}</td></tr>`).join("");
+    w.document.write(`<!doctype html><html><head><title>${esc(person)} Settlement Statement</title><style>
+      @page{size:A4 landscape;margin:12mm}body{font-family:Arial,sans-serif;color:#111;font-size:10px;margin:0}h1{font-size:18px;margin:0 0 3px}h2{font-size:13px;margin:18px 0 7px;border-bottom:1px solid #777;padding-bottom:4px}
+      .summary{width:540px;max-width:100%;border-collapse:collapse;margin-top:8px}.summary td{padding:4px 2px;border:0}.summary td:last-child{text-align:right;font-weight:600}.summary .total td{padding-top:7px;border-top:1px solid #999;font-weight:700}.summary .net td{padding-top:7px;border-top:2px solid #222;font-size:12px;font-weight:800}
+      .mix{margin-top:10px;line-height:1.8}.mix span{margin-right:18px;white-space:nowrap}.txn{width:100%;border-collapse:collapse}.txn th,.txn td{border:1px solid #aaa;padding:4px 5px;vertical-align:top;line-height:1.3;overflow-wrap:anywhere;word-break:break-word}.txn th{background:#eee;text-align:left}.num{text-align:right;white-space:nowrap}
     </style></head><body>
-      <h1>Zivara Family Office LLP — Partner / Staff Expense Statement</h1>
-      <div class="muted">${esc(person)} · ${esc(from||"Start")} to ${esc(to||"Latest")}</div>
-      <div class="cards">
-        <div class="c">Personal Expenses<div class="v">${esc(fmt(expenseTotal))}</div></div>
-        <div class="c">Expense Reimbursed<div class="v">${esc(fmt(reimbursedTotal))}</div></div>
-        <div class="c">Balance Due<div class="v">${esc(fmt(reimbursementBalance))}</div></div>
-        <div class="c">Other Transfers / Advances<div class="v">${esc(fmt(otherTransferTotal))}</div></div>
-        <div class="c">Current Ledger Balance<div class="v">${esc(closing)}</div></div>
-        <div class="c">Travel<div class="v">${esc(fmt(byCategory.Travel))}</div></div>
-        <div class="c">Hotel<div class="v">${esc(fmt(byCategory.Hotel))}</div></div>
-        <div class="c">Food<div class="v">${esc(fmt(byCategory.Food))}</div></div>
-        <div class="c">Misc / Other<div class="v">${esc(fmt(byCategory["Misc / Other"]))}</div></div>
-      </div>
-      <h2>Expense History</h2><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead><tbody>${expenseRows||'<tr><td colspan="5">No expenses</td></tr>'}</tbody></table>
-      <h2>Repayment / Transfer History</h2><table><thead><tr><th>Date</th><th>Reference / UTR</th><th>Narration</th><th>Purpose</th><th>Amount</th></tr></thead><tbody>${repayRows||'<tr><td colspan="5">No transfers</td></tr>'}</tbody></table>
-      <script>window.onload=()=>window.print();<\/script>
-    </body></html>`);w.document.close();
+      <h1>Zivara Family Office LLP — Partner / Staff Settlement Statement</h1><div><strong>${esc(person)}</strong> · ${esc(dmy(from)||"Start")} to ${esc(dmy(to)||"Latest")}</div>
+      <h2>Settlement Summary</h2><table class="summary">
+        <tr><td>Own Expenses Paid Personally</td><td>${esc(fmt(expenseTotal))}</td></tr><tr><td>Less: Refunds / Cancellations</td><td>${esc(fmt(refundTotal))}</td></tr><tr><td>Less: Received from Another Person</td><td>${esc(fmt(receivedFromPersonTotal))}</td></tr><tr><td>Add: Paid to Another Person on behalf of Zivara</td><td>${esc(fmt(paidToPersonTotal))}</td></tr>
+        ${Math.abs(otherAdjustmentNet)>0.005?`<tr><td>Other Adjustments Net</td><td>${esc(fmt(otherAdjustmentNet))}</td></tr>`:""}<tr class="total"><td>Total Claim Before Zivara Payment</td><td>${esc(fmt(totalClaimBeforeZivara))}</td></tr><tr><td>Less: Paid Directly by Zivara</td><td>${esc(fmt(reimbursedTotal))}</td></tr><tr class="net"><td>NET AMOUNT DUE</td><td>${esc(fmt(reimbursementBalance))}</td></tr>
+      </table>
+      <div class="mix"><strong>Expense Mix:</strong> <span>Travel ${esc(fmt(byCategory.Travel))}</span><span>Hotel ${esc(fmt(byCategory.Hotel))}</span><span>Food ${esc(fmt(byCategory.Food))}</span><span>Misc / Other ${esc(fmt(byCategory["Misc / Other"]))}</span>${otherTransferTotal>0?`<span>Other Transfers / Advances ${esc(fmt(otherTransferTotal))}</span>`:""}</div>
+      <h2>Expense Transactions</h2><table class="txn"><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead><tbody>${expenseRows||'<tr><td colspan="5">No expense transactions</td></tr>'}</tbody></table>
+      <h2>Refund / Inter-person / Adjustment Transactions</h2><table class="txn"><thead><tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th>Narration</th><th>Debit</th><th>Credit</th></tr></thead><tbody>${journalRows||'<tr><td colspan="7">No journal settlement transactions</td></tr>'}</tbody></table>
+      <h2>Zivara Payment / Transfer Transactions</h2><table class="txn"><thead><tr><th>Date</th><th>Reference / UTR</th><th>Narration</th><th>Purpose</th><th>Amount</th></tr></thead><tbody>${paymentRows||'<tr><td colspan="5">No Zivara payment / transfer transactions</td></tr>'}</tbody></table>
+      <script>window.onload=()=>window.print()</script></body></html>`);w.document.close();
   }
 
   return <div style={{display:"flex",flexDirection:"column",gap:"1rem"}}>
