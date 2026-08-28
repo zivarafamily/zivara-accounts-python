@@ -270,49 +270,48 @@ export default function PartnerStaffStatement(){
     </div>
 
     {loading?<div style={card}>Loading...</div>:<>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:".7rem"}}>
-        <div style={{...toneCard(),gridColumn:"span 2",padding:"1rem 1.1rem"}}>
-          <div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:800,marginBottom:".7rem"}}>EXPENSE SETTLEMENT</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(120px,1fr))",gap:".8rem"}}>
-            <div>
-              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>PERSONAL EXPENSES</div>
-              <div style={toneValue("neutral")}>{fmt(expenseTotal)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:".8rem",alignItems:"stretch"}}>
+        <div style={{...card,padding:"1rem 1.1rem",minWidth:0}}>
+          <div style={{fontWeight:800,fontSize:".9rem",marginBottom:".8rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{person} · Settlement Summary</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(135px,1fr))",gap:".8rem"}}>
+            <div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>PERSONALLY SPENT</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",overflowWrap:"anywhere"}}>{fmt(expenseTotal)}</div></div>
+            <div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>LESS: REFUNDS / CANCELLATIONS</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",color:"#4ade80",overflowWrap:"anywhere"}}>{fmt(refundTotal)}</div></div>
+            <div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>LESS: RECEIVED FROM ANOTHER PERSON</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",color:"#4ade80",overflowWrap:"anywhere"}}>{fmt(receivedFromPersonTotal)}</div></div>
+            <div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>LESS: PAID DIRECTLY BY ZIVARA</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",color:"#4ade80",overflowWrap:"anywhere"}}>{fmt(reimbursedTotal)}</div></div>
+            {paidToPersonTotal>0&&<div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>ADD: PAID TO ANOTHER PERSON</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",color:"#fbbf24",overflowWrap:"anywhere"}}>{fmt(paidToPersonTotal)}</div></div>}
+            {Math.abs(otherAdjustmentNet)>0.005&&<div style={{minWidth:0}}><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>OTHER ADJUSTMENTS NET</div><div style={{fontWeight:800,fontSize:"1rem",marginTop:".15rem",overflowWrap:"anywhere"}}>{fmt(Math.abs(otherAdjustmentNet))}</div></div>}
+          </div>
+          <div style={{marginTop:".9rem",paddingTop:".8rem",borderTop:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",gap:".8rem",flexWrap:"wrap"}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>NET AMOUNT DUE TO {String(person||"").toUpperCase()}</div>
+              <div style={{fontSize:"1.3rem",fontWeight:850,color:"#fbbf24",marginTop:".12rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{fmt(reimbursementBalance)}</div>
             </div>
-            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".8rem"}}>
-              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>EXPENSE REIMBURSED</div>
-              <div style={toneValue("green")}>{fmt(reimbursedTotal)}</div>
-            </div>
-            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".8rem"}}>
-              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>BALANCE DUE</div>
-              <div style={toneValue(reimbursementBalance>0?"amber":"green")}>{fmt(reimbursementBalance)}</div>
+            <div style={{fontSize:".72rem",fontWeight:700,color:"var(--success)",lineHeight:1.35,whiteSpace:"normal",overflowWrap:"anywhere",maxWidth:300}}>
+              ✓ Reconciled with ledger · {closing}
             </div>
           </div>
         </div>
-        <div style={toneCard("amber")}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>OTHER TRANSFERS / ADVANCES</div><div style={toneValue("amber")}>{fmt(otherTransferTotal)}</div></div>
-        {[["Travel",byCategory.Travel],["Hotel",byCategory.Hotel],["Food",byCategory.Food],["Misc / Other",byCategory["Misc / Other"]]].map(([k,v])=><div key={k} style={toneCard()}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>{k.toUpperCase()}</div><div style={toneValue("neutral")}>{fmt(v)}</div></div>)}
-        <div style={toneCard(closingRow?.BalanceSide==="Cr"?"amber":"blue")}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>CURRENT LEDGER BALANCE</div><div style={toneValue(closingRow?.BalanceSide==="Cr"?"amber":"blue")}>{closing}</div></div>
-      </div>
 
-      <div style={{...card,padding:"1rem"}}>
-        <div style={{fontWeight:800,marginBottom:".75rem"}}>Settlement Reconciliation · {person}</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:".65rem"}}>
-          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>PERSONALLY SPENT</div><strong>{fmt(expenseTotal)}</strong></div>
-          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>LESS: REFUNDS</div><strong>{fmt(refundTotal)}</strong></div>
-          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>LESS: RECEIVED FROM PERSON</div><strong>{fmt(receivedFromPersonTotal)}</strong></div>
-          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>LESS: PAID BY ZIVARA</div><strong>{fmt(reimbursedTotal)}</strong></div>
-          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>ADD: PAID TO ANOTHER PERSON</div><strong>{fmt(paidToPersonTotal)}</strong></div>
-          <div><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700}}>OTHER ADJUSTMENTS NET</div><strong>{fmt(otherAdjustmentNet)}</strong></div>
-          <div style={{padding:".6rem",border:"1px solid var(--border)",borderRadius:"7px"}}><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:800}}>MANAGEMENT NET DUE</div><div style={{fontSize:"1.05rem",fontWeight:850,marginTop:".15rem"}}>{fmt(reimbursementBalance)}</div></div>
-          <div style={{padding:".6rem",border:"1px solid var(--border)",borderRadius:"7px"}}><div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:800}}>ACCOUNTING LEDGER BALANCE</div><div style={{fontSize:"1.05rem",fontWeight:850,marginTop:".15rem"}}>{closing}</div></div>
+        <div style={{...card,padding:"1rem 1.1rem",minWidth:0}}>
+          <div style={{fontWeight:800,fontSize:".9rem",marginBottom:".8rem"}}>Expense Mix</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:".9rem"}}>
+            {[["Travel",byCategory.Travel],["Hotel",byCategory.Hotel],["Food",byCategory.Food],["Misc / Other",byCategory["Misc / Other"]]].map(([k,v])=><div key={k} style={{minWidth:0}}>
+              <div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>{k.toUpperCase()}</div>
+              <div style={{fontSize:"1rem",fontWeight:800,marginTop:".15rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{fmt(v)}</div>
+            </div>)}
+          </div>
+          {otherTransferTotal>0&&<div style={{marginTop:".9rem",paddingTop:".75rem",borderTop:"1px solid var(--border)",minWidth:0}}>
+            <div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3,whiteSpace:"normal",overflowWrap:"anywhere"}}>OTHER TRANSFERS / ADVANCES</div>
+            <div style={{fontSize:"1rem",fontWeight:800,color:"#fbbf24",marginTop:".15rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{fmt(otherTransferTotal)}</div>
+          </div>}
         </div>
-        <div style={{fontSize:".72rem",color:"var(--muted)",marginTop:".7rem"}}>Management Net Due explains who actually spent, received refunds, received money from another person, or was paid by Zivara. Accounting Ledger Balance remains the final control balance.</div>
       </div>
 
-      <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Expense History · {personExpenses.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Status</th></tr></thead><tbody>{personExpenses.length?personExpenses.map(e=><tr key={e.ExpenseID}><td>{dmy(e.Date)}</td><td>{bucket(e)}</td><td>{e.Description||e.VendorOrPerson||"—"}</td><td style={{fontWeight:700}}>{fmt(e.Amount)}</td><td>{e.PaidBy||"—"}</td><td>{e.Status||"—"}</td></tr>):<tr><td colSpan="6" style={{padding:"1.5rem",textAlign:"center"}}>No expenses for the selected filters.</td></tr>}</tbody></table></div></div>
+      <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Expense History · {personExpenses.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Status</th></tr></thead><tbody>{personExpenses.length?personExpenses.map(e=><tr key={e.ExpenseID}><td>{dmy(e.Date)}</td><td>{bucket(e)}</td><td style={{minWidth:220,maxWidth:520,whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word",lineHeight:1.35}}>{e.Description||e.VendorOrPerson||"—"}</td><td style={{fontWeight:700}}>{fmt(e.Amount)}</td><td>{e.PaidBy||"—"}</td><td>{e.Status||"—"}</td></tr>):<tr><td colSpan="6" style={{padding:"1.5rem",textAlign:"center"}}>No expenses for the selected filters.</td></tr>}</tbody></table></div></div>
 
-      <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Refund / Inter-person / Adjustment History · {managementJournals.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th>Narration</th><th>Debit</th><th>Credit</th></tr></thead><tbody>{managementJournals.length?managementJournals.map((r,i)=><tr key={`${r.JournalID}-${i}`}><td>{dmy(r.Date)}</td><td>{r._journalType}</td><td>{r._from||"—"}</td><td>{r._to||"—"}</td><td>{r._clean||"—"}</td><td>{Number(r.Debit||0)>0?fmt(r.Debit):"—"}</td><td>{Number(r.Credit||0)>0?fmt(r.Credit):"—"}</td></tr>):<tr><td colSpan="7" style={{padding:"1.5rem",textAlign:"center"}}>No refund or inter-person journal entries in the selected period.</td></tr>}</tbody></table></div></div>
+      <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Refund / Inter-person / Adjustment History · {managementJournals.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th>Narration</th><th>Debit</th><th>Credit</th></tr></thead><tbody>{managementJournals.length?managementJournals.map((r,i)=><tr key={`${r.JournalID}-${i}`}><td>{dmy(r.Date)}</td><td>{r._journalType}</td><td>{r._from||"—"}</td><td>{r._to||"—"}</td><td style={{minWidth:220,maxWidth:520,whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word",lineHeight:1.35}}>{r._clean||"—"}</td><td>{Number(r.Debit||0)>0?fmt(r.Debit):"—"}</td><td>{Number(r.Credit||0)>0?fmt(r.Credit):"—"}</td></tr>):<tr><td colSpan="7" style={{padding:"1.5rem",textAlign:"center"}}>No refund or inter-person journal entries in the selected period.</td></tr>}</tbody></table></div></div>
 
-      <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Repayment / Transfer History · {repayments.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Reference / UTR</th><th>Narration</th><th>Purpose</th><th>Amount</th></tr></thead><tbody>{repayments.length?repayments.map((r,i)=><tr key={`${r.JournalID}-${i}`}><td>{dmy(r.Date)}</td><td>{r._bank?.ReferenceID||r.VoucherNo||r.SourceID||"—"}</td><td>{r._narration||"—"}</td><td><select style={{...inp,minWidth:190}} value={r._purpose} disabled={!r._bank} onChange={e=>markPurpose(r,e.target.value)}>{PURPOSES.map(x=><option key={x}>{x}</option>)}</select></td><td style={{fontWeight:700}}>{fmt(r.Debit)}</td></tr>):<tr><td colSpan="5" style={{padding:"1.5rem",textAlign:"center"}}>No bank/cash transfers found in the selected period.</td></tr>}</tbody></table></div></div>
+      <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Repayment / Transfer History · {repayments.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Reference / UTR</th><th>Narration</th><th>Purpose</th><th>Amount</th></tr></thead><tbody>{repayments.length?repayments.map((r,i)=><tr key={`${r.JournalID}-${i}`}><td>{dmy(r.Date)}</td><td>{r._bank?.ReferenceID||r.VoucherNo||r.SourceID||"—"}</td><td style={{minWidth:220,maxWidth:520,whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word",lineHeight:1.35}}>{r._narration||"—"}</td><td><select style={{...inp,minWidth:190}} value={r._purpose} disabled={!r._bank} onChange={e=>markPurpose(r,e.target.value)}>{PURPOSES.map(x=><option key={x}>{x}</option>)}</select></td><td style={{fontWeight:700}}>{fmt(r.Debit)}</td></tr>):<tr><td colSpan="5" style={{padding:"1.5rem",textAlign:"center"}}>No bank/cash transfers found in the selected period.</td></tr>}</tbody></table></div></div>
 
       <div style={{...card,fontSize:".76rem",color:"var(--muted)"}}>
         <strong style={{color:"var(--text)"}}>Reconciliation note:</strong> Use the Purpose dropdown to classify each transfer. Expense Reimbursement is reported separately from advances, drawings, loan settlements and other transfers.
