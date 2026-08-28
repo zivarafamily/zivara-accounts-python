@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "../api/client";
 import { useLLP } from "../context/LLPContext";
 
-const card={background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:"1rem"};
+const card={background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:"1rem",height:"100%",boxSizing:"border-box"};
 const inp={width:"100%",boxSizing:"border-box",padding:".55rem .7rem",background:"var(--input)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:"6px"};
 const btn=(p=false)=>({padding:".55rem .9rem",borderRadius:"6px",cursor:"pointer",fontWeight:650,border:p?"none":"1px solid var(--border)",background:p?"var(--accent)":"transparent",color:p?"#fff":"var(--muted)"});
 const toneCard=(tone="neutral")=>({...card,borderColor:tone==="green"?"#22c55e66":tone==="amber"?"#f59e0b66":tone==="blue"?"#38bdf866":"var(--border)",background:tone==="green"?"#22c55e12":tone==="amber"?"#f59e0b12":tone==="blue"?"#38bdf812":"var(--card)"});
-const toneValue=tone=>({fontSize:"1.12rem",fontWeight:800,marginTop:".2rem",color:tone==="green"?"#4ade80":tone==="amber"?"#fbbf24":tone==="blue"?"#38bdf8":"var(--text)"});
+const toneValue=tone=>({fontSize:"1rem",fontWeight:800,marginTop:".15rem",color:tone==="green"?"#4ade80":tone==="amber"?"#fbbf24":tone==="blue"?"#38bdf8":"var(--text)",lineHeight:1.15,wordBreak:"break-word"});
+const labelStyle={fontSize:".62rem",color:"var(--muted)",fontWeight:700,letterSpacing:".02em",textTransform:"uppercase"};
+const settleValue=tone=>({fontSize:".92rem",fontWeight:800,marginTop:".12rem",color:tone==="green"?"#4ade80":tone==="amber"?"#fbbf24":tone==="blue"?"#38bdf8":"var(--text)",lineHeight:1.15,whiteSpace:"nowrap"});
+const settleLabel={fontSize:".58rem",color:"var(--muted)",fontWeight:700,letterSpacing:".02em",textTransform:"uppercase"};
 const fmt=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
 const fyStart="2026-04-01";
 const esc=s=>String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
@@ -141,7 +144,6 @@ export default function PartnerStaffStatement(){
   },[personExpenses]);
 
   const opening=Number(personLedger?.OpeningBalance||0);
-  const openingSigned=(personLedger?.OpeningSide==="Cr"?opening:-opening);
   const closingRow=statement.length?statement[statement.length-1]:null;
   const closing=closingRow?`${fmt(closingRow.RunningBalance)} ${closingRow.BalanceSide}`:personLedger?`${fmt(opening)} ${personLedger.OpeningSide}`:"—";
 
@@ -233,27 +235,41 @@ export default function PartnerStaffStatement(){
     </div>
 
     {loading?<div style={card}>Loading...</div>:<>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:".7rem"}}>
-        <div style={{...toneCard(),gridColumn:"span 2",padding:"1rem 1.1rem"}}>
-          <div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:800,marginBottom:".7rem"}}>EXPENSE SETTLEMENT</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(120px,1fr))",gap:".8rem"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(12,minmax(0,1fr))",gap:".7rem",alignItems:"stretch"}}>
+        <div style={{...toneCard(),gridColumn:"span 6",minHeight:108,padding:".85rem 1rem",display:"flex",flexDirection:"column"}}>
+          <div style={{...settleLabel,marginBottom:".55rem"}}>Expense Settlement</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:".55rem",flex:1,alignItems:"end"}}>
             <div>
-              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>PERSONAL EXPENSES</div>
-              <div style={toneValue("neutral")}>{fmt(expenseTotal)}</div>
+              <div style={settleLabel}>Personal Expenses</div>
+              <div style={settleValue("neutral")}>{fmt(expenseTotal)}</div>
             </div>
-            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".8rem"}}>
-              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>EXPENSE REIMBURSED</div>
-              <div style={toneValue("green")}>{fmt(reimbursedTotal)}</div>
+            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".55rem"}}>
+              <div style={settleLabel}>Expense Reimbursed</div>
+              <div style={settleValue("green")}>{fmt(reimbursedTotal)}</div>
             </div>
-            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".8rem"}}>
-              <div style={{fontSize:".66rem",color:"var(--muted)",fontWeight:700}}>BALANCE DUE</div>
-              <div style={toneValue(reimbursementBalance>0?"amber":"green")}>{fmt(reimbursementBalance)}</div>
+            <div style={{borderLeft:"1px solid var(--border)",paddingLeft:".55rem"}}>
+              <div style={settleLabel}>Balance Due</div>
+              <div style={settleValue(reimbursementBalance>0?"amber":"green")}>{fmt(reimbursementBalance)}</div>
             </div>
           </div>
         </div>
-        <div style={toneCard("amber")}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>OTHER TRANSFERS / ADVANCES</div><div style={toneValue("amber")}>{fmt(otherTransferTotal)}</div></div>
-        {[["Travel",byCategory.Travel],["Hotel",byCategory.Hotel],["Food",byCategory.Food],["Misc / Other",byCategory["Misc / Other"]]].map(([k,v])=><div key={k} style={toneCard()}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>{k.toUpperCase()}</div><div style={toneValue("neutral")}>{fmt(v)}</div></div>)}
-        <div style={toneCard(closingRow?.BalanceSide==="Cr"?"amber":"blue")}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>CURRENT LEDGER BALANCE</div><div style={toneValue(closingRow?.BalanceSide==="Cr"?"amber":"blue")}>{closing}</div></div>
+
+        <div style={{...toneCard("amber"),gridColumn:"span 3",minHeight:118,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
+          <div style={labelStyle}>Other Transfers / Advances</div>
+          <div style={toneValue("amber")}>{fmt(otherTransferTotal)}</div>
+        </div>
+
+        <div style={{...toneCard(closingRow?.BalanceSide==="Cr"?"amber":"blue"),gridColumn:"span 3",minHeight:118,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
+          <div style={labelStyle}>Current Ledger Balance</div>
+          <div style={toneValue(closingRow?.BalanceSide==="Cr"?"amber":"blue")}>{closing}</div>
+        </div>
+
+        {[["Travel",byCategory.Travel],["Hotel",byCategory.Hotel],["Food",byCategory.Food],["Misc / Other",byCategory["Misc / Other"]]].map(([k,v])=>(
+          <div key={k} style={{...toneCard(),gridColumn:"span 3",minHeight:92,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
+            <div style={labelStyle}>{k}</div>
+            <div style={toneValue("neutral")}>{fmt(v)}</div>
+          </div>
+        ))}
       </div>
 
       <div style={{...card,padding:0,overflow:"hidden"}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Expense History · {personExpenses.length} records</div><div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Status</th></tr></thead><tbody>{personExpenses.length?personExpenses.map(e=><tr key={e.ExpenseID}><td>{dmy(e.Date)}</td><td>{bucket(e)}</td><td>{e.Description||e.VendorOrPerson||"—"}</td><td style={{fontWeight:700}}>{fmt(e.Amount)}</td><td>{e.PaidBy||"—"}</td><td>{e.Status||"—"}</td></tr>):<tr><td colSpan="6" style={{padding:"1.5rem",textAlign:"center"}}>No expenses for the selected filters.</td></tr>}</tbody></table></div></div>
