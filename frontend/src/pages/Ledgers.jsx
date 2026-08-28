@@ -31,6 +31,14 @@ function sourceKind(row){
   return"Other";
 }
 
+function journalClass(row){
+  if(sourceKind(row)!=="Journals")return "";
+  const n=String(row.Narration||row.Particulars||"").toLowerCase();
+  if(n.includes("refund")||n.includes("cancel"))return "Refund / Cancellation";
+  if((n.includes("paid to")||n.includes("transfer"))&&(n.includes("dinu")||n.includes("manu")||n.includes("manugopal")))return "Inter-person Settlement";
+  if(n.includes("opening"))return "Opening Adjustment";
+  return "Adjustment";
+}
 function sourceAction(row){
   const source=String(row.SourceType||"").toLowerCase();
   const voucher=String(row.VoucherType||"").toLowerCase();
@@ -56,6 +64,10 @@ export default function Ledgers(){
   const filtered=rows.filter(x=>!search||[x.LedgerName,x.LedgerCode,x.GroupName].some(v=>String(v||"").toLowerCase().includes(search.toLowerCase())));
   const current=statement.length?statement[statement.length-1]:null;
   const visibleStatement=useMemo(()=>sourceFilter==="All"?statement:statement.filter(r=>sourceKind(r)===sourceFilter),[statement,sourceFilter]);
+  const filterTotals=useMemo(()=>visibleStatement.reduce((x,r)=>({debit:x.debit+Number(r.Debit||0),credit:x.credit+Number(r.Credit||0)}),{debit:0,credit:0}),[visibleStatement]);
+  const filterNet=Math.abs(filterTotals.debit-filterTotals.credit);
+  const filterNetSide=filterTotals.debit===filterTotals.credit?"—":filterTotals.debit>filterTotals.credit?"Dr":"Cr";
+  const journalBreakdown=useMemo(()=>visibleStatement.reduce((x,r)=>{if(sourceKind(r)!=="Journals")return x;const k=journalClass(r);x[k]=(x[k]||0)+Number(r.Debit||0)+Number(r.Credit||0);return x},{}),[visibleStatement]);
 
   const partnerStaffLedger=useMemo(()=>{
     const g=String(ledger?.GroupName||"").toLowerCase();
@@ -93,7 +105,7 @@ export default function Ledgers(){
     const w=window.open("","_blank","width=1200,height=800");if(!w)return alert("Please allow pop-ups to export PDF.");
     const bal=current?`${fmt(current.RunningBalance)} ${current.BalanceSide}`:`${fmt(ledger.OpeningBalance)} ${ledger.OpeningSide}`;
     const trs=visibleStatement.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(sourceKind(r))}</td><td>${esc(r.VoucherType||"")}${r.VoucherNo?` · ${esc(r.VoucherNo)}`:""}</td><td>${esc(r.Narration||r.Particulars||"")}</td><td class="n">${Number(r.Debit||0)>0?esc(fmt(r.Debit)):"—"}</td><td class="n">${Number(r.Credit||0)>0?esc(fmt(r.Credit)):"—"}</td><td class="n">${esc(fmt(r.RunningBalance))} ${esc(r.BalanceSide||"")}</td></tr>`).join("");
-    w.document.write(`<!doctype html><html><head><title>${esc(ledger.LedgerName)} Ledger</title><style>body{font-family:Arial;padding:20px;font-size:11px}h1{font-size:20px}.meta{color:#555;margin-bottom:12px}.sum{display:flex;gap:25px;margin:12px 0 16px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px}th{background:#eee;text-align:left}.n{text-align:right;white-space:nowrap}@page{size:landscape;margin:10mm}</style></head><body><h1>Zivara Family Office LLP — Ledger Statement</h1><div class="meta">${esc(ledger.LedgerName)} · ${esc(ledger.LedgerCode||"")} · ${esc(ledger.GroupName||"")} · View: ${esc(sourceFilter)}</div><div class="sum"><div><b>Opening:</b> ${esc(fmt(ledger.OpeningBalance))} ${esc(ledger.OpeningSide)}</div><div><b>Current Balance:</b> ${esc(bal)}</div><div><b>Displayed:</b> ${visibleStatement.length}</div></div><table><thead><tr><th>Date</th><th>Source</th><th>Voucher</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>${trs||'<tr><td colspan="7">No transactions</td></tr>'}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`);w.document.close();
+    w.document.write(`<!doctype html><html><head><title>${esc(ledger.LedgerName)} Ledger</title><style>body{font-family:Arial;padding:20px;font-size:11px}h1{font-size:20px}.meta{color:#555;margin-bottom:12px}.sum{display:flex;gap:25px;margin:12px 0 16px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px}th{background:#eee;text-align:left}.n{text-align:right;white-space:nowrap}@page{size:landscape;margin:10mm}</style></head><body><h1>Zivara Family Office LLP — Ledger Statement</h1><div class="meta">${esc(ledger.LedgerName)} · ${esc(ledger.LedgerCode||"")} · ${esc(ledger.GroupName||"")} · View: ${esc(sourceFilter)}</div><div class="sum"><div><b>Opening:</b> ${esc(fmt(ledger.OpeningBalance))} ${esc(ledger.OpeningSide)}</div><div><b>Current Balance:</b> ${esc(bal)}</div><div><b>Displayed:</b> ${visibleStatement.length}</div></div><table><thead><tr><th>Date</th><th>Source</th><th>Management Type</th><th>Voucher</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>${trs||'<tr><td colspan="7">No transactions</td></tr>'}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`);w.document.close();
   }
 
   return <div style={{display:"flex",flexDirection:"column",gap:"1.25rem"}}>
@@ -133,11 +145,18 @@ export default function Ledgers(){
           {["All","Expenses","Bank Transfers","Journals","Vendor Bills","Other"].map(x=><button key={x} onClick={()=>setSourceFilter(x)} style={{...btn(sourceFilter===x),padding:".42rem .7rem"}}>{x}</button>)}
           <span style={{fontSize:".72rem",color:"var(--muted)",marginLeft:"auto"}}>{visibleStatement.length} of {statement.length} entries</span>
         </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:".55rem",marginTop:".75rem",paddingTop:".75rem",borderTop:"1px solid var(--border)"}}>
+          <div><div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700}}>SELECTED DEBIT</div><div style={{fontWeight:800}}>{fmt(filterTotals.debit)}</div></div>
+          <div><div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700}}>SELECTED CREDIT</div><div style={{fontWeight:800}}>{fmt(filterTotals.credit)}</div></div>
+          <div><div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700}}>SELECTED NET</div><div style={{fontWeight:800}}>{fmt(filterNet)} {filterNetSide}</div></div>
+          <div><div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700}}>ENTRIES</div><div style={{fontWeight:800}}>{visibleStatement.length}</div></div>
+        </div>
+        {sourceFilter==="Journals"&&<div style={{display:"flex",gap:".5rem",flexWrap:"wrap",marginTop:".65rem"}}>{Object.entries(journalBreakdown).map(([k,v])=><span key={k} style={{fontSize:".7rem",padding:".3rem .55rem",border:"1px solid var(--border)",borderRadius:"99px",color:"var(--muted)"}}>{k}: <strong style={{color:"var(--text)"}}>{fmt(v)}</strong></span>)}</div>}
       </div>
 
       <div style={{...card,padding:0,overflow:"hidden"}}>
         <table><thead><tr><th>Date</th><th>Source</th><th>Voucher</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Action</th></tr></thead>
-        <tbody>{visibleStatement.length?visibleStatement.map((r,i)=>{const action=sourceAction(r);return <tr key={`${r.JournalID}-${i}`}><td>{r.Date||"—"}</td><td><span style={{fontSize:".72rem",fontWeight:700}}>{sourceKind(r)}</span></td><td>{r.VoucherType}{r.VoucherNo?` · ${r.VoucherNo}`:""}</td><td>{r.Narration||r.Particulars||"—"}</td><td>{Number(r.Debit||0)>0?fmt(r.Debit):"—"}</td><td>{Number(r.Credit||0)>0?fmt(r.Credit):"—"}</td><td>{fmt(r.RunningBalance)} {r.BalanceSide}</td><td style={{whiteSpace:"nowrap"}}>{action?<button style={btn()} onClick={()=>openSource(r)}>{action.label}</button>:<span style={{fontSize:".72rem",color:"var(--muted)"}}>Protected</span>}</td></tr>}):<tr><td colSpan="8" style={{padding:"2rem",textAlign:"center"}}>No entries in this view.</td></tr>}</tbody></table>
+        <tbody>{visibleStatement.length?visibleStatement.map((r,i)=>{const action=sourceAction(r);return <tr key={`${r.JournalID}-${i}`}><td>{r.Date||"—"}</td><td><span style={{fontSize:".72rem",fontWeight:700}}>{sourceKind(r)}</span></td><td><span style={{fontSize:".7rem",color:"var(--muted)"}}>{sourceKind(r)==="Journals"?journalClass(r):sourceKind(r)==="Expenses"?"Personal Expense":sourceKind(r)==="Bank Transfers"?"Zivara Bank Transfer":"—"}</span></td><td>{r.VoucherType}{r.VoucherNo?` · ${r.VoucherNo}`:""}</td><td>{r.Narration||r.Particulars||"—"}</td><td>{Number(r.Debit||0)>0?fmt(r.Debit):"—"}</td><td>{Number(r.Credit||0)>0?fmt(r.Credit):"—"}</td><td>{fmt(r.RunningBalance)} {r.BalanceSide}</td><td style={{whiteSpace:"nowrap"}}>{action?<button style={btn()} onClick={()=>openSource(r)}>{action.label}</button>:<span style={{fontSize:".72rem",color:"var(--muted)"}}>Protected</span>}</td></tr>}):<tr><td colSpan="9" style={{padding:"2rem",textAlign:"center"}}>No entries in this view.</td></tr>}</tbody></table>
       </div>
     </>}
   </div>
