@@ -288,7 +288,6 @@ export default function PartnerStaffStatement(){
             <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3}}>LESS: PAID DIRECTLY BY ZIVARA</div><div style={{fontSize:"1.08rem",fontWeight:850,marginTop:".15rem",color:"#4ade80"}}>{fmt(reimbursedTotal)}</div></div>
             <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3}}>NET AMOUNT DUE</div><div style={{fontSize:"1.28rem",fontWeight:900,marginTop:".12rem",color:reimbursementBalance>0?"#fbbf24":"#4ade80"}}>{fmt(reimbursementBalance)}</div></div>
           </div>
-          <div style={{marginTop:".7rem",fontSize:".72rem",color:"var(--success)",fontWeight:700,lineHeight:1.4,whiteSpace:"normal",overflowWrap:"anywhere"}}>Accounting ledger control balance: {closing}</div>
         </div>
         <div style={{...card,padding:"1rem 1.1rem",minWidth:0}}>
           <div style={{fontWeight:800,fontSize:".92rem",marginBottom:".8rem"}}>Expense Mix</div>
