@@ -833,6 +833,20 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
     return matchSearch && matchStatus && matchPartner && matchLLP && matchClient && matchMonth && matchType && matchGST;
   }), [visibleInvoices, search, statusF, partnerF, llpF, clientF, monthF, typeF, gstF]);
 
+  const filteredTotals = useMemo(() => filtered.reduce((acc, inv) => {
+    const invoiceValue = Number(inv.Amount || 0);
+    const gstAmount = Number(inv.GSTAmount || 0);
+    const tdsAmount = Number(inv.TDSAmount || 0);
+    const netReceivable = inv.NetPayable !== undefined && inv.NetPayable !== null && inv.NetPayable !== ""
+      ? Number(inv.NetPayable || 0)
+      : invoiceValue - tdsAmount;
+    acc.invoiceValue += invoiceValue;
+    acc.gst += gstAmount;
+    acc.tds += tdsAmount;
+    acc.net += netReceivable;
+    return acc;
+  }, { invoiceValue:0, gst:0, tds:0, net:0 }), [filtered]);
+
   const statusColor = s => ({ Draft:"#f59e0b", Sent:"#6366f1", Paid:"#22c55e", Cancelled:"#ef4444" }[s] || "var(--muted)");
 
   function exportFilteredCSV() {
@@ -871,7 +885,17 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
       inv.Status,
       inv.Notes,
     ]);
+    const summaryRows = [
+      ["Filtered Invoice Summary", ""],
+      ["Filtered Invoice Value", filteredTotals.invoiceValue.toFixed(2)],
+      ["GST Total", filteredTotals.gst.toFixed(2)],
+      ["TDS Total", filteredTotals.tds.toFixed(2)],
+      ["Net Receivable", filteredTotals.net.toFixed(2)],
+      ["Invoice Count", filtered.length],
+      [],
+    ];
     const csv = [
+      ...summaryRows.map(row => row.map(csvCell).join(",")),
       headers.map(csvCell).join(","),
       ...dataRows.map(row => row.map(csvCell).join(",")),
     ].join("\r\n");
@@ -1301,6 +1325,30 @@ export default function NeoInvoices({ role = "admin", employeeRef = "" }) {
         )}
         <button style={btn("ghost")} onClick={exportFilteredCSV} disabled={!filtered.length}>Export Excel</button>
         <span style={{ marginLeft:"auto", fontSize:".8rem", color:"var(--muted)" }}>{filtered.length} of {visibleInvoices.length}</span>
+      </div>
+
+      {/* Filtered invoice totals */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:".75rem" }}>
+        <div style={{ ...card, padding:".85rem 1rem" }}>
+          <div style={{ fontSize:".67rem", color:"var(--muted)", fontWeight:700, textTransform:"uppercase" }}>Filtered Invoice Value</div>
+          <div style={{ fontSize:"1.05rem", fontWeight:800, marginTop:".2rem" }}>{fmt(filteredTotals.invoiceValue)}</div>
+        </div>
+        <div style={{ ...card, padding:".85rem 1rem", borderColor:"#f59e0b55" }}>
+          <div style={{ fontSize:".67rem", color:"var(--muted)", fontWeight:700, textTransform:"uppercase" }}>GST Total</div>
+          <div style={{ fontSize:"1.05rem", fontWeight:800, marginTop:".2rem", color:"#fbbf24" }}>{fmt(filteredTotals.gst)}</div>
+        </div>
+        <div style={{ ...card, padding:".85rem 1rem", borderColor:"#ef444455" }}>
+          <div style={{ fontSize:".67rem", color:"var(--muted)", fontWeight:700, textTransform:"uppercase" }}>TDS Total</div>
+          <div style={{ fontSize:"1.05rem", fontWeight:800, marginTop:".2rem", color:"#f87171" }}>{fmt(filteredTotals.tds)}</div>
+        </div>
+        <div style={{ ...card, padding:".85rem 1rem", borderColor:"#22c55e55" }}>
+          <div style={{ fontSize:".67rem", color:"var(--muted)", fontWeight:700, textTransform:"uppercase" }}>Net Receivable</div>
+          <div style={{ fontSize:"1.05rem", fontWeight:800, marginTop:".2rem", color:"#4ade80" }}>{fmt(filteredTotals.net)}</div>
+        </div>
+        <div style={{ ...card, padding:".85rem 1rem" }}>
+          <div style={{ fontSize:".67rem", color:"var(--muted)", fontWeight:700, textTransform:"uppercase" }}>Filtered Invoices</div>
+          <div style={{ fontSize:"1.05rem", fontWeight:800, marginTop:".2rem" }}>{filtered.length}</div>
+        </div>
       </div>
 
       {/* ── TABLE ──────────────────────────────────────────────────────────── */}
