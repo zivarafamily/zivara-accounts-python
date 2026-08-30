@@ -94,6 +94,61 @@ function saveBankClassifications(value){
   try{localStorage.setItem(BANK_CLASSIFICATION_KEY,JSON.stringify(value||{}))}catch{}
 }
 
+function normExpenseText(value){
+  return String(value||"").trim().toLowerCase().replace(/\s+/g," ");
+}
+function vendorBillCategory(row){
+  const lineNames=(Array.isArray(row.LineItems)?row.LineItems:[])
+    .map(x=>String(x.LedgerName||x.Particulars||"").trim()).filter(Boolean);
+  const raw=lineNames[0]||String(row.VendorCategory||row.ExpenseType||"Vendor Bill").trim();
+  const key=normExpenseText(raw);
+  if(key.includes("travel")||key.includes("flight")||key.includes("air"))return "Travel";
+  if(key.includes("hotel")||key.includes("stay")||key.includes("accommodation"))return "Hotel";
+  if(key.includes("food")||key.includes("meal")||key.includes("restaurant"))return "Food";
+  if(key.includes("cab")||key.includes("taxi"))return "Travel";
+  if(key.includes("professional")||key.includes("consult")||key.includes("ca /"))return "Professional Fees";
+  return raw.replace(/\bexpenses?\b/ig,"").replace(/\s+/g," ").trim()||"Vendor Bill";
+}
+function vendorBillSubCategory(row){
+  const lineNames=(Array.isArray(row.LineItems)?row.LineItems:[])
+    .map(x=>String(x.LedgerName||x.Particulars||"").trim()).filter(Boolean);
+  const text=`${row.VendorCategory||""} ${row.Description||""} ${lineNames.join(" ")}`.toLowerCase();
+  if(text.includes("international")||text.includes("overseas")) {
+    if(text.includes("hotel")||text.includes("stay"))return "International Hotel";
+    if(text.includes("flight")||text.includes("air")||text.includes("travel"))return "International Flight";
+  }
+  if(text.includes("domestic")) {
+    if(text.includes("hotel")||text.includes("stay"))return "Domestic Hotel";
+    if(text.includes("flight")||text.includes("air")||text.includes("travel"))return "Domestic Flight";
+  }
+  if(text.includes("cab")||text.includes("taxi"))return "Cab Charges";
+  return "";
+}
+function isPayableSettlementBankRow(row,payables){
+  const managed=normExpenseText(row.ManagedBy||"");
+  const ledger=normExpenseText(row.LedgerName||"");
+  if(managed.includes("payable")||managed.includes("vendor bill")||managed.includes("reimbursement"))return true;
+  if(ledger.includes("accounts payable")||ledger.includes("creditor")||ledger.includes("vendor payable"))return true;
+
+  const ref=normExpenseText(row.ReferenceID||"");
+  const desc=normExpenseText(row.Description||"");
+  if(!ref&&!desc)return false;
+
+  return (payables||[]).some(p=>{
+    const payableId=normExpenseText(p.PayableID||"");
+    const paymentRef=normExpenseText(p.ReferenceNo||"");
+    const billNo=normExpenseText(p.BillNo||"");
+    const vendor=normExpenseText(p.VendorName||"");
+    if(payableId&&(ref===payableId||desc.includes(payableId)))return true;
+    if(paymentRef&&ref&&ref===paymentRef)return true;
+    if(billNo&&desc.includes(billNo))return true;
+    // Batch vendor settlements often carry only the vendor name in narration.
+    // Treat them as settlement-only when the row is managed/protected or posted to a payable-style ledger.
+    if(vendor&&desc.includes(vendor)&&(row.Managed||managed||ledger.includes("payable")))return true;
+    return false;
+  });
+}
+
 function Badge({value}){
   const color=STATUS_COLOR[value]||"var(--muted)";
   return <span style={{fontSize:".7rem",padding:".2rem .55rem",borderRadius:"99px",fontWeight:650,background:color+"22",color,border:`1px solid ${color}`}}>{value||"Draft"}</span>;
@@ -116,6 +171,7 @@ export default function Expenses(){
   const[addingSubCategory,setAddingSubCategory]=useState(false);
   const[newSubCategory,setNewSubCategory]=useState("");
   const[bankTransactions,setBankTransactions]=useState([]);
+  const[payables,setPayables]=useState([]);
   const[bankClassifications,setBankClassifications]=useState(()=>loadBankClassifications());
   const[classifyOpen,setClassifyOpen]=useState(false);
   const[classifyRow,setClassifyRow]=useState(null);
@@ -139,14 +195,15 @@ export default function Expenses(){
   async function load(){
     setLoading(true);
     try{
-      const[e,v,p,u,b]=await Promise.allSettled([
-        apiGet("getExpenses"),apiGet("getVendors"),apiGet("getPartners"),apiGet("getUsers"),apiGet("getBankTransactions")
+      const[e,v,p,u,b,pay]=await Promise.allSettled([
+        apiGet("getExpenses"),apiGet("getVendors"),apiGet("getPartners"),apiGet("getUsers"),apiGet("getBankTransactions"),apiGet("getLLPPayables")
       ]);
       if(e.status==="fulfilled"&&e.value.ok)setExpenses(e.value.data||[]);
       if(v.status==="fulfilled"&&v.value.ok)setVendors((v.value.data||[]).filter(x=>x.Status!=="Inactive"));
       if(p.status==="fulfilled"&&p.value.ok)setPartners((p.value.data||[]).filter(x=>x.Status!=="Inactive"));
       if(u.status==="fulfilled"&&u.value.ok)setUsers((u.value.data||[]).filter(x=>x.Status!=="Inactive"));
       if(b.status==="fulfilled"&&b.value.ok)setBankTransactions(b.value.data||[]);
+      if(pay.status==="fulfilled"&&pay.value.ok)setPayables(pay.value.data||[]);
     }finally{setLoading(false)}
   }
   useEffect(()=>{load()},[]);
@@ -452,7 +509,36 @@ export default function Expenses(){
         rawExpense:e
       };
     });
+
+    // Vendor Bills are recognised as expenses on the BILL DATE.
+    // Later bank payments merely settle the payable and are deliberately not another expense.
+    const vendorBills=payables.flatMap(v=>{
+      if(String(v.Status||"").toLowerCase()==="cancelled")return [];
+      const amount=Number(v.GrossAmount||0);
+      if(amount<=0)return [];
+      const personallyPaid=normExpenseText(v.PaidByType||"Company")!=="company"&&String(v.PaidByName||"").trim();
+      const sub=vendorBillSubCategory(v);
+      const scope=/international|overseas/i.test(sub)?"International":/domestic/i.test(sub)?"Domestic":"";
+      return [{
+        id:`PAY-${v.PayableID}`,
+        date:String(v.BillDate||"").slice(0,10),
+        category:vendorBillCategory(v),
+        subCategory:sub,
+        person:"",
+        funding:personallyPaid?String(v.PaidByName).trim():"Zivara / Vendor Bill",
+        scope,
+        amount,
+        description:[v.VendorName,v.BillNo,v.Description].filter(Boolean).join(" · "),
+        source:"Vendor Bill",
+        status:v.Status||"",
+        rawPayable:v
+      }];
+    });
+
     const company=bankTransactions.flatMap(r=>{
+      // Critical safeguard: never count a bank payment that is only settling an
+      // already-recognised Vendor Bill / payable.
+      if(isPayableSettlementBankRow(r,payables))return [];
       const amount=Number(r.AmountOut||0),autoCategory=bankExpenseCategory(r),classification=bankClassifications[r.EntryID]||{};
       const category=String(classification.Category||autoCategory||"").trim();
       if(amount<=0||!category)return [];
@@ -464,13 +550,13 @@ export default function Expenses(){
         scope:String(classification.TravelScope||"").trim(),
         amount,
         description:r.Description||r.ReferenceID||"",
-        source:"Zivara Bank",status:"Paid",
+        source:"Zivara Bank · Direct Expense",status:"Paid",
         rawBankRow:r,
         classified:!!bankClassifications[r.EntryID]
       }];
     });
-    return [...personal,...company];
-  },[expenses,bankTransactions,bankClassifications]);
+    return [...personal,...vendorBills,...company];
+  },[expenses,payables,bankTransactions,bankClassifications]);
 
   const analysisRows=useMemo(()=>managementRows.filter(r=>{
     if(fromDate&&r.date<fromDate)return false;if(toDate&&r.date>toDate)return false;
@@ -489,6 +575,12 @@ export default function Expenses(){
   const analysisFundingOptions=useMemo(()=>[...new Set(managementRows.map(r=>r.funding).filter(Boolean))].sort(),[managementRows]);
   const analysisCategoryTotals=useMemo(()=>Object.entries(analysisRows.reduce((a,r)=>{a[r.category]=(a[r.category]||0)+r.amount;return a},{})).sort((a,b)=>b[1]-a[1]),[analysisRows]);
   const analysisFundingTotals=useMemo(()=>Object.entries(analysisRows.reduce((a,r)=>{a[r.funding]=(a[r.funding]||0)+r.amount;return a},{})).sort((a,b)=>b[1]-a[1]),[analysisRows]);
+  const analysisSourceTotals=useMemo(()=>analysisRows.reduce((a,r)=>{
+    if(r.source==="Vendor Bill")a.vendorBills+=r.amount;
+    else if(r.source==="Partner / Staff Expense")a.personal+=r.amount;
+    else if(String(r.source||"").startsWith("Zivara Bank"))a.directZivara+=r.amount;
+    return a;
+  },{vendorBills:0,personal:0,directZivara:0}),[analysisRows]);
   const analysisPageCount=Math.max(1,Math.ceil(analysisRows.length/analysisPageSize));
   const safeAnalysisPage=Math.min(analysisPage,analysisPageCount);
   const analysisPageRows=useMemo(()=>{
@@ -515,7 +607,7 @@ export default function Expenses(){
     if(!analysisRows.length)return alert("No analysis rows to export.");
     const w=window.open("","_blank","width=1200,height=850");if(!w)return alert("Please allow pop-ups to export PDF.");
     const rows=analysisRows.map(r=>`<tr><td>${escapeHtml(exportDate(r.date))}</td><td>${escapeHtml(r.category)}</td><td>${escapeHtml(r.subCategory||"—")}</td><td>${escapeHtml(r.person||"—")}</td><td>${escapeHtml(r.scope||"—")}</td><td>${escapeHtml(r.funding)}</td><td class="num">${escapeHtml(fmt(r.amount))}</td><td>${escapeHtml(r.source)}</td><td>${escapeHtml(r.description)}</td></tr>`).join("");
-    w.document.write(`<!doctype html><html><head><style>body{font-family:Arial,sans-serif;font-size:10px;color:#111;padding:18px}h1{font-size:18px;margin:0 0 4px}.summary{margin:10px 0 14px;font-size:12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #aaa;padding:4px;vertical-align:top;overflow-wrap:anywhere}th{background:#eee;text-align:left}.num{text-align:right;white-space:nowrap}@page{size:A4 landscape;margin:10mm}</style></head><body><h1>Zivara Family Office LLP — Expense Analysis</h1><div class="summary"><strong>Total:</strong> ${escapeHtml(fmt(analysisTotal))} · <strong>Records:</strong> ${analysisRows.length}</div><table><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th></tr>${rows}</table><script>window.onload=()=>window.print()<\/script></body></html>`);w.document.close();
+    w.document.write(`<!doctype html><html><head><style>body{font-family:Arial,sans-serif;font-size:10px;color:#111;padding:18px}h1{font-size:18px;margin:0 0 4px}.summary{margin:10px 0 14px;font-size:12px;line-height:1.7}table{width:100%;border-collapse:collapse}th,td{border:1px solid #aaa;padding:4px;vertical-align:top;overflow-wrap:anywhere}th{background:#eee;text-align:left}.num{text-align:right;white-space:nowrap}@page{size:A4 landscape;margin:10mm}</style></head><body><h1>Zivara Family Office LLP — Expense Analysis</h1><div class="summary"><strong>Total:</strong> ${escapeHtml(fmt(analysisTotal))} · <strong>Vendor Bills:</strong> ${escapeHtml(fmt(analysisSourceTotals.vendorBills))} · <strong>Personally Paid:</strong> ${escapeHtml(fmt(analysisSourceTotals.personal))} · <strong>Direct Zivara:</strong> ${escapeHtml(fmt(analysisSourceTotals.directZivara))} · <strong>Records:</strong> ${analysisRows.length}</div><table><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th></tr>${rows}</table><script>window.onload=()=>window.print()<\/script></body></html>`);w.document.close();
   }
 
   const accountingExpenseName={
@@ -591,8 +683,10 @@ export default function Expenses(){
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(175px,1fr))",gap:".75rem"}}>
         <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TOTAL EXPENSE</div><div style={{fontSize:"1.25rem",fontWeight:800,marginTop:".2rem"}}>{fmt(analysisTotal)}</div></div>
-        <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>RECORDS</div><div style={{fontSize:"1.25rem",fontWeight:800,marginTop:".2rem"}}>{analysisRows.length}</div></div>
-        <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>CATEGORIES</div><div style={{fontSize:"1.25rem",fontWeight:800,marginTop:".2rem"}}>{analysisCategoryTotals.length}</div></div>
+        <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>VENDOR BILLS</div><div style={{fontSize:"1.08rem",fontWeight:800,marginTop:".2rem"}}>{fmt(analysisSourceTotals.vendorBills)}</div></div>
+        <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>PERSONALLY PAID</div><div style={{fontSize:"1.08rem",fontWeight:800,marginTop:".2rem"}}>{fmt(analysisSourceTotals.personal)}</div></div>
+        <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>DIRECT ZIVARA EXPENSES</div><div style={{fontSize:"1.08rem",fontWeight:800,marginTop:".2rem"}}>{fmt(analysisSourceTotals.directZivara)}</div></div>
+        <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>RECORDS</div><div style={{fontSize:"1.08rem",fontWeight:800,marginTop:".2rem"}}>{analysisRows.length}</div></div>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:".75rem"}}>
@@ -643,9 +737,11 @@ export default function Expenses(){
                   <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.funding}</td>
                   <td style={{fontWeight:700,whiteSpace:"nowrap"}}>{fmt(r.amount)}</td>
                   <td>
-                    {r.source==="Zivara Bank"
+                    {String(r.source||"").startsWith("Zivara Bank")
                       ? <button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openClassification(r.rawBankRow)}>{r.classified?"Edit Classification":"Classify"}</button>
-                      : <button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openEdit(r.rawExpense)}>Edit Expense</button>}
+                      : r.source==="Partner / Staff Expense"
+                        ? <button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openEdit(r.rawExpense)}>Edit Expense</button>
+                        : <span style={{fontSize:".72rem",color:"var(--muted)",fontWeight:650}}>Vendor Bill</span>}
                   </td>
                   <td><button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>toggleAnalysisDetails(r.id)}>{expandedAnalysisRows[r.id]?"Hide":"View"}</button></td>
                 </tr>
@@ -674,7 +770,7 @@ export default function Expenses(){
           </div>
         </div>
       </div>
-      <div style={{fontSize:".72rem",color:"var(--muted)"}}>For <strong>Zivara Bank</strong> rows, Action opens Classify / Edit Classification without changing the bank or ledger posting. For <strong>Partner / Staff Expense</strong> rows, Action opens Edit Expense. PDF/Excel continue to export all filtered rows, not only the current page.</div>
+      <div style={{fontSize:".72rem",color:"var(--muted)"}}><strong>Double-count safeguard:</strong> Vendor Bills are counted on their bill date. Later Zivara bank payments that settle those bills are excluded from expense totals. Personal-paid expenses are counted once when incurred; later reimbursements are not added again. Only genuine direct Zivara bank expenses without an underlying Vendor Bill are counted from Transactions. PDF/Excel export the same filtered management-expense view.</div>
     </>}
 
     {classifyOpen&&<div onMouseDown={e=>{if(e.target===e.currentTarget)setClassifyOpen(false)}} style={{position:"fixed",inset:0,zIndex:1100,background:"rgba(0,0,0,.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
