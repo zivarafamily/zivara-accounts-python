@@ -448,7 +448,8 @@ export default function Expenses(){
         funding:String(e.PaidBy||"").trim()||"Personal",
         scope:String(meta.travelScope||"").trim(),
         amount:Number(e.Amount||0),description:e.Description||e.VendorOrPerson||"",
-        source:"Partner / Staff Expense",status:e.Status||""
+        source:"Partner / Staff Expense",status:e.Status||"",
+        rawExpense:e
       };
     });
     const company=bankTransactions.flatMap(r=>{
@@ -609,7 +610,7 @@ export default function Expenses(){
         <div style={{padding:".85rem 1rem",fontWeight:700,borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",gap:"1rem",flexWrap:"wrap",alignItems:"center"}}>
           <div>
             <span>Expense Analysis · {analysisRows.length} records</span>
-            <div style={{fontSize:".68rem",fontWeight:400,color:"var(--muted)",marginTop:".18rem"}}>Compact view. Open Details for narration, scope and source information.</div>
+            <div style={{fontSize:".68rem",fontWeight:400,color:"var(--muted)",marginTop:".18rem"}}>Use Action to classify Zivara-paid rows or edit personal-paid expenses. Open Details for narration, scope and source.</div>
           </div>
           <div style={{display:"flex",gap:".5rem",alignItems:"center",flexWrap:"wrap"}}>
             <select style={{...inp,width:"auto",minWidth:95}} value={analysisPageSize} onChange={e=>setAnalysisPageSize(Number(e.target.value))}>
@@ -629,7 +630,7 @@ export default function Expenses(){
               <th style={{width:"150px"}}>Person</th>
               <th style={{width:"145px"}}>Funding</th>
               <th style={{width:"125px"}}>Amount</th>
-              <th style={{width:"120px"}}>Classify</th>
+              <th style={{width:"145px"}}>Action</th>
               <th style={{width:"90px"}}>Details</th>
             </tr></thead>
             <tbody>
@@ -641,7 +642,11 @@ export default function Expenses(){
                   <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.person||"—"}</td>
                   <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.funding}</td>
                   <td style={{fontWeight:700,whiteSpace:"nowrap"}}>{fmt(r.amount)}</td>
-                  <td>{r.source==="Zivara Bank"?<button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openClassification(r.rawBankRow)}>{r.classified?"Edit":"Classify"}</button>:<span style={{color:"var(--muted)"}}>—</span>}</td>
+                  <td>
+                    {r.source==="Zivara Bank"
+                      ? <button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openClassification(r.rawBankRow)}>{r.classified?"Edit Classification":"Classify"}</button>
+                      : <button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openEdit(r.rawExpense)}>Edit Expense</button>}
+                  </td>
                   <td><button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>toggleAnalysisDetails(r.id)}>{expandedAnalysisRows[r.id]?"Hide":"View"}</button></td>
                 </tr>
                 {expandedAnalysisRows[r.id]&&<tr key={`${r.id}-details`}>
@@ -669,7 +674,7 @@ export default function Expenses(){
           </div>
         </div>
       </div>
-      <div style={{fontSize:".72rem",color:"var(--muted)"}}>Zivara-paid rows are picked from bank payments posted to expense-type ledgers. <strong>Classify</strong> changes management reporting only; <strong>Details</strong> shows scope, source and narration. PDF/Excel continue to export all filtered rows, not only the current page.</div>
+      <div style={{fontSize:".72rem",color:"var(--muted)"}}>For <strong>Zivara Bank</strong> rows, Action opens Classify / Edit Classification without changing the bank or ledger posting. For <strong>Partner / Staff Expense</strong> rows, Action opens Edit Expense. PDF/Excel continue to export all filtered rows, not only the current page.</div>
     </>}
 
     {classifyOpen&&<div onMouseDown={e=>{if(e.target===e.currentTarget)setClassifyOpen(false)}} style={{position:"fixed",inset:0,zIndex:1100,background:"rgba(0,0,0,.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
