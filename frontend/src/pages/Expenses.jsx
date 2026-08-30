@@ -121,6 +121,9 @@ export default function Expenses(){
   const[classifyRow,setClassifyRow]=useState(null);
   const[classifyForm,setClassifyForm]=useState({Category:"",SubCategory:"",ExpenseFor:"",TravelScope:""});
   const[view,setView]=useState("entries");
+  const[analysisPageSize,setAnalysisPageSize]=useState(25);
+  const[analysisPage,setAnalysisPage]=useState(1);
+  const[expandedAnalysisRows,setExpandedAnalysisRows]=useState({});
 
   const[fromDate,setFromDate]=useState(fyStart);
   const[toDate,setToDate]=useState("");
@@ -485,6 +488,19 @@ export default function Expenses(){
   const analysisFundingOptions=useMemo(()=>[...new Set(managementRows.map(r=>r.funding).filter(Boolean))].sort(),[managementRows]);
   const analysisCategoryTotals=useMemo(()=>Object.entries(analysisRows.reduce((a,r)=>{a[r.category]=(a[r.category]||0)+r.amount;return a},{})).sort((a,b)=>b[1]-a[1]),[analysisRows]);
   const analysisFundingTotals=useMemo(()=>Object.entries(analysisRows.reduce((a,r)=>{a[r.funding]=(a[r.funding]||0)+r.amount;return a},{})).sort((a,b)=>b[1]-a[1]),[analysisRows]);
+  const analysisPageCount=Math.max(1,Math.ceil(analysisRows.length/analysisPageSize));
+  const safeAnalysisPage=Math.min(analysisPage,analysisPageCount);
+  const analysisPageRows=useMemo(()=>{
+    const start=(safeAnalysisPage-1)*analysisPageSize;
+    return analysisRows.slice(start,start+analysisPageSize);
+  },[analysisRows,analysisPageSize,safeAnalysisPage]);
+
+  useEffect(()=>{setAnalysisPage(1)},[fromDate,toDate,analysisCategory,analysisSubCategory,analysisPerson,analysisFunding,analysisScope,search,analysisPageSize]);
+  useEffect(()=>{if(analysisPage>analysisPageCount)setAnalysisPage(analysisPageCount)},[analysisPage,analysisPageCount]);
+
+  function toggleAnalysisDetails(id){
+    setExpandedAnalysisRows(prev=>({...prev,[id]:!prev[id]}));
+  }
 
   function exportAnalysisExcel(){
     if(!analysisRows.length)return alert("No analysis rows to export.");
@@ -579,51 +595,81 @@ export default function Expenses(){
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:".75rem"}}>
-        <div style={card}><div style={{fontWeight:700,marginBottom:".6rem"}}>By Category</div>{analysisCategoryTotals.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:"1rem",padding:".28rem 0",borderBottom:"1px solid var(--border)"}}><span>{k}</span><strong>{fmt(v)}</strong></div>)}</div>
-        <div style={card}><div style={{fontWeight:700,marginBottom:".6rem"}}>By Funding Source</div>{analysisFundingTotals.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:"1rem",padding:".28rem 0",borderBottom:"1px solid var(--border)"}}><span>{k}</span><strong>{fmt(v)}</strong></div>)}</div>
+        <details style={card}>
+          <summary style={{fontWeight:700,cursor:"pointer",userSelect:"none"}}>By Category · {analysisCategoryTotals.length}</summary>
+          <div style={{marginTop:".6rem"}}>{analysisCategoryTotals.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:"1rem",padding:".28rem 0",borderBottom:"1px solid var(--border)"}}><span style={{overflowWrap:"anywhere"}}>{k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong></div>)}</div>
+        </details>
+        <details style={card}>
+          <summary style={{fontWeight:700,cursor:"pointer",userSelect:"none"}}>By Funding Source · {analysisFundingTotals.length}</summary>
+          <div style={{marginTop:".6rem"}}>{analysisFundingTotals.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:"1rem",padding:".28rem 0",borderBottom:"1px solid var(--border)"}}><span style={{overflowWrap:"anywhere"}}>{k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong></div>)}</div>
+        </details>
       </div>
 
-      <div style={{...card,padding:0,overflow:"visible"}}>
+      <div style={{...card,padding:0,overflow:"hidden"}}>
         <div style={{padding:".85rem 1rem",fontWeight:700,borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",gap:"1rem",flexWrap:"wrap",alignItems:"center"}}>
           <div>
             <span>Expense Analysis · {analysisRows.length} records</span>
-            <div style={{fontSize:".68rem",fontWeight:400,color:"var(--muted)",marginTop:".18rem"}}>Classify is shown beside Source for Zivara-paid rows.</div>
+            <div style={{fontSize:".68rem",fontWeight:400,color:"var(--muted)",marginTop:".18rem"}}>Compact view. Open Details for narration, scope and source information.</div>
           </div>
-          <div style={{display:"flex",gap:".5rem"}}><button style={btn(false)} onClick={exportAnalysisExcel}>Export Excel</button><button style={btn(false)} onClick={exportAnalysisPDF}>Export PDF</button></div>
+          <div style={{display:"flex",gap:".5rem",alignItems:"center",flexWrap:"wrap"}}>
+            <select style={{...inp,width:"auto",minWidth:95}} value={analysisPageSize} onChange={e=>setAnalysisPageSize(Number(e.target.value))}>
+              {[25,50,100].map(n=><option key={n} value={n}>{n} rows</option>)}
+            </select>
+            <button style={btn(false)} onClick={exportAnalysisExcel}>Export Excel</button>
+            <button style={btn(false)} onClick={exportAnalysisPDF}>Export PDF</button>
+          </div>
         </div>
-        <div style={{overflowX:"auto",overflowY:"hidden",WebkitOverflowScrolling:"touch",width:"100%",paddingBottom:".35rem"}}>
-          <table style={{minWidth:"1180px",width:"100%",tableLayout:"fixed"}}>
+
+        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+          <table style={{width:"100%",minWidth:"900px",tableLayout:"fixed"}}>
             <thead><tr>
-              <th style={{width:"95px"}}>Date</th>
-              <th style={{width:"130px"}}>Category</th>
-              <th style={{width:"150px"}}>Subcategory</th>
-              <th style={{width:"145px"}}>Expense For</th>
-              <th style={{width:"105px"}}>Scope</th>
-              <th style={{width:"145px"}}>Funding Source</th>
-              <th style={{width:"120px"}}>Amount</th>
-              <th style={{width:"140px"}}>Source / Action</th>
-              <th>Description</th>
+              <th style={{width:"92px"}}>Date</th>
+              <th style={{width:"135px"}}>Category</th>
+              <th style={{width:"155px"}}>Subcategory</th>
+              <th style={{width:"150px"}}>Person</th>
+              <th style={{width:"145px"}}>Funding</th>
+              <th style={{width:"125px"}}>Amount</th>
+              <th style={{width:"120px"}}>Classify</th>
+              <th style={{width:"90px"}}>Details</th>
             </tr></thead>
-            <tbody>{analysisRows.length?analysisRows.map(r=><tr key={r.id}>
-              <td>{formatDate(r.date)}</td>
-              <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.category}</td>
-              <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.subCategory||"—"}</td>
-              <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.person||"—"}</td>
-              <td>{r.scope||"—"}</td>
-              <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.funding}</td>
-              <td style={{fontWeight:700,whiteSpace:"nowrap"}}>{fmt(r.amount)}</td>
-              <td>
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:".35rem"}}>
-                  <span style={{fontSize:".72rem",color:"var(--muted)",whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.source}</span>
-                  {r.source==="Zivara Bank"&&<button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openClassification(r.rawBankRow)}>{r.classified?"Edit Classification":"Classify"}</button>}
-                </div>
-              </td>
-              <td style={{whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word",lineHeight:1.35}}>{r.description||"—"}</td>
-            </tr>):<tr><td colSpan="9" style={{padding:"2rem",textAlign:"center",color:"var(--muted)"}}>No expenses for selected filters.</td></tr>}</tbody>
+            <tbody>
+              {analysisPageRows.length?analysisPageRows.map(r=><>
+                <tr key={r.id}>
+                  <td>{formatDate(r.date)}</td>
+                  <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.category}</td>
+                  <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.subCategory||"—"}</td>
+                  <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.person||"—"}</td>
+                  <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.funding}</td>
+                  <td style={{fontWeight:700,whiteSpace:"nowrap"}}>{fmt(r.amount)}</td>
+                  <td>{r.source==="Zivara Bank"?<button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openClassification(r.rawBankRow)}>{r.classified?"Edit":"Classify"}</button>:<span style={{color:"var(--muted)"}}>—</span>}</td>
+                  <td><button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>toggleAnalysisDetails(r.id)}>{expandedAnalysisRows[r.id]?"Hide":"View"}</button></td>
+                </tr>
+                {expandedAnalysisRows[r.id]&&<tr key={`${r.id}-details`}>
+                  <td colSpan="8" style={{padding:".8rem 1rem",background:"rgba(255,255,255,.02)"}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".75rem"}}>
+                      <div><div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700}}>SCOPE</div><div style={{marginTop:".15rem"}}>{r.scope||"—"}</div></div>
+                      <div><div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700}}>SOURCE</div><div style={{marginTop:".15rem"}}>{r.source||"—"}</div></div>
+                      <div style={{gridColumn:"span 2"}}><div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700}}>DESCRIPTION / NARRATION</div><div style={{marginTop:".15rem",whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word",lineHeight:1.4}}>{r.description||"—"}</div></div>
+                    </div>
+                  </td>
+                </tr>}
+              </>):<tr><td colSpan="8" style={{padding:"2rem",textAlign:"center",color:"var(--muted)"}}>No expenses for selected filters.</td></tr>}
+            </tbody>
           </table>
         </div>
+
+        <div style={{padding:".75rem 1rem",borderTop:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",gap:"1rem",flexWrap:"wrap"}}>
+          <div style={{fontSize:".75rem",color:"var(--muted)"}}>
+            Showing {analysisRows.length?((safeAnalysisPage-1)*analysisPageSize)+1:0}–{Math.min(safeAnalysisPage*analysisPageSize,analysisRows.length)} of {analysisRows.length}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:".45rem"}}>
+            <button style={btn(false)} disabled={safeAnalysisPage<=1} onClick={()=>setAnalysisPage(p=>Math.max(1,p-1))}>Previous</button>
+            <span style={{fontSize:".76rem",color:"var(--muted)",padding:"0 .3rem"}}>Page {safeAnalysisPage} of {analysisPageCount}</span>
+            <button style={btn(false)} disabled={safeAnalysisPage>=analysisPageCount} onClick={()=>setAnalysisPage(p=>Math.min(analysisPageCount,p+1))}>Next</button>
+          </div>
+        </div>
       </div>
-      <div style={{fontSize:".72rem",color:"var(--muted)"}}>Zivara-paid rows are picked from bank payments posted to expense/travel/hotel/food-type ledgers. Use <strong>Classify</strong> to add category, subcategory, person/traveller and Domestic / International to older Zivara bank payments without changing the accounting transaction.</div>
+      <div style={{fontSize:".72rem",color:"var(--muted)"}}>Zivara-paid rows are picked from bank payments posted to expense-type ledgers. <strong>Classify</strong> changes management reporting only; <strong>Details</strong> shows scope, source and narration. PDF/Excel continue to export all filtered rows, not only the current page.</div>
     </>}
 
     {classifyOpen&&<div onMouseDown={e=>{if(e.target===e.currentTarget)setClassifyOpen(false)}} style={{position:"fixed",inset:0,zIndex:1100,background:"rgba(0,0,0,.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
