@@ -583,12 +583,45 @@ export default function Expenses(){
         <div style={card}><div style={{fontWeight:700,marginBottom:".6rem"}}>By Funding Source</div>{analysisFundingTotals.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:"1rem",padding:".28rem 0",borderBottom:"1px solid var(--border)"}}><span>{k}</span><strong>{fmt(v)}</strong></div>)}</div>
       </div>
 
-      <div style={{...card,padding:0,overflow:"hidden"}}>
+      <div style={{...card,padding:0,overflow:"visible"}}>
         <div style={{padding:".85rem 1rem",fontWeight:700,borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",gap:"1rem",flexWrap:"wrap",alignItems:"center"}}>
-          <span>Expense Analysis · {analysisRows.length} records</span>
+          <div>
+            <span>Expense Analysis · {analysisRows.length} records</span>
+            <div style={{fontSize:".68rem",fontWeight:400,color:"var(--muted)",marginTop:".18rem"}}>Classify is shown beside Source for Zivara-paid rows.</div>
+          </div>
           <div style={{display:"flex",gap:".5rem"}}><button style={btn(false)} onClick={exportAnalysisExcel}>Export Excel</button><button style={btn(false)} onClick={exportAnalysisPDF}>Export PDF</button></div>
         </div>
-        <div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th><th></th></tr></thead><tbody>{analysisRows.length?analysisRows.map(r=><tr key={r.id}><td>{formatDate(r.date)}</td><td>{r.category}</td><td>{r.subCategory||"—"}</td><td>{r.person||"—"}</td><td>{r.scope||"—"}</td><td>{r.funding}</td><td style={{fontWeight:700}}>{fmt(r.amount)}</td><td>{r.source}</td><td>{r.description||"—"}</td><td style={{whiteSpace:"nowrap"}}>{r.source==="Zivara Bank"?<button style={btn(false)} onClick={()=>openClassification(r.rawBankRow)}>{r.classified?"Edit Classification":"Classify"}</button>:""}</td></tr>):<tr><td colSpan="10" style={{padding:"2rem",textAlign:"center",color:"var(--muted)"}}>No expenses for selected filters.</td></tr>}</tbody></table></div>
+        <div style={{overflowX:"auto",overflowY:"hidden",WebkitOverflowScrolling:"touch",width:"100%",paddingBottom:".35rem"}}>
+          <table style={{minWidth:"1180px",width:"100%",tableLayout:"fixed"}}>
+            <thead><tr>
+              <th style={{width:"95px"}}>Date</th>
+              <th style={{width:"130px"}}>Category</th>
+              <th style={{width:"150px"}}>Subcategory</th>
+              <th style={{width:"145px"}}>Expense For</th>
+              <th style={{width:"105px"}}>Scope</th>
+              <th style={{width:"145px"}}>Funding Source</th>
+              <th style={{width:"120px"}}>Amount</th>
+              <th style={{width:"140px"}}>Source / Action</th>
+              <th>Description</th>
+            </tr></thead>
+            <tbody>{analysisRows.length?analysisRows.map(r=><tr key={r.id}>
+              <td>{formatDate(r.date)}</td>
+              <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.category}</td>
+              <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.subCategory||"—"}</td>
+              <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.person||"—"}</td>
+              <td>{r.scope||"—"}</td>
+              <td style={{whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.funding}</td>
+              <td style={{fontWeight:700,whiteSpace:"nowrap"}}>{fmt(r.amount)}</td>
+              <td>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:".35rem"}}>
+                  <span style={{fontSize:".72rem",color:"var(--muted)",whiteSpace:"normal",overflowWrap:"anywhere"}}>{r.source}</span>
+                  {r.source==="Zivara Bank"&&<button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openClassification(r.rawBankRow)}>{r.classified?"Edit Classification":"Classify"}</button>}
+                </div>
+              </td>
+              <td style={{whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word",lineHeight:1.35}}>{r.description||"—"}</td>
+            </tr>):<tr><td colSpan="9" style={{padding:"2rem",textAlign:"center",color:"var(--muted)"}}>No expenses for selected filters.</td></tr>}</tbody>
+          </table>
+        </div>
       </div>
       <div style={{fontSize:".72rem",color:"var(--muted)"}}>Zivara-paid rows are picked from bank payments posted to expense/travel/hotel/food-type ledgers. Use <strong>Classify</strong> to add category, subcategory, person/traveller and Domestic / International to older Zivara bank payments without changing the accounting transaction.</div>
     </>}
