@@ -83,6 +83,17 @@ function bankExpenseCategory(row){
     .trim() || "Other";
 }
 
+const BANK_CLASSIFICATION_KEY="zivara_expense_bank_classifications_v1";
+function loadBankClassifications(){
+  try{
+    const parsed=JSON.parse(localStorage.getItem(BANK_CLASSIFICATION_KEY)||"{}");
+    return parsed&&typeof parsed==="object"?parsed:{};
+  }catch{return {}}
+}
+function saveBankClassifications(value){
+  try{localStorage.setItem(BANK_CLASSIFICATION_KEY,JSON.stringify(value||{}))}catch{}
+}
+
 function Badge({value}){
   const color=STATUS_COLOR[value]||"var(--muted)";
   return <span style={{fontSize:".7rem",padding:".2rem .55rem",borderRadius:"99px",fontWeight:650,background:color+"22",color,border:`1px solid ${color}`}}>{value||"Draft"}</span>;
@@ -105,6 +116,10 @@ export default function Expenses(){
   const[addingSubCategory,setAddingSubCategory]=useState(false);
   const[newSubCategory,setNewSubCategory]=useState("");
   const[bankTransactions,setBankTransactions]=useState([]);
+  const[bankClassifications,setBankClassifications]=useState(()=>loadBankClassifications());
+  const[classifyOpen,setClassifyOpen]=useState(false);
+  const[classifyRow,setClassifyRow]=useState(null);
+  const[classifyForm,setClassifyForm]=useState({Category:"",SubCategory:"",ExpenseFor:"",TravelScope:""});
   const[view,setView]=useState("entries");
 
   const[fromDate,setFromDate]=useState(fyStart);
@@ -132,6 +147,7 @@ export default function Expenses(){
     }finally{setLoading(false)}
   }
   useEffect(()=>{load()},[]);
+  useEffect(()=>{saveBankClassifications(bankClassifications)},[bankClassifications]);
 
   const partnerNames=useMemo(
     ()=>[...new Set(partners.map(p=>String(p.PartnerName||"").trim()).filter(Boolean))].sort(),
@@ -384,6 +400,40 @@ export default function Expenses(){
     w.document.close();
   }
 
+  function openClassification(row){
+    const existing=bankClassifications[row.EntryID]||{};
+    setClassifyRow(row);
+    setClassifyForm({
+      Category:existing.Category||bankExpenseCategory(row)||"",
+      SubCategory:existing.SubCategory||"",
+      ExpenseFor:existing.ExpenseFor||"",
+      TravelScope:existing.TravelScope||""
+    });
+    setClassifyOpen(true);
+  }
+  function saveClassification(){
+    if(!classifyRow?.EntryID)return;
+    setBankClassifications(prev=>({
+      ...prev,
+      [classifyRow.EntryID]:{
+        Category:String(classifyForm.Category||"").trim(),
+        SubCategory:String(classifyForm.SubCategory||"").trim(),
+        ExpenseFor:String(classifyForm.ExpenseFor||"").trim(),
+        TravelScope:String(classifyForm.TravelScope||"").trim()
+      }
+    }));
+    setClassifyOpen(false);
+  }
+  function clearClassification(){
+    if(!classifyRow?.EntryID)return;
+    setBankClassifications(prev=>{
+      const next={...prev};
+      delete next[classifyRow.EntryID];
+      return next;
+    });
+    setClassifyOpen(false);
+  }
+
   const managementRows=useMemo(()=>{
     const personal=expenses.map(e=>{
       const {meta}=readExpenseMeta(e.Notes);
@@ -399,16 +449,24 @@ export default function Expenses(){
       };
     });
     const company=bankTransactions.flatMap(r=>{
-      const amount=Number(r.AmountOut||0),category=bankExpenseCategory(r);
+      const amount=Number(r.AmountOut||0),autoCategory=bankExpenseCategory(r),classification=bankClassifications[r.EntryID]||{};
+      const category=String(classification.Category||autoCategory||"").trim();
       if(amount<=0||!category)return [];
       return [{
-        id:`BANK-${r.EntryID}`,date:String(r.Date||"").slice(0,10),category,
-        subCategory:"",person:"",funding:"Zivara",scope:"",amount,
-        description:r.Description||r.ReferenceID||"",source:"Zivara Bank",status:"Paid"
+        id:`BANK-${r.EntryID}`,entryId:r.EntryID,date:String(r.Date||"").slice(0,10),category,
+        subCategory:String(classification.SubCategory||"").trim(),
+        person:String(classification.ExpenseFor||"").trim(),
+        funding:"Zivara",
+        scope:String(classification.TravelScope||"").trim(),
+        amount,
+        description:r.Description||r.ReferenceID||"",
+        source:"Zivara Bank",status:"Paid",
+        rawBankRow:r,
+        classified:!!bankClassifications[r.EntryID]
       }];
     });
     return [...personal,...company];
-  },[expenses,bankTransactions]);
+  },[expenses,bankTransactions,bankClassifications]);
 
   const analysisRows=useMemo(()=>managementRows.filter(r=>{
     if(fromDate&&r.date<fromDate)return false;if(toDate&&r.date>toDate)return false;
@@ -530,10 +588,30 @@ export default function Expenses(){
           <span>Expense Analysis · {analysisRows.length} records</span>
           <div style={{display:"flex",gap:".5rem"}}><button style={btn(false)} onClick={exportAnalysisExcel}>Export Excel</button><button style={btn(false)} onClick={exportAnalysisPDF}>Export PDF</button></div>
         </div>
-        <div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th></tr></thead><tbody>{analysisRows.length?analysisRows.map(r=><tr key={r.id}><td>{formatDate(r.date)}</td><td>{r.category}</td><td>{r.subCategory||"—"}</td><td>{r.person||"—"}</td><td>{r.scope||"—"}</td><td>{r.funding}</td><td style={{fontWeight:700}}>{fmt(r.amount)}</td><td>{r.source}</td><td>{r.description||"—"}</td></tr>):<tr><td colSpan="9" style={{padding:"2rem",textAlign:"center",color:"var(--muted)"}}>No expenses for selected filters.</td></tr>}</tbody></table></div>
+        <div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th><th></th></tr></thead><tbody>{analysisRows.length?analysisRows.map(r=><tr key={r.id}><td>{formatDate(r.date)}</td><td>{r.category}</td><td>{r.subCategory||"—"}</td><td>{r.person||"—"}</td><td>{r.scope||"—"}</td><td>{r.funding}</td><td style={{fontWeight:700}}>{fmt(r.amount)}</td><td>{r.source}</td><td>{r.description||"—"}</td><td style={{whiteSpace:"nowrap"}}>{r.source==="Zivara Bank"?<button style={btn(false)} onClick={()=>openClassification(r.rawBankRow)}>{r.classified?"Edit Classification":"Classify"}</button>:""}</td></tr>):<tr><td colSpan="10" style={{padding:"2rem",textAlign:"center",color:"var(--muted)"}}>No expenses for selected filters.</td></tr>}</tbody></table></div>
       </div>
-      <div style={{fontSize:".72rem",color:"var(--muted)"}}>Zivara-paid rows are picked from bank payments posted to expense/travel/hotel/food-type ledgers. Personal-paid rows come from Partner / Staff Expenses. Add subcategory, traveller/person and travel scope on the expense entry for richer analysis.</div>
+      <div style={{fontSize:".72rem",color:"var(--muted)"}}>Zivara-paid rows are picked from bank payments posted to expense/travel/hotel/food-type ledgers. Use <strong>Classify</strong> to add category, subcategory, person/traveller and Domestic / International to older Zivara bank payments without changing the accounting transaction.</div>
     </>}
+
+    {classifyOpen&&<div onMouseDown={e=>{if(e.target===e.currentTarget)setClassifyOpen(false)}} style={{position:"fixed",inset:0,zIndex:1100,background:"rgba(0,0,0,.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
+      <div style={{...card,width:"min(620px,95vw)",boxShadow:"0 20px 60px rgba(0,0,0,.35)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"1rem",marginBottom:"1rem"}}>
+          <div><h3 style={{margin:0,fontWeight:750}}>Classify Zivara-Paid Expense</h3><div style={{fontSize:".73rem",color:"var(--muted)",marginTop:".2rem"}}>{classifyRow?.Description||classifyRow?.ReferenceID||"Bank payment"} · {fmt(classifyRow?.AmountOut||0)}</div></div>
+          <button style={btn(false)} onClick={()=>setClassifyOpen(false)}>Close</button>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:".75rem"}}>
+          <div><label style={label}>Category</label><select style={inp} value={classifyForm.Category} onChange={e=>setClassifyForm(p=>({...p,Category:e.target.value,SubCategory:""}))}><option value="">— Select —</option>{categoryOptions.map(x=><option key={x}>{x}</option>)}{classifyForm.Category&&!categoryOptions.includes(classifyForm.Category)&&<option>{classifyForm.Category}</option>}</select></div>
+          <div><label style={label}>Subcategory</label><input style={inp} list="bank-classification-subcategories" value={classifyForm.SubCategory} onChange={e=>setClassifyForm(p=>({...p,SubCategory:e.target.value}))} placeholder="Domestic Flight / Cab..."/><datalist id="bank-classification-subcategories">{[...new Set([...(DEFAULT_SUBCATEGORIES[classifyForm.Category]||[]),...expenses.flatMap(e=>{const m=readExpenseMeta(e.Notes).meta;return m.subCategory?[m.subCategory]:[]})])].map(x=><option key={x} value={x}/>)}</datalist></div>
+          <div><label style={label}>Expense For / Traveller</label><input style={inp} list="bank-classification-people" value={classifyForm.ExpenseFor} onChange={e=>setClassifyForm(p=>({...p,ExpenseFor:e.target.value}))} placeholder="Manu / Dinu / Zara..."/><datalist id="bank-classification-people">{allPeople.map(x=><option key={x} value={x}/>)}</datalist></div>
+          <div><label style={label}>Domestic / International</label><select style={inp} value={classifyForm.TravelScope} onChange={e=>setClassifyForm(p=>({...p,TravelScope:e.target.value}))}><option value="">— Not applicable —</option><option>Domestic</option><option>International</option></select></div>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",gap:".65rem",marginTop:"1rem",flexWrap:"wrap"}}>
+          <button type="button" style={{...btn(false),color:"var(--danger)"}} onClick={clearClassification}>Clear Classification</button>
+          <div style={{display:"flex",gap:".65rem"}}><button type="button" style={btn(false)} onClick={()=>setClassifyOpen(false)}>Cancel</button><button type="button" style={btn()} onClick={saveClassification}>Save Classification</button></div>
+        </div>
+        <div style={{marginTop:".75rem",fontSize:".7rem",color:"var(--muted)"}}>This changes management reporting only. The bank transaction, ledger posting, amount and accounting narration are not edited.</div>
+      </div>
+    </div>}
 
     {formOpen&&<div onMouseDown={e=>{if(e.target===e.currentTarget)setFormOpen(false)}} style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(0,0,0,.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
       <div style={{...card,width:"min(980px,96vw)",maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.35)"}}>
