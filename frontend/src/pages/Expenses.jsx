@@ -13,7 +13,7 @@ const billingMonthFromDate=value=>{
 };
 
 const initial={
-  Date:today(),ExpenseType:"Travel",Category:"",PaidByType:"Partner",PaidBy:"",
+  Date:today(),ExpenseType:"Travel",Category:"",SubCategory:"",ExpenseFor:"",TravelScope:"",PaidByType:"Partner",PaidBy:"",
   ChargeTo:"",PaymentMode:"Card",Amount:"",VendorOrPerson:"",Description:"",
   BillAvailable:"No",BillLink:"",TaxableValue:"",CGSTAmount:"",SGSTAmount:"",
   IGSTAmount:"",GSTAmount:"",EmployeeName:"",ReimburseTo:"",
@@ -46,6 +46,43 @@ const exportDate=value=>{
 };
 const STATUS_COLOR={Draft:"var(--muted)",Submitted:"var(--warning)",Approved:"var(--success)",Reimbursed:"var(--accent2)",Paid:"var(--accent2)",Recovered:"var(--warning)"};
 
+const EXP_META_PREFIX="[[EXP_META:";
+const EXP_META_SUFFIX="]]";
+const DEFAULT_SUBCATEGORIES={
+  Travel:["Domestic Flight","International Flight","Cab Charges","Train","Bus","Visa","Airport Transfer"],
+  Hotel:["Domestic Hotel","International Hotel"],
+  Food:["Meals","Business Meal","Travel Meal"],
+  Office:["Printing","Stationery","Subscription","Courier"],
+  Vendor:["Professional Fee","Service Charge"],
+  Misc:["Miscellaneous"]
+};
+function readExpenseMeta(notes){
+  const text=String(notes||"");
+  const start=text.indexOf(EXP_META_PREFIX);
+  if(start<0)return {meta:{},notes:text};
+  const end=text.indexOf(EXP_META_SUFFIX,start+EXP_META_PREFIX.length);
+  if(end<0)return {meta:{},notes:text};
+  try{
+    const meta=JSON.parse(text.slice(start+EXP_META_PREFIX.length,end));
+    const clean=(text.slice(0,start)+text.slice(end+EXP_META_SUFFIX.length)).trim();
+    return {meta:meta&&typeof meta==="object"?meta:{},notes:clean};
+  }catch{return {meta:{},notes:text}}
+}
+function writeExpenseMeta(notes,meta){
+  const clean=readExpenseMeta(notes).notes.trim();
+  const compact=Object.fromEntries(Object.entries(meta||{}).filter(([,v])=>String(v||"").trim()));
+  return `${clean}${clean&&Object.keys(compact).length?"\n":""}${Object.keys(compact).length?`${EXP_META_PREFIX}${JSON.stringify(compact)}${EXP_META_SUFFIX}`:""}`.trim();
+}
+function bankExpenseCategory(row){
+  const ledger=String(row.LedgerName||"").trim();
+  if(!ledger)return "";
+  if(!/(expense|travel|hotel|food|cab|printing|stationery|subscription|courier|visa)/i.test(ledger))return "";
+  return ledger
+    .replace(/\bexpenses?\b/ig,"")
+    .replace(/\s+/g," ")
+    .trim() || "Other";
+}
+
 function Badge({value}){
   const color=STATUS_COLOR[value]||"var(--muted)";
   return <span style={{fontSize:".7rem",padding:".2rem .55rem",borderRadius:"99px",fontWeight:650,background:color+"22",color,border:`1px solid ${color}`}}>{value||"Draft"}</span>;
@@ -63,23 +100,35 @@ export default function Expenses(){
   const[formError,setFormError]=useState("");
   const[showGST,setShowGST]=useState(false);
   const[showMore,setShowMore]=useState(false);
+  const[addingCategory,setAddingCategory]=useState(false);
+  const[newCategory,setNewCategory]=useState("");
+  const[addingSubCategory,setAddingSubCategory]=useState(false);
+  const[newSubCategory,setNewSubCategory]=useState("");
+  const[bankTransactions,setBankTransactions]=useState([]);
+  const[view,setView]=useState("entries");
 
   const[fromDate,setFromDate]=useState(fyStart);
   const[toDate,setToDate]=useState("");
   const[filterPerson,setFilterPerson]=useState("");
   const[filterStatus,setFilterStatus]=useState("");
   const[search,setSearch]=useState("");
+  const[analysisCategory,setAnalysisCategory]=useState("");
+  const[analysisSubCategory,setAnalysisSubCategory]=useState("");
+  const[analysisPerson,setAnalysisPerson]=useState("");
+  const[analysisFunding,setAnalysisFunding]=useState("");
+  const[analysisScope,setAnalysisScope]=useState("");
 
   async function load(){
     setLoading(true);
     try{
-      const[e,v,p,u]=await Promise.allSettled([
-        apiGet("getExpenses"),apiGet("getVendors"),apiGet("getPartners"),apiGet("getUsers")
+      const[e,v,p,u,b]=await Promise.allSettled([
+        apiGet("getExpenses"),apiGet("getVendors"),apiGet("getPartners"),apiGet("getUsers"),apiGet("getBankTransactions")
       ]);
       if(e.status==="fulfilled"&&e.value.ok)setExpenses(e.value.data||[]);
       if(v.status==="fulfilled"&&v.value.ok)setVendors((v.value.data||[]).filter(x=>x.Status!=="Inactive"));
       if(p.status==="fulfilled"&&p.value.ok)setPartners((p.value.data||[]).filter(x=>x.Status!=="Inactive"));
       if(u.status==="fulfilled"&&u.value.ok)setUsers((u.value.data||[]).filter(x=>x.Status!=="Inactive"));
+      if(b.status==="fulfilled"&&b.value.ok)setBankTransactions(b.value.data||[]);
     }finally{setLoading(false)}
   }
   useEffect(()=>{load()},[]);
@@ -107,6 +156,22 @@ export default function Expenses(){
     ...expenses.map(e=>String(e.VendorOrPerson||"").trim()).filter(Boolean),
     ...vendors.map(v=>String(v.VendorName||"").trim()).filter(Boolean)
   ])].sort(),[expenses,vendors]);
+
+  const categoryOptions=useMemo(()=>[...new Set([
+    ...expenses.map(e=>String(e.Category||e.ExpenseType||"").trim()).filter(Boolean),
+    ...vendors.map(v=>String(v.Category||"").trim()).filter(Boolean),
+    "Travel","Hotel","Food","Office","Vendor","Misc"
+  ])].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"})),[expenses,vendors]);
+
+  const subCategoryOptions=useMemo(()=>{
+    const saved=expenses.flatMap(e=>{
+      const {meta}=readExpenseMeta(e.Notes);
+      const cat=String(e.Category||e.ExpenseType||"").trim();
+      return cat===form.Category&&meta.subCategory?[String(meta.subCategory).trim()]:[];
+    });
+    return [...new Set([...(DEFAULT_SUBCATEGORIES[form.Category]||[]),...saved].filter(Boolean))]
+      .sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"}));
+  },[expenses,form.Category]);
 
   const filtered=useMemo(()=>expenses
     .filter(e=>{
@@ -144,14 +209,17 @@ export default function Expenses(){
   function openAdd(){
     const d=today();
     setForm({...initial,Date:d,BillingMonth:billingMonthFromDate(d),Status:"Approved"});
-    setEditId(null);setFormError("");setShowGST(false);setShowMore(false);setFormOpen(true);
+    setEditId(null);setFormError("");setShowGST(false);setShowMore(false);
+    setAddingCategory(false);setNewCategory("");setAddingSubCategory(false);setNewSubCategory("");setFormOpen(true);
   }
 
   function openEdit(e){
     const cgst=e.CGSTAmount||"",sgst=e.SGSTAmount||"",igst=e.IGSTAmount||"";
+    const parsed=readExpenseMeta(e.Notes);
     setForm({
       Date:String(e.Date||"").slice(0,10),
       ExpenseType:e.ExpenseType||"Misc",Category:e.Category||"",
+      SubCategory:parsed.meta.subCategory||"",ExpenseFor:parsed.meta.expenseFor||"",TravelScope:parsed.meta.travelScope||"",
       PaidByType:inferPayerType(e.PaidBy||""),PaidBy:e.PaidBy||"",
       ChargeTo:e.ChargeTo||"",PaymentMode:e.PaymentMode||"Cash",
       Amount:e.Amount||"",VendorOrPerson:e.VendorOrPerson||"",
@@ -160,11 +228,12 @@ export default function Expenses(){
       CGSTAmount:cgst,SGSTAmount:sgst,IGSTAmount:igst,GSTAmount:e.GSTAmount||"",
       EmployeeName:e.EmployeeName||"",ReimburseTo:e.ReimburseTo||e.SettlementTo||e.PaidBy||"",
       BillingMonth:e.BillingMonth||billingMonthFromDate(String(e.Date||"").slice(0,10)),
-      Notes:e.Notes||"",Status:e.Status||"Draft"
+      Notes:parsed.notes||"",Status:e.Status||"Draft"
     });
     setEditId(e.ExpenseID);setFormError("");
     setShowGST(Number(cgst||0)>0||Number(sgst||0)>0||Number(igst||0)>0||Number(e.TaxableValue||0)>0);
-    setShowMore(!!(e.ChargeTo||e.Notes||e.BillLink||e.Category));
+    setShowMore(!!(e.ChargeTo||parsed.notes||e.BillLink||e.Category));
+    setAddingCategory(false);setNewCategory("");setAddingSubCategory(false);setNewSubCategory("");
     setFormOpen(true);
   }
 
@@ -181,6 +250,23 @@ export default function Expenses(){
     const vendor=vendors.find(v=>String(v.VendorName||"").trim()===value);
     setForm(p=>({...p,VendorOrPerson:value,Category:vendor?.Category&&!p.Category?vendor.Category:p.Category}));
   }
+  function changeCategory(value){
+    if(value==="__add_category__"){setAddingCategory(true);setNewCategory("");return}
+    setAddingCategory(false);setNewCategory("");
+    setForm(p=>({...p,Category:value,SubCategory:""}));
+  }
+  function addCategory(){
+    const value=String(newCategory||"").trim();if(!value)return;
+    setForm(p=>({...p,Category:value,SubCategory:""}));setAddingCategory(false);setNewCategory("");
+  }
+  function changeSubCategory(value){
+    if(value==="__add_subcategory__"){setAddingSubCategory(true);setNewSubCategory("");return}
+    setAddingSubCategory(false);setNewSubCategory("");set("SubCategory",value);
+  }
+  function addSubCategory(){
+    const value=String(newSubCategory||"").trim();if(!value)return;
+    set("SubCategory",value);setAddingSubCategory(false);setNewSubCategory("");
+  }
   function setGstPart(key,value){
     setForm(p=>{
       const next={...p,[key]:value};
@@ -195,6 +281,11 @@ export default function Expenses(){
     try{
       const payload={
         ...form,
+        Notes:writeExpenseMeta(form.Notes,{
+          subCategory:form.SubCategory,
+          expenseFor:form.ExpenseFor,
+          travelScope:form.TravelScope
+        }),
         GSTAmount:gstTotal?gstTotal.toFixed(2):"",
         BillAvailable:form.BillAvailable||"No",
         EmployeeName:form.PaidByType==="Staff"?form.PaidBy:(form.EmployeeName||""),
@@ -203,6 +294,7 @@ export default function Expenses(){
         ...(editId?{ExpenseID:editId}:{})
       };
       delete payload.PaidByType;
+      delete payload.SubCategory;delete payload.ExpenseFor;delete payload.TravelScope;
       const r=await apiPost(editId?"updateExpense":"saveExpense",payload);
       if(!r.ok)throw new Error(r.error||"Unable to save expense");
       setFormOpen(false);setEditId(null);await load();
@@ -221,6 +313,9 @@ export default function Expenses(){
       exportDate(e.Date),
       e.ExpenseType||"",
       e.Category||"",
+      readExpenseMeta(e.Notes).meta.subCategory||"",
+      readExpenseMeta(e.Notes).meta.expenseFor||"",
+      readExpenseMeta(e.Notes).meta.travelScope||"",
       Number(e.Amount||0).toFixed(2),
       e.PaidBy||"",
       e.ReimburseTo||e.SettlementTo||e.PaidBy||"",
@@ -231,7 +326,7 @@ export default function Expenses(){
       Number(e.TaxableValue||0).toFixed(2),
       Number(e.GSTAmount||0).toFixed(2)
     ]);
-    const headers=["Date","Type","Category","Amount","Paid By","Reimburse To","Mode","Status","Vendor / Person","Description","Taxable Value","GST"];
+    const headers=["Date","Type","Category","Subcategory","Expense For","Scope","Amount","Paid By","Reimburse To","Mode","Status","Vendor / Person","Description","Taxable Value","GST"];
     const table=`<table><thead><tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${
       rows.map(r=>`<tr>${r.map(v=>`<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join("")
     }</tbody></table>`;
@@ -282,11 +377,70 @@ export default function Expenses(){
         <div><strong>Total:</strong> ${escapeHtml(fmt(totals.amount))}</div>
         <div><strong>GST:</strong> ${escapeHtml(fmt(totals.gst))}</div>
       </div>
-      <table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Amount</th><th>Paid By</th><th>Reimburse To</th><th>Mode</th><th>Status</th><th>Description</th></tr></thead>
+      <table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Subcategory</th><th>Amount</th><th>Paid By</th><th>Reimburse To</th><th>Mode</th><th>Status</th><th>Description</th></tr></thead>
       <tbody>${bodyRows}</tbody></table>
       <script>window.onload=()=>{window.print();}<\/script>
       </body></html>`);
     w.document.close();
+  }
+
+  const managementRows=useMemo(()=>{
+    const personal=expenses.map(e=>{
+      const {meta}=readExpenseMeta(e.Notes);
+      return {
+        id:`EXP-${e.ExpenseID}`,date:String(e.Date||"").slice(0,10),
+        category:String(e.Category||e.ExpenseType||"Other").trim()||"Other",
+        subCategory:String(meta.subCategory||"").trim(),
+        person:String(meta.expenseFor||e.ChargeTo||"").trim(),
+        funding:String(e.PaidBy||"").trim()||"Personal",
+        scope:String(meta.travelScope||"").trim(),
+        amount:Number(e.Amount||0),description:e.Description||e.VendorOrPerson||"",
+        source:"Partner / Staff Expense",status:e.Status||""
+      };
+    });
+    const company=bankTransactions.flatMap(r=>{
+      const amount=Number(r.AmountOut||0),category=bankExpenseCategory(r);
+      if(amount<=0||!category)return [];
+      return [{
+        id:`BANK-${r.EntryID}`,date:String(r.Date||"").slice(0,10),category,
+        subCategory:"",person:"",funding:"Zivara",scope:"",amount,
+        description:r.Description||r.ReferenceID||"",source:"Zivara Bank",status:"Paid"
+      }];
+    });
+    return [...personal,...company];
+  },[expenses,bankTransactions]);
+
+  const analysisRows=useMemo(()=>managementRows.filter(r=>{
+    if(fromDate&&r.date<fromDate)return false;if(toDate&&r.date>toDate)return false;
+    if(analysisCategory&&r.category!==analysisCategory)return false;
+    if(analysisSubCategory&&r.subCategory!==analysisSubCategory)return false;
+    if(analysisPerson&&!String(r.person||"").toLowerCase().includes(analysisPerson.toLowerCase()))return false;
+    if(analysisFunding&&r.funding!==analysisFunding)return false;
+    if(analysisScope&&r.scope!==analysisScope)return false;
+    if(search&&!`${r.category} ${r.subCategory} ${r.person} ${r.funding} ${r.description}`.toLowerCase().includes(search.toLowerCase()))return false;
+    return true;
+  }).sort((a,b)=>b.date.localeCompare(a.date)),[managementRows,fromDate,toDate,analysisCategory,analysisSubCategory,analysisPerson,analysisFunding,analysisScope,search]);
+
+  const analysisTotal=useMemo(()=>analysisRows.reduce((s,r)=>s+r.amount,0),[analysisRows]);
+  const analysisCategories=useMemo(()=>[...new Set(managementRows.map(r=>r.category).filter(Boolean))].sort(),[managementRows]);
+  const analysisSubs=useMemo(()=>[...new Set(managementRows.filter(r=>!analysisCategory||r.category===analysisCategory).map(r=>r.subCategory).filter(Boolean))].sort(),[managementRows,analysisCategory]);
+  const analysisFundingOptions=useMemo(()=>[...new Set(managementRows.map(r=>r.funding).filter(Boolean))].sort(),[managementRows]);
+  const analysisCategoryTotals=useMemo(()=>Object.entries(analysisRows.reduce((a,r)=>{a[r.category]=(a[r.category]||0)+r.amount;return a},{})).sort((a,b)=>b[1]-a[1]),[analysisRows]);
+  const analysisFundingTotals=useMemo(()=>Object.entries(analysisRows.reduce((a,r)=>{a[r.funding]=(a[r.funding]||0)+r.amount;return a},{})).sort((a,b)=>b[1]-a[1]),[analysisRows]);
+
+  function exportAnalysisExcel(){
+    if(!analysisRows.length)return alert("No analysis rows to export.");
+    const summary=`<table><tr><th colspan="2">Expense Analysis Summary</th></tr><tr><td>Total Expense</td><td>${analysisTotal.toFixed(2)}</td></tr><tr><td>Records</td><td>${analysisRows.length}</td></tr></table>`;
+    const rows=analysisRows.map(r=>`<tr>${[exportDate(r.date),r.category,r.subCategory,r.person,r.scope,r.funding,r.amount.toFixed(2),r.source,r.description].map(v=>`<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join("");
+    const html=`<html><head><meta charset="utf-8"></head><body>${summary}<br><table><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th></tr>${rows}</table></body></html>`;
+    const blob=new Blob([html],{type:"application/vnd.ms-excel;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");
+    a.href=url;a.download=`expense-analysis-${fromDate||"all"}-to-${toDate||"latest"}.xls`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  }
+  function exportAnalysisPDF(){
+    if(!analysisRows.length)return alert("No analysis rows to export.");
+    const w=window.open("","_blank","width=1200,height=850");if(!w)return alert("Please allow pop-ups to export PDF.");
+    const rows=analysisRows.map(r=>`<tr><td>${escapeHtml(exportDate(r.date))}</td><td>${escapeHtml(r.category)}</td><td>${escapeHtml(r.subCategory||"—")}</td><td>${escapeHtml(r.person||"—")}</td><td>${escapeHtml(r.scope||"—")}</td><td>${escapeHtml(r.funding)}</td><td class="num">${escapeHtml(fmt(r.amount))}</td><td>${escapeHtml(r.source)}</td><td>${escapeHtml(r.description)}</td></tr>`).join("");
+    w.document.write(`<!doctype html><html><head><style>body{font-family:Arial,sans-serif;font-size:10px;color:#111;padding:18px}h1{font-size:18px;margin:0 0 4px}.summary{margin:10px 0 14px;font-size:12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #aaa;padding:4px;vertical-align:top;overflow-wrap:anywhere}th{background:#eee;text-align:left}.num{text-align:right;white-space:nowrap}@page{size:A4 landscape;margin:10mm}</style></head><body><h1>Zivara Family Office LLP — Expense Analysis</h1><div class="summary"><strong>Total:</strong> ${escapeHtml(fmt(analysisTotal))} · <strong>Records:</strong> ${analysisRows.length}</div><table><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th></tr>${rows}</table><script>window.onload=()=>window.print()<\/script></body></html>`);w.document.close();
   }
 
   const accountingExpenseName={
@@ -300,10 +454,13 @@ export default function Expenses(){
         <h2 style={{fontWeight:750,fontSize:"1.25rem",margin:0}}>Partner / Staff Expenses</h2>
         <p style={{color:"var(--muted)",fontSize:".8rem",margin:".2rem 0 0"}}>Personal-paid business expenses and reimbursements</p>
       </div>
-      <button style={btn()} onClick={openAdd}>+ Add Expense</button>
+      <div style={{display:"flex",gap:".5rem",flexWrap:"wrap"}}>
+        <button style={btn(false)} onClick={()=>setView(view==="entries"?"analysis":"entries")}>{view==="entries"?"Expense Analysis":"Expense Entries"}</button>
+        {view==="entries"&&<button style={btn()} onClick={openAdd}>+ Add Expense</button>}
+      </div>
     </div>
 
-    <div style={{...card,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".7rem",alignItems:"end"}}>
+    {view==="entries"&&<>\n    <div style={{...card,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".7rem",alignItems:"end"}}>
       <div><label style={label}>From</label><input style={inp} type="date" value={fromDate} onChange={e=>changeFromDate(e.target.value)}/></div>
       <div><label style={label}>To</label><input style={inp} type="date" min={fromDate||undefined} value={toDate} onChange={e=>setToDate(e.target.value)}/></div>
       <div><label style={label}>Paid By</label><select style={inp} value={filterPerson} onChange={e=>setFilterPerson(e.target.value)}><option value="">All people</option>{allPeople.map(x=><option key={x}>{x}</option>)}</select></div>
@@ -333,7 +490,7 @@ export default function Expenses(){
         <table>
           <thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Amount</th><th>Paid By</th><th>Reimburse To</th><th>Mode</th><th>Status</th><th>Description</th><th></th></tr></thead>
           <tbody>{filtered.map(e=><tr key={e.ExpenseID}>
-            <td>{formatDate(e.Date)}</td><td>{e.ExpenseType||"—"}</td><td>{e.Category||"—"}</td>
+            <td>{formatDate(e.Date)}</td><td>{e.ExpenseType||"—"}</td><td>{e.Category||"—"}</td><td>{readExpenseMeta(e.Notes).meta.subCategory||"—"}</td>
             <td style={{fontWeight:700}}>{fmt(e.Amount)}</td><td>{e.PaidBy||"—"}</td>
             <td>{e.ReimburseTo||e.SettlementTo||e.PaidBy||"—"}</td><td>{e.PaymentMode||"—"}</td>
             <td><Badge value={e.Status}/></td><td>{e.Description||"—"}</td>
@@ -342,6 +499,41 @@ export default function Expenses(){
         </table>}
       </div>
     </div>
+
+    </>}
+
+    {view==="analysis"&&<>
+      <div style={{...card,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".7rem",alignItems:"end"}}>
+        <div><label style={label}>From</label><input style={inp} type="date" value={fromDate} onChange={e=>changeFromDate(e.target.value)}/></div>
+        <div><label style={label}>To</label><input style={inp} type="date" min={fromDate||undefined} value={toDate} onChange={e=>setToDate(e.target.value)}/></div>
+        <div><label style={label}>Category</label><select style={inp} value={analysisCategory} onChange={e=>{setAnalysisCategory(e.target.value);setAnalysisSubCategory("")}}><option value="">All categories</option>{analysisCategories.map(x=><option key={x}>{x}</option>)}</select></div>
+        <div><label style={label}>Subcategory</label><select style={inp} value={analysisSubCategory} onChange={e=>setAnalysisSubCategory(e.target.value)}><option value="">All subcategories</option>{analysisSubs.map(x=><option key={x}>{x}</option>)}</select></div>
+        <div><label style={label}>Person / Traveller</label><input style={inp} value={analysisPerson} onChange={e=>setAnalysisPerson(e.target.value)} placeholder="Manu, Dinu, Zara..."/></div>
+        <div><label style={label}>Funding Source</label><select style={inp} value={analysisFunding} onChange={e=>setAnalysisFunding(e.target.value)}><option value="">All funding</option>{analysisFundingOptions.map(x=><option key={x}>{x}</option>)}</select></div>
+        <div><label style={label}>Domestic / International</label><select style={inp} value={analysisScope} onChange={e=>setAnalysisScope(e.target.value)}><option value="">All</option><option>Domestic</option><option>International</option></select></div>
+        <div><button style={btn(false)} onClick={()=>{setAnalysisCategory("");setAnalysisSubCategory("");setAnalysisPerson("");setAnalysisFunding("");setAnalysisScope("");setSearch("");setFromDate(fyStart);setToDate("")}}>Reset</button></div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(175px,1fr))",gap:".75rem"}}>
+        <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TOTAL EXPENSE</div><div style={{fontSize:"1.25rem",fontWeight:800,marginTop:".2rem"}}>{fmt(analysisTotal)}</div></div>
+        <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>RECORDS</div><div style={{fontSize:"1.25rem",fontWeight:800,marginTop:".2rem"}}>{analysisRows.length}</div></div>
+        <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>CATEGORIES</div><div style={{fontSize:"1.25rem",fontWeight:800,marginTop:".2rem"}}>{analysisCategoryTotals.length}</div></div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:".75rem"}}>
+        <div style={card}><div style={{fontWeight:700,marginBottom:".6rem"}}>By Category</div>{analysisCategoryTotals.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:"1rem",padding:".28rem 0",borderBottom:"1px solid var(--border)"}}><span>{k}</span><strong>{fmt(v)}</strong></div>)}</div>
+        <div style={card}><div style={{fontWeight:700,marginBottom:".6rem"}}>By Funding Source</div>{analysisFundingTotals.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:"1rem",padding:".28rem 0",borderBottom:"1px solid var(--border)"}}><span>{k}</span><strong>{fmt(v)}</strong></div>)}</div>
+      </div>
+
+      <div style={{...card,padding:0,overflow:"hidden"}}>
+        <div style={{padding:".85rem 1rem",fontWeight:700,borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",gap:"1rem",flexWrap:"wrap",alignItems:"center"}}>
+          <span>Expense Analysis · {analysisRows.length} records</span>
+          <div style={{display:"flex",gap:".5rem"}}><button style={btn(false)} onClick={exportAnalysisExcel}>Export Excel</button><button style={btn(false)} onClick={exportAnalysisPDF}>Export PDF</button></div>
+        </div>
+        <div style={{overflowX:"auto"}}><table><thead><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th></tr></thead><tbody>{analysisRows.length?analysisRows.map(r=><tr key={r.id}><td>{formatDate(r.date)}</td><td>{r.category}</td><td>{r.subCategory||"—"}</td><td>{r.person||"—"}</td><td>{r.scope||"—"}</td><td>{r.funding}</td><td style={{fontWeight:700}}>{fmt(r.amount)}</td><td>{r.source}</td><td>{r.description||"—"}</td></tr>):<tr><td colSpan="9" style={{padding:"2rem",textAlign:"center",color:"var(--muted)"}}>No expenses for selected filters.</td></tr>}</tbody></table></div>
+      </div>
+      <div style={{fontSize:".72rem",color:"var(--muted)"}}>Zivara-paid rows are picked from bank payments posted to expense/travel/hotel/food-type ledgers. Personal-paid rows come from Partner / Staff Expenses. Add subcategory, traveller/person and travel scope on the expense entry for richer analysis.</div>
+    </>}
 
     {formOpen&&<div onMouseDown={e=>{if(e.target===e.currentTarget)setFormOpen(false)}} style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(0,0,0,.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
       <div style={{...card,width:"min(980px,96vw)",maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.35)"}}>
@@ -355,7 +547,22 @@ export default function Expenses(){
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:".85rem"}}>
             <div><label style={label}>Date *</label><input style={inp} type="date" required value={form.Date} onChange={e=>updateDate(e.target.value)}/></div>
             <div><label style={label}>Expense Type *</label><select style={inp} value={form.ExpenseType} onChange={e=>set("ExpenseType",e.target.value)}>{["Travel","Hotel","Food","Office","Vendor","SalaryAdvance","Misc"].map(x=><option key={x}>{x}</option>)}</select></div>
-            <div><label style={label}>Category</label><input style={inp} value={form.Category} onChange={e=>set("Category",e.target.value)} placeholder="Meals / Cab / Printing..."/></div>
+            <div>
+              <label style={label}>Category</label>
+              <select style={inp} value={addingCategory?"__add_category__":form.Category} onChange={e=>changeCategory(e.target.value)}>
+                <option value="">— Select category —</option>{categoryOptions.map(x=><option key={x} value={x}>{x}</option>)}{form.Category&&!categoryOptions.includes(form.Category)&&<option>{form.Category}</option>}<option disabled>────────────</option><option value="__add_category__">+ Add Category</option>
+              </select>
+              {addingCategory&&<div style={{display:"flex",gap:".4rem",marginTop:".4rem"}}><input style={{...inp,minWidth:0}} autoFocus value={newCategory} onChange={e=>setNewCategory(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addCategory()}if(e.key==="Escape"){setAddingCategory(false);setNewCategory("")}}} placeholder="New category"/><button type="button" style={{...btn(),padding:".4rem .65rem"}} onClick={addCategory}>Add</button></div>}
+            </div>
+            <div>
+              <label style={label}>Subcategory</label>
+              <select style={inp} value={addingSubCategory?"__add_subcategory__":form.SubCategory} onChange={e=>changeSubCategory(e.target.value)} disabled={!form.Category}>
+                <option value="">— Select subcategory —</option>{subCategoryOptions.map(x=><option key={x} value={x}>{x}</option>)}{form.SubCategory&&!subCategoryOptions.includes(form.SubCategory)&&<option>{form.SubCategory}</option>}<option disabled>────────────</option><option value="__add_subcategory__">+ Add Subcategory</option>
+              </select>
+              {addingSubCategory&&<div style={{display:"flex",gap:".4rem",marginTop:".4rem"}}><input style={{...inp,minWidth:0}} autoFocus value={newSubCategory} onChange={e=>setNewSubCategory(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addSubCategory()}if(e.key==="Escape"){setAddingSubCategory(false);setNewSubCategory("")}}} placeholder="New subcategory"/><button type="button" style={{...btn(),padding:".4rem .65rem"}} onClick={addSubCategory}>Add</button></div>}
+            </div>
+            <div><label style={label}>Expense For / Traveller</label><input style={inp} list="expense-for-options" value={form.ExpenseFor} onChange={e=>set("ExpenseFor",e.target.value)} placeholder="Person name(s)"/><datalist id="expense-for-options">{allPeople.map(x=><option key={x} value={x}/>)}</datalist></div>
+            <div><label style={label}>Domestic / International</label><select style={inp} value={form.TravelScope} onChange={e=>set("TravelScope",e.target.value)}><option value="">— Not applicable —</option><option>Domestic</option><option>International</option></select></div>
             <div><label style={label}>Amount (₹) *</label><input style={inp} type="number" min="0" step=".01" required value={form.Amount} onChange={e=>set("Amount",e.target.value)}/></div>
 
             <div><label style={label}>Paid By Type *</label><select style={inp} value={form.PaidByType} onChange={e=>changePayerType(e.target.value)}><option>Partner</option><option>Staff</option></select></div>
