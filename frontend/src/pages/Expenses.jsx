@@ -94,6 +94,17 @@ function saveBankClassifications(value){
   try{localStorage.setItem(BANK_CLASSIFICATION_KEY,JSON.stringify(value||{}))}catch{}
 }
 
+const VENDOR_BILL_CLASSIFICATION_KEY="zivara_expense_vendor_bill_classifications_v1";
+function loadVendorBillClassifications(){
+  try{
+    const parsed=JSON.parse(localStorage.getItem(VENDOR_BILL_CLASSIFICATION_KEY)||"{}");
+    return parsed&&typeof parsed==="object"?parsed:{};
+  }catch{return {}}
+}
+function saveVendorBillClassifications(value){
+  try{localStorage.setItem(VENDOR_BILL_CLASSIFICATION_KEY,JSON.stringify(value||{}))}catch{}
+}
+
 function normExpenseText(value){
   return String(value||"").trim().toLowerCase().replace(/\s+/g," ");
 }
@@ -173,7 +184,9 @@ export default function Expenses(){
   const[bankTransactions,setBankTransactions]=useState([]);
   const[payables,setPayables]=useState([]);
   const[bankClassifications,setBankClassifications]=useState(()=>loadBankClassifications());
+  const[vendorBillClassifications,setVendorBillClassifications]=useState(()=>loadVendorBillClassifications());
   const[classifyOpen,setClassifyOpen]=useState(false);
+  const[classifyKind,setClassifyKind]=useState("bank");
   const[classifyRow,setClassifyRow]=useState(null);
   const[classifyForm,setClassifyForm]=useState({Category:"",SubCategory:"",ExpenseFor:"",TravelScope:""});
   const[view,setView]=useState("entries");
@@ -208,6 +221,7 @@ export default function Expenses(){
   }
   useEffect(()=>{load()},[]);
   useEffect(()=>{saveBankClassifications(bankClassifications)},[bankClassifications]);
+  useEffect(()=>{saveVendorBillClassifications(vendorBillClassifications)},[vendorBillClassifications]);
 
   const partnerNames=useMemo(
     ()=>[...new Set(partners.map(p=>String(p.PartnerName||"").trim()).filter(Boolean))].sort(),
@@ -460,8 +474,9 @@ export default function Expenses(){
     w.document.close();
   }
 
-  function openClassification(row){
+  function openBankClassification(row){
     const existing=bankClassifications[row.EntryID]||{};
+    setClassifyKind("bank");
     setClassifyRow(row);
     setClassifyForm({
       Category:existing.Category||bankExpenseCategory(row)||"",
@@ -471,26 +486,47 @@ export default function Expenses(){
     });
     setClassifyOpen(true);
   }
+  function openVendorBillClassification(row){
+    const existing=vendorBillClassifications[row.PayableID]||{};
+    const autoSub=vendorBillSubCategory(row);
+    setClassifyKind("vendor");
+    setClassifyRow(row);
+    setClassifyForm({
+      Category:existing.Category||vendorBillCategory(row)||"",
+      SubCategory:existing.SubCategory||autoSub||"",
+      ExpenseFor:existing.ExpenseFor||"",
+      TravelScope:existing.TravelScope||(/international|overseas/i.test(autoSub)?"International":/domestic/i.test(autoSub)?"Domestic":"")
+    });
+    setClassifyOpen(true);
+  }
   function saveClassification(){
-    if(!classifyRow?.EntryID)return;
-    setBankClassifications(prev=>({
-      ...prev,
-      [classifyRow.EntryID]:{
-        Category:String(classifyForm.Category||"").trim(),
-        SubCategory:String(classifyForm.SubCategory||"").trim(),
-        ExpenseFor:String(classifyForm.ExpenseFor||"").trim(),
-        TravelScope:String(classifyForm.TravelScope||"").trim()
-      }
-    }));
+    const data={
+      Category:String(classifyForm.Category||"").trim(),
+      SubCategory:String(classifyForm.SubCategory||"").trim(),
+      ExpenseFor:String(classifyForm.ExpenseFor||"").trim(),
+      TravelScope:String(classifyForm.TravelScope||"").trim()
+    };
+    if(classifyKind==="vendor"){
+      if(!classifyRow?.PayableID)return;
+      setVendorBillClassifications(prev=>({...prev,[classifyRow.PayableID]:data}));
+    }else{
+      if(!classifyRow?.EntryID)return;
+      setBankClassifications(prev=>({...prev,[classifyRow.EntryID]:data}));
+    }
     setClassifyOpen(false);
   }
   function clearClassification(){
-    if(!classifyRow?.EntryID)return;
-    setBankClassifications(prev=>{
-      const next={...prev};
-      delete next[classifyRow.EntryID];
-      return next;
-    });
+    if(classifyKind==="vendor"){
+      if(!classifyRow?.PayableID)return;
+      setVendorBillClassifications(prev=>{
+        const next={...prev}; delete next[classifyRow.PayableID]; return next;
+      });
+    }else{
+      if(!classifyRow?.EntryID)return;
+      setBankClassifications(prev=>{
+        const next={...prev}; delete next[classifyRow.EntryID]; return next;
+      });
+    }
     setClassifyOpen(false);
   }
 
@@ -517,21 +553,24 @@ export default function Expenses(){
       const amount=Number(v.GrossAmount||0);
       if(amount<=0)return [];
       const personallyPaid=normExpenseText(v.PaidByType||"Company")!=="company"&&String(v.PaidByName||"").trim();
-      const sub=vendorBillSubCategory(v);
-      const scope=/international|overseas/i.test(sub)?"International":/domestic/i.test(sub)?"Domestic":"";
+      const classification=vendorBillClassifications[v.PayableID]||{};
+      const autoSub=vendorBillSubCategory(v);
+      const sub=String(classification.SubCategory||autoSub||"").trim();
+      const scope=String(classification.TravelScope||(/international|overseas/i.test(sub)?"International":/domestic/i.test(sub)?"Domestic":"")).trim();
       return [{
         id:`PAY-${v.PayableID}`,
         date:String(v.BillDate||"").slice(0,10),
-        category:vendorBillCategory(v),
+        category:String(classification.Category||vendorBillCategory(v)||"Vendor Bill").trim(),
         subCategory:sub,
-        person:"",
+        person:String(classification.ExpenseFor||"").trim(),
         funding:personallyPaid?String(v.PaidByName).trim():"Zivara / Vendor Bill",
         scope,
         amount,
         description:[v.VendorName,v.BillNo,v.Description].filter(Boolean).join(" · "),
         source:"Vendor Bill",
         status:v.Status||"",
-        rawPayable:v
+        rawPayable:v,
+        classified:!!vendorBillClassifications[v.PayableID]
       }];
     });
 
@@ -556,7 +595,7 @@ export default function Expenses(){
       }];
     });
     return [...personal,...vendorBills,...company];
-  },[expenses,payables,bankTransactions,bankClassifications]);
+  },[expenses,payables,bankTransactions,bankClassifications,vendorBillClassifications]);
 
   const analysisRows=useMemo(()=>managementRows.filter(r=>{
     if(fromDate&&r.date<fromDate)return false;if(toDate&&r.date>toDate)return false;
@@ -738,10 +777,12 @@ export default function Expenses(){
                   <td style={{fontWeight:700,whiteSpace:"nowrap"}}>{fmt(r.amount)}</td>
                   <td>
                     {String(r.source||"").startsWith("Zivara Bank")
-                      ? <button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openClassification(r.rawBankRow)}>{r.classified?"Edit Classification":"Classify"}</button>
+                      ? <button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openBankClassification(r.rawBankRow)}>{r.classified?"Edit Classification":"Classify"}</button>
                       : r.source==="Partner / Staff Expense"
                         ? <button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openEdit(r.rawExpense)}>Edit Expense</button>
-                        : <span style={{fontSize:".72rem",color:"var(--muted)",fontWeight:650}}>Vendor Bill</span>}
+                        : r.source==="Vendor Bill"
+                          ? <button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>openVendorBillClassification(r.rawPayable)}>{r.classified?"Edit Classification":"Classify"}</button>
+                          : <span style={{color:"var(--muted)"}}>—</span>}
                   </td>
                   <td><button style={{...btn(false),padding:".38rem .55rem",fontSize:".74rem"}} onClick={()=>toggleAnalysisDetails(r.id)}>{expandedAnalysisRows[r.id]?"Hide":"View"}</button></td>
                 </tr>
@@ -770,13 +811,20 @@ export default function Expenses(){
           </div>
         </div>
       </div>
-      <div style={{fontSize:".72rem",color:"var(--muted)"}}><strong>Double-count safeguard:</strong> Vendor Bills are counted on their bill date. Later Zivara bank payments that settle those bills are excluded from expense totals. Personal-paid expenses are counted once when incurred; later reimbursements are not added again. Only genuine direct Zivara bank expenses without an underlying Vendor Bill are counted from Transactions. PDF/Excel export the same filtered management-expense view.</div>
+      <div style={{fontSize:".72rem",color:"var(--muted)"}}><strong>Double-count safeguard:</strong> Vendor Bills are counted on their bill date and can now be classified by Category, Subcategory, Person/Traveller and Domestic/International. Later Zivara bank payments that settle those bills are excluded from expense totals. Personal-paid expenses are counted once when incurred; later reimbursements are not added again. Only genuine direct Zivara bank expenses without an underlying Vendor Bill are counted from Transactions. PDF/Excel export the same filtered management-expense view.</div>
     </>}
 
     {classifyOpen&&<div onMouseDown={e=>{if(e.target===e.currentTarget)setClassifyOpen(false)}} style={{position:"fixed",inset:0,zIndex:1100,background:"rgba(0,0,0,.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
       <div style={{...card,width:"min(620px,95vw)",boxShadow:"0 20px 60px rgba(0,0,0,.35)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"1rem",marginBottom:"1rem"}}>
-          <div><h3 style={{margin:0,fontWeight:750}}>Classify Zivara-Paid Expense</h3><div style={{fontSize:".73rem",color:"var(--muted)",marginTop:".2rem"}}>{classifyRow?.Description||classifyRow?.ReferenceID||"Bank payment"} · {fmt(classifyRow?.AmountOut||0)}</div></div>
+          <div>
+            <h3 style={{margin:0,fontWeight:750}}>{classifyKind==="vendor"?"Classify Vendor Bill":"Classify Zivara-Paid Expense"}</h3>
+            <div style={{fontSize:".73rem",color:"var(--muted)",marginTop:".2rem"}}>
+              {classifyKind==="vendor"
+                ? `${classifyRow?.VendorName||"Vendor"} · ${classifyRow?.BillNo||""} · ${fmt(classifyRow?.GrossAmount||0)}`
+                : `${classifyRow?.Description||classifyRow?.ReferenceID||"Bank payment"} · ${fmt(classifyRow?.AmountOut||0)}`}
+            </div>
+          </div>
           <button style={btn(false)} onClick={()=>setClassifyOpen(false)}>Close</button>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:".75rem"}}>
@@ -789,7 +837,11 @@ export default function Expenses(){
           <button type="button" style={{...btn(false),color:"var(--danger)"}} onClick={clearClassification}>Clear Classification</button>
           <div style={{display:"flex",gap:".65rem"}}><button type="button" style={btn(false)} onClick={()=>setClassifyOpen(false)}>Cancel</button><button type="button" style={btn()} onClick={saveClassification}>Save Classification</button></div>
         </div>
-        <div style={{marginTop:".75rem",fontSize:".7rem",color:"var(--muted)"}}>This changes management reporting only. The bank transaction, ledger posting, amount and accounting narration are not edited.</div>
+        <div style={{marginTop:".75rem",fontSize:".7rem",color:"var(--muted)"}}>
+          {classifyKind==="vendor"
+            ?"This changes Expense Analysis classification only. Vendor bill amount, GST/TDS, payment status and accounting posting are not edited."
+            :"This changes management reporting only. The bank transaction, ledger posting, amount and accounting narration are not edited."}
+        </div>
       </div>
     </div>}
 
