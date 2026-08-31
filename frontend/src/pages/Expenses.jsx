@@ -275,11 +275,32 @@ export default function Expenses(){
     ...vendors.map(v=>String(v.VendorName||"").trim()).filter(Boolean)
   ])].sort(),[expenses,vendors]);
 
-  const categoryOptions=useMemo(()=>[...new Set([
-    ...expenses.map(e=>String(e.Category||e.ExpenseType||"").trim()).filter(Boolean),
-    ...vendors.map(v=>String(v.Category||"").trim()).filter(Boolean),
-    "Travel","Hotel","Food","Office","Vendor","Misc"
-  ])].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"})),[expenses,vendors]);
+  const categoryOptions=useMemo(()=>{
+    const raw=[
+      ...expenses.map(e=>String(e.Category||e.ExpenseType||"").trim()).filter(Boolean),
+      ...vendors.map(v=>String(v.Category||"").trim()).filter(Boolean),
+      ...payables.map(v=>String(v.VendorCategory||v.ExpenseType||"").trim()).filter(Boolean),
+      ...payables.flatMap(v=>(Array.isArray(v.LineItems)?v.LineItems:[])
+        .map(x=>String(x.LedgerName||x.Particulars||"").trim())
+        .filter(Boolean)
+        .map(x=>x.replace(/\bexpenses?\b/ig,"").replace(/\s+/g," ").trim())
+        .filter(Boolean)),
+      ...Object.values(vendorBillClassifications||{}).map(x=>String(x?.Category||"").trim()).filter(Boolean),
+      ...Object.values(bankClassifications||{}).map(x=>String(x?.Category||"").trim()).filter(Boolean),
+      "Travel","Hotel","Food","Office","Vendor","Misc"
+    ];
+
+    // De-duplicate case-insensitively while keeping the clearest existing label.
+    const byKey=new Map();
+    for(const value of raw){
+      const clean=String(value||"").trim().replace(/\s+/g," ");
+      if(!clean)continue;
+      const key=clean.toLowerCase();
+      if(!byKey.has(key))byKey.set(key,clean);
+    }
+
+    return [...byKey.values()].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"}));
+  },[expenses,vendors,payables,vendorBillClassifications,bankClassifications]);
 
   const subCategoryOptions=useMemo(()=>{
     const saved=expenses.flatMap(e=>{
