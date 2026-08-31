@@ -269,6 +269,8 @@ export default function Expenses(){
   const[analysisPageSize,setAnalysisPageSize]=useState(25);
   const[analysisPage,setAnalysisPage]=useState(1);
   const[expandedAnalysisRows,setExpandedAnalysisRows]=useState({});
+  const[categoryDrill,setCategoryDrill]=useState({});
+  const[fundingDrill,setFundingDrill]=useState({});
 
   const[fromDate,setFromDate]=useState(fyStart);
   const[toDate,setToDate]=useState("");
@@ -750,6 +752,46 @@ export default function Expenses(){
   const analysisFundingOptions=useMemo(()=>[...new Set(managementRows.map(r=>r.funding).filter(Boolean))].sort(),[managementRows]);
   const analysisCategoryTotals=useMemo(()=>Object.entries(analysisRows.reduce((a,r)=>{a[r.category]=(a[r.category]||0)+r.amount;return a},{})).sort((a,b)=>b[1]-a[1]),[analysisRows]);
   const analysisFundingTotals=useMemo(()=>Object.entries(analysisRows.reduce((a,r)=>{a[r.funding]=(a[r.funding]||0)+r.amount;return a},{})).sort((a,b)=>b[1]-a[1]),[analysisRows]);
+
+  const categoryDrillData=useMemo(()=>{
+    const result={};
+    for(const r of analysisRows){
+      const cat=r.category||"Unclassified";
+      if(!result[cat])result[cat]={total:0,subs:{},people:{},vendors:{},rows:[]};
+      const g=result[cat];
+      g.total+=r.amount;g.rows.push(r);
+      const sub=r.subCategory||"Unclassified";
+      g.subs[sub]=(g.subs[sub]||0)+r.amount;
+      const person=r.person||"Unassigned";
+      g.people[person]=(g.people[person]||0)+r.amount;
+      const vendor=r.rawPayable?.VendorName||r.rawExpense?.VendorOrPerson||r.rawBankRow?.Description||r.source||"Other";
+      const vendorKey=String(vendor||"Other").trim()||"Other";
+      g.vendors[vendorKey]=(g.vendors[vendorKey]||0)+r.amount;
+    }
+    return result;
+  },[analysisRows]);
+
+  const fundingDrillData=useMemo(()=>{
+    const result={};
+    for(const r of analysisRows){
+      const fund=r.funding||"Unassigned";
+      if(!result[fund])result[fund]={total:0,categories:{},subs:{},people:{},vendors:{},rows:[]};
+      const g=result[fund];
+      g.total+=r.amount;g.rows.push(r);
+      const cat=r.category||"Unclassified";
+      g.categories[cat]=(g.categories[cat]||0)+r.amount;
+      const sub=r.subCategory||"Unclassified";
+      g.subs[sub]=(g.subs[sub]||0)+r.amount;
+      const person=r.person||"Unassigned";
+      g.people[person]=(g.people[person]||0)+r.amount;
+      const vendor=r.rawPayable?.VendorName||r.rawExpense?.VendorOrPerson||r.rawBankRow?.Description||r.source||"Other";
+      const vendorKey=String(vendor||"Other").trim()||"Other";
+      g.vendors[vendorKey]=(g.vendors[vendorKey]||0)+r.amount;
+    }
+    return result;
+  },[analysisRows]);
+
+  const sortedPairs=obj=>Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]);
   const analysisSourceTotals=useMemo(()=>analysisRows.reduce((a,r)=>{
     if(r.source==="Vendor Bill")a.vendorBills+=r.amount;
     else if(r.source==="Partner / Staff Expense")a.personal+=r.amount;
@@ -863,15 +905,50 @@ export default function Expenses(){
         <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>RECORDS</div><div style={{fontSize:"1.08rem",fontWeight:800,marginTop:".2rem"}}>{analysisRows.length}</div></div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:".75rem"}}>
-        <details style={card}>
-          <summary style={{fontWeight:700,cursor:"pointer",userSelect:"none"}}>By Category · {analysisCategoryTotals.length}</summary>
-          <div style={{marginTop:".6rem"}}>{analysisCategoryTotals.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:"1rem",padding:".28rem 0",borderBottom:"1px solid var(--border)"}}><span style={{overflowWrap:"anywhere"}}>{k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong></div>)}</div>
-        </details>
-        <details style={card}>
-          <summary style={{fontWeight:700,cursor:"pointer",userSelect:"none"}}>By Funding Source · {analysisFundingTotals.length}</summary>
-          <div style={{marginTop:".6rem"}}>{analysisFundingTotals.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",gap:"1rem",padding:".28rem 0",borderBottom:"1px solid var(--border)"}}><span style={{overflowWrap:"anywhere"}}>{k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong></div>)}</div>
-        </details>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:".75rem"}}>
+        <div style={card}>
+          <div style={{fontWeight:800,marginBottom:".55rem"}}>By Category · {analysisCategoryTotals.length}</div>
+          {analysisCategoryTotals.map(([k,v])=>{
+            const open=!!categoryDrill[k],g=categoryDrillData[k]||{};
+            return <div key={k} style={{borderBottom:"1px solid var(--border)",padding:".28rem 0"}}>
+              <button type="button" onClick={()=>setCategoryDrill(p=>({...p,[k]:!p[k]}))} style={{width:"100%",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:".18rem 0",cursor:"pointer",textAlign:"left"}}>
+                <span style={{fontWeight:650,overflowWrap:"anywhere"}}>{open?"▼":"▶"} {k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong>
+              </button>
+              {open&&<div style={{margin:".45rem 0 .5rem 1rem",paddingLeft:".65rem",borderLeft:"2px solid var(--border)"}}>
+                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",marginBottom:".25rem"}}>SUBCATEGORY</div>
+                {sortedPairs(g.subs).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
+                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>PERSON / TRAVELLER</div>
+                {sortedPairs(g.people).slice(0,8).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
+                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>TOP VENDORS / SOURCES</div>
+                {sortedPairs(g.vendors).slice(0,8).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span style={{overflowWrap:"anywhere"}}>{name}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(amt)}</strong></div>)}
+                <button type="button" style={{...btn(false),marginTop:".5rem",padding:".35rem .55rem",fontSize:".72rem"}} onClick={()=>{setAnalysisCategory(k);setAnalysisPage(1)}}>Show {g.rows?.length||0} transactions</button>
+              </div>}
+            </div>
+          })}
+        </div>
+
+        <div style={card}>
+          <div style={{fontWeight:800,marginBottom:".55rem"}}>By Funding Source · {analysisFundingTotals.length}</div>
+          {analysisFundingTotals.map(([k,v])=>{
+            const open=!!fundingDrill[k],g=fundingDrillData[k]||{};
+            return <div key={k} style={{borderBottom:"1px solid var(--border)",padding:".28rem 0"}}>
+              <button type="button" onClick={()=>setFundingDrill(p=>({...p,[k]:!p[k]}))} style={{width:"100%",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:".18rem 0",cursor:"pointer",textAlign:"left"}}>
+                <span style={{fontWeight:650,overflowWrap:"anywhere"}}>{open?"▼":"▶"} {k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong>
+              </button>
+              {open&&<div style={{margin:".45rem 0 .5rem 1rem",paddingLeft:".65rem",borderLeft:"2px solid var(--border)"}}>
+                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",marginBottom:".25rem"}}>CATEGORY</div>
+                {sortedPairs(g.categories).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
+                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>SUBCATEGORY</div>
+                {sortedPairs(g.subs).slice(0,10).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
+                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>TOP PEOPLE / TRAVELLERS</div>
+                {sortedPairs(g.people).slice(0,8).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
+                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>TOP VENDORS / SOURCES</div>
+                {sortedPairs(g.vendors).slice(0,8).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span style={{overflowWrap:"anywhere"}}>{name}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(amt)}</strong></div>)}
+                <button type="button" style={{...btn(false),marginTop:".5rem",padding:".35rem .55rem",fontSize:".72rem"}} onClick={()=>{setAnalysisFunding(k);setAnalysisPage(1)}}>Show {g.rows?.length||0} transactions</button>
+              </div>}
+            </div>
+          })}
+        </div>
       </div>
 
       <div style={{...card,padding:0,overflow:"hidden"}}>
@@ -946,6 +1023,7 @@ export default function Expenses(){
           </div>
         </div>
       </div>
+      <div style={{fontSize:".72rem",color:"var(--muted)",marginBottom:".25rem"}}><strong>Drill-down:</strong> click any Category or Funding Source above to see its Subcategory, Person/Traveller and top Vendor/Source breakup, then use “Show transactions” to filter the detailed table.</div>
       <div style={{fontSize:".72rem",color:"var(--muted)"}}><strong>Double-count safeguard:</strong> Vendor Bills are counted on their bill date and can now be classified by Category, Subcategory, Person/Traveller and Domestic/International. Later Zivara bank payments that settle those bills are excluded from expense totals. Personal-paid expenses are counted once when incurred; later reimbursements are not added again. Only genuine direct Zivara bank expenses without an underlying Vendor Bill are counted from Transactions. PDF/Excel export the same filtered management-expense view.</div>
     </>}
 
