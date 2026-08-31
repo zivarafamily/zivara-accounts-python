@@ -861,6 +861,20 @@ export default function Expenses(){
           </div>
           <button style={btn(false)} onClick={()=>setClassifyOpen(false)}>Close</button>
         </div>
+        <div style={{marginBottom:".85rem",padding:".7rem .8rem",border:"1px solid var(--border)",borderRadius:"7px",background:"rgba(255,255,255,.025)"}}>
+          <div style={{fontSize:".64rem",color:"var(--muted)",fontWeight:700,marginBottom:".25rem"}}>DESCRIPTION / NARRATION</div>
+          <div style={{fontSize:".82rem",lineHeight:1.4,whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word"}}>
+            {classifyKind==="vendor"
+              ? (classifyRow?.Description||classifyRow?.VendorName||"—")
+              : (classifyRow?.Description||classifyRow?.Narration||classifyRow?.ReferenceID||"—")}
+          </div>
+          <div style={{display:"flex",gap:".8rem",flexWrap:"wrap",marginTop:".45rem",fontSize:".7rem",color:"var(--muted)"}}>
+            {classifyKind==="vendor"&&classifyRow?.BillNo&&<span>Bill: <strong style={{color:"var(--text)"}}>{classifyRow.BillNo}</strong></span>}
+            {classifyKind==="bank"&&classifyRow?.ReferenceID&&<span>Reference: <strong style={{color:"var(--text)"}}>{classifyRow.ReferenceID}</strong></span>}
+            {classifyKind==="bank"&&classifyRow?.LedgerName&&<span>Ledger: <strong style={{color:"var(--text)"}}>{classifyRow.LedgerName}</strong></span>}
+          </div>
+        </div>
+
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:".75rem"}}>
           <div><label style={label}>Category</label><select style={inp} value={classifyForm.Category} onChange={e=>setClassifyForm(p=>({...p,Category:e.target.value,SubCategory:""}))}><option value="">— Select —</option>{categoryOptions.map(x=><option key={x}>{x}</option>)}{classifyForm.Category&&!categoryOptions.includes(classifyForm.Category)&&<option>{classifyForm.Category}</option>}</select></div>
           <div>
