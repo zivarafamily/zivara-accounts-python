@@ -271,6 +271,8 @@ export default function Expenses(){
   const[expandedAnalysisRows,setExpandedAnalysisRows]=useState({});
   const[categoryDrill,setCategoryDrill]=useState({});
   const[fundingDrill,setFundingDrill]=useState({});
+  const[showCategoryDrill,setShowCategoryDrill]=useState(false);
+  const[showFundingDrill,setShowFundingDrill]=useState(false);
 
   const[fromDate,setFromDate]=useState(fyStart);
   const[toDate,setToDate]=useState("");
@@ -907,47 +909,70 @@ export default function Expenses(){
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:".75rem"}}>
         <div style={card}>
-          <div style={{fontWeight:800,marginBottom:".55rem"}}>By Category · {analysisCategoryTotals.length}</div>
-          {analysisCategoryTotals.map(([k,v])=>{
-            const open=!!categoryDrill[k],g=categoryDrillData[k]||{};
-            return <div key={k} style={{borderBottom:"1px solid var(--border)",padding:".28rem 0"}}>
-              <button type="button" onClick={()=>setCategoryDrill(p=>({...p,[k]:!p[k]}))} style={{width:"100%",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:".18rem 0",cursor:"pointer",textAlign:"left"}}>
-                <span style={{fontWeight:650,overflowWrap:"anywhere"}}>{open?"▼":"▶"} {k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong>
-              </button>
-              {open&&<div style={{margin:".45rem 0 .5rem 1rem",paddingLeft:".65rem",borderLeft:"2px solid var(--border)"}}>
-                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",marginBottom:".25rem"}}>SUBCATEGORY</div>
-                {sortedPairs(g.subs).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
-                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>PERSON / TRAVELLER</div>
-                {sortedPairs(g.people).slice(0,8).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
-                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>TOP VENDORS / SOURCES</div>
-                {sortedPairs(g.vendors).slice(0,8).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span style={{overflowWrap:"anywhere"}}>{name}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(amt)}</strong></div>)}
-                <button type="button" style={{...btn(false),marginTop:".5rem",padding:".35rem .55rem",fontSize:".72rem"}} onClick={()=>{setAnalysisCategory(k);setAnalysisPage(1)}}>Show {g.rows?.length||0} transactions</button>
-              </div>}
-            </div>
-          })}
+          <button type="button" onClick={()=>setShowCategoryDrill(v=>!v)} style={{width:"100%",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:0,cursor:"pointer",textAlign:"left"}}>
+            <span style={{fontWeight:800}}>{showCategoryDrill?"▼":"▶"} By Category · {analysisCategoryTotals.length}</span>
+            <span style={{fontSize:".7rem",color:"var(--muted)"}}>{showCategoryDrill?"Hide":"Expand"}</span>
+          </button>
+          {showCategoryDrill&&<div style={{marginTop:".55rem"}}>
+            {analysisCategoryTotals.map(([k,v])=>{
+              const open=!!categoryDrill[k],g=categoryDrillData[k]||{};
+              return <div key={k} style={{borderBottom:"1px solid var(--border)",padding:".28rem 0"}}>
+                <button type="button" onClick={()=>setCategoryDrill(p=>({...p,[k]:!p[k]}))} style={{width:"100%",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:".18rem 0",cursor:"pointer",textAlign:"left"}}>
+                  <span style={{fontWeight:650,overflowWrap:"anywhere"}}>{open?"▼":"▶"} {k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong>
+                </button>
+                {open&&<div style={{margin:".4rem 0 .5rem 1rem",paddingLeft:".65rem",borderLeft:"2px solid var(--border)"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"minmax(110px,1fr) minmax(140px,1.4fr) auto",gap:".45rem .75rem",alignItems:"start"}}>
+                    <div style={{fontSize:".64rem",fontWeight:800,color:"var(--muted)"}}>SUBCATEGORY</div>
+                    <div style={{fontSize:".64rem",fontWeight:800,color:"var(--muted)"}}>VENDOR</div>
+                    <div style={{fontSize:".64rem",fontWeight:800,color:"var(--muted)",textAlign:"right"}}>AMOUNT</div>
+                    {(() => {
+                      const rows=(g.rows||[]);
+                      const grouped={};
+                      for(const r of rows){
+                        const sub=r.subCategory||"Unclassified";
+                        const vendor=r.rawPayable?.VendorName||r.rawExpense?.VendorOrPerson||r.rawBankRow?.Description||"—";
+                        const key=`${sub}|||${vendor}`;
+                        if(!grouped[key])grouped[key]={sub,vendor,amount:0};
+                        grouped[key].amount+=r.amount;
+                      }
+                      return Object.values(grouped).sort((a,b)=>b.amount-a.amount).map(x=><>
+                        <div key={`${x.sub}-${x.vendor}-s`} style={{fontSize:".75rem",overflowWrap:"anywhere"}}>{x.sub}</div>
+                        <div key={`${x.sub}-${x.vendor}-v`} style={{fontSize:".75rem",overflowWrap:"anywhere"}}>{x.vendor||"—"}</div>
+                        <strong key={`${x.sub}-${x.vendor}-a`} style={{fontSize:".75rem",whiteSpace:"nowrap",textAlign:"right"}}>{fmt(x.amount)}</strong>
+                      </>);
+                    })()}
+                  </div>
+                  <button type="button" style={{...btn(false),marginTop:".55rem",padding:".35rem .55rem",fontSize:".72rem"}} onClick={()=>{setAnalysisCategory(k);setAnalysisPage(1)}}>Show {g.rows?.length||0} transactions</button>
+                </div>}
+              </div>
+            })}
+          </div>}
         </div>
 
         <div style={card}>
-          <div style={{fontWeight:800,marginBottom:".55rem"}}>By Funding Source · {analysisFundingTotals.length}</div>
-          {analysisFundingTotals.map(([k,v])=>{
-            const open=!!fundingDrill[k],g=fundingDrillData[k]||{};
-            return <div key={k} style={{borderBottom:"1px solid var(--border)",padding:".28rem 0"}}>
-              <button type="button" onClick={()=>setFundingDrill(p=>({...p,[k]:!p[k]}))} style={{width:"100%",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:".18rem 0",cursor:"pointer",textAlign:"left"}}>
-                <span style={{fontWeight:650,overflowWrap:"anywhere"}}>{open?"▼":"▶"} {k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong>
-              </button>
-              {open&&<div style={{margin:".45rem 0 .5rem 1rem",paddingLeft:".65rem",borderLeft:"2px solid var(--border)"}}>
-                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",marginBottom:".25rem"}}>CATEGORY</div>
-                {sortedPairs(g.categories).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
-                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>SUBCATEGORY</div>
-                {sortedPairs(g.subs).slice(0,10).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
-                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>TOP PEOPLE / TRAVELLERS</div>
-                {sortedPairs(g.people).slice(0,8).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
-                <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>TOP VENDORS / SOURCES</div>
-                {sortedPairs(g.vendors).slice(0,8).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span style={{overflowWrap:"anywhere"}}>{name}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(amt)}</strong></div>)}
-                <button type="button" style={{...btn(false),marginTop:".5rem",padding:".35rem .55rem",fontSize:".72rem"}} onClick={()=>{setAnalysisFunding(k);setAnalysisPage(1)}}>Show {g.rows?.length||0} transactions</button>
-              </div>}
-            </div>
-          })}
+          <button type="button" onClick={()=>setShowFundingDrill(v=>!v)} style={{width:"100%",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:0,cursor:"pointer",textAlign:"left"}}>
+            <span style={{fontWeight:800}}>{showFundingDrill?"▼":"▶"} By Funding Source · {analysisFundingTotals.length}</span>
+            <span style={{fontSize:".7rem",color:"var(--muted)"}}>{showFundingDrill?"Hide":"Expand"}</span>
+          </button>
+          {showFundingDrill&&<div style={{marginTop:".55rem"}}>
+            {analysisFundingTotals.map(([k,v])=>{
+              const open=!!fundingDrill[k],g=fundingDrillData[k]||{};
+              return <div key={k} style={{borderBottom:"1px solid var(--border)",padding:".28rem 0"}}>
+                <button type="button" onClick={()=>setFundingDrill(p=>({...p,[k]:!p[k]}))} style={{width:"100%",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:".18rem 0",cursor:"pointer",textAlign:"left"}}>
+                  <span style={{fontWeight:650,overflowWrap:"anywhere"}}>{open?"▼":"▶"} {k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong>
+                </button>
+                {open&&<div style={{margin:".4rem 0 .5rem 1rem",paddingLeft:".65rem",borderLeft:"2px solid var(--border)"}}>
+                  <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",marginBottom:".25rem"}}>CATEGORY</div>
+                  {sortedPairs(g.categories).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
+                  <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>SUBCATEGORY</div>
+                  {sortedPairs(g.subs).slice(0,10).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span>{name}</span><strong>{fmt(amt)}</strong></div>)}
+                  <div style={{fontSize:".66rem",fontWeight:800,color:"var(--muted)",margin:".5rem 0 .25rem"}}>TOP VENDORS / SOURCES</div>
+                  {sortedPairs(g.vendors).slice(0,8).map(([name,amt])=><div key={name} style={{display:"flex",justifyContent:"space-between",gap:".8rem",fontSize:".75rem",padding:".14rem 0"}}><span style={{overflowWrap:"anywhere"}}>{name}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(amt)}</strong></div>)}
+                  <button type="button" style={{...btn(false),marginTop:".5rem",padding:".35rem .55rem",fontSize:".72rem"}} onClick={()=>{setAnalysisFunding(k);setAnalysisPage(1)}}>Show {g.rows?.length||0} transactions</button>
+                </div>}
+              </div>
+            })}
+          </div>}
         </div>
       </div>
 
@@ -1023,7 +1048,7 @@ export default function Expenses(){
           </div>
         </div>
       </div>
-      <div style={{fontSize:".72rem",color:"var(--muted)",marginBottom:".25rem"}}><strong>Drill-down:</strong> click any Category or Funding Source above to see its Subcategory, Person/Traveller and top Vendor/Source breakup, then use “Show transactions” to filter the detailed table.</div>
+      <div style={{fontSize:".72rem",color:"var(--muted)",marginBottom:".25rem"}}><strong>Drill-down:</strong> By Category and By Funding Source stay collapsed until clicked. Click again to hide. Category drill-down uses a compact Subcategory / Vendor / Amount view; “Show transactions” filters the detailed table.</div>
       <div style={{fontSize:".72rem",color:"var(--muted)"}}><strong>Double-count safeguard:</strong> Vendor Bills are counted on their bill date and can now be classified by Category, Subcategory, Person/Traveller and Domestic/International. Later Zivara bank payments that settle those bills are excluded from expense totals. Personal-paid expenses are counted once when incurred; later reimbursements are not added again. Only genuine direct Zivara bank expenses without an underlying Vendor Bill are counted from Transactions. PDF/Excel export the same filtered management-expense view.</div>
     </>}
 
