@@ -181,6 +181,8 @@ export default function Expenses(){
   const[newCategory,setNewCategory]=useState("");
   const[addingSubCategory,setAddingSubCategory]=useState(false);
   const[newSubCategory,setNewSubCategory]=useState("");
+  const[addingExpenseFor,setAddingExpenseFor]=useState(false);
+  const[newExpenseFor,setNewExpenseFor]=useState("");
   const[bankTransactions,setBankTransactions]=useState([]);
   const[payables,setPayables]=useState([]);
   const[bankClassifications,setBankClassifications]=useState(()=>loadBankClassifications());
@@ -237,8 +239,11 @@ export default function Expenses(){
 
   const allPeople=useMemo(()=>[...new Set([
     ...partnerNames,...staffNames,
-    ...expenses.map(e=>String(e.PaidBy||"").trim()).filter(Boolean)
-  ])].sort(),[partnerNames,staffNames,expenses]);
+    ...expenses.map(e=>String(e.PaidBy||"").trim()).filter(Boolean),
+    ...expenses.map(e=>readExpenseMeta(e.Notes).meta.expenseFor).filter(Boolean),
+    ...Object.values(vendorBillClassifications||{}).map(x=>x?.ExpenseFor).filter(Boolean),
+    ...Object.values(bankClassifications||{}).map(x=>x?.ExpenseFor).filter(Boolean)
+  ].map(x=>String(x||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"})),[partnerNames,staffNames,expenses,vendorBillClassifications,bankClassifications]);
 
   const paidByChoices=form.PaidByType==="Staff"?staffNames:partnerNames;
 
@@ -300,7 +305,7 @@ export default function Expenses(){
     const d=today();
     setForm({...initial,Date:d,BillingMonth:billingMonthFromDate(d),Status:"Approved"});
     setEditId(null);setFormError("");setShowGST(false);setShowMore(false);
-    setAddingCategory(false);setNewCategory("");setAddingSubCategory(false);setNewSubCategory("");setFormOpen(true);
+    setAddingCategory(false);setNewCategory("");setAddingSubCategory(false);setNewSubCategory("");setAddingExpenseFor(false);setNewExpenseFor("");setFormOpen(true);
   }
 
   function openEdit(e){
@@ -323,7 +328,7 @@ export default function Expenses(){
     setEditId(e.ExpenseID);setFormError("");
     setShowGST(Number(cgst||0)>0||Number(sgst||0)>0||Number(igst||0)>0||Number(e.TaxableValue||0)>0);
     setShowMore(!!(e.ChargeTo||parsed.notes||e.BillLink||e.Category));
-    setAddingCategory(false);setNewCategory("");setAddingSubCategory(false);setNewSubCategory("");
+    setAddingCategory(false);setNewCategory("");setAddingSubCategory(false);setNewSubCategory("");setAddingExpenseFor(false);setNewExpenseFor("");
     setFormOpen(true);
   }
 
@@ -357,6 +362,14 @@ export default function Expenses(){
     const value=String(newSubCategory||"").trim();if(!value)return;
     set("SubCategory",value);setAddingSubCategory(false);setNewSubCategory("");
   }
+  function changeExpenseFor(value){
+    if(value==="__add_person__"){setAddingExpenseFor(true);setNewExpenseFor("");return}
+    setAddingExpenseFor(false);setNewExpenseFor("");set("ExpenseFor",value);
+  }
+  function addExpenseFor(){
+    const value=String(newExpenseFor||"").trim();if(!value)return;
+    set("ExpenseFor",value);setAddingExpenseFor(false);setNewExpenseFor("");
+  }
   function setGstPart(key,value){
     setForm(p=>{
       const next={...p,[key]:value};
@@ -373,8 +386,7 @@ export default function Expenses(){
         ...form,
         Notes:writeExpenseMeta(form.Notes,{
           subCategory:form.SubCategory,
-          expenseFor:form.ExpenseFor,
-          travelScope:form.TravelScope
+          expenseFor:form.ExpenseFor
         }),
         GSTAmount:gstTotal?gstTotal.toFixed(2):"",
         BillAvailable:form.BillAvailable||"No",
@@ -504,7 +516,7 @@ export default function Expenses(){
       Category:String(classifyForm.Category||"").trim(),
       SubCategory:String(classifyForm.SubCategory||"").trim(),
       ExpenseFor:String(classifyForm.ExpenseFor||"").trim(),
-      TravelScope:String(classifyForm.TravelScope||"").trim()
+      TravelScope:/international|overseas/i.test(String(classifyForm.SubCategory||""))?"International":/domestic/i.test(String(classifyForm.SubCategory||""))?"Domestic":""
     };
     if(classifyKind==="vendor"){
       if(!classifyRow?.PayableID)return;
@@ -539,7 +551,7 @@ export default function Expenses(){
         subCategory:String(meta.subCategory||"").trim(),
         person:String(meta.expenseFor||e.ChargeTo||"").trim(),
         funding:String(e.PaidBy||"").trim()||"Personal",
-        scope:String(meta.travelScope||"").trim(),
+        scope:/international|overseas/i.test(String(meta.subCategory||""))?"International":/domestic/i.test(String(meta.subCategory||""))?"Domestic":"",
         amount:Number(e.Amount||0),description:e.Description||e.VendorOrPerson||"",
         source:"Partner / Staff Expense",status:e.Status||"",
         rawExpense:e
@@ -716,7 +728,6 @@ export default function Expenses(){
         <div><label style={label}>Subcategory</label><select style={inp} value={analysisSubCategory} onChange={e=>setAnalysisSubCategory(e.target.value)}><option value="">All subcategories</option>{analysisSubs.map(x=><option key={x}>{x}</option>)}</select></div>
         <div><label style={label}>Person / Traveller</label><input style={inp} value={analysisPerson} onChange={e=>setAnalysisPerson(e.target.value)} placeholder="Manu, Dinu, Zara..."/></div>
         <div><label style={label}>Funding Source</label><select style={inp} value={analysisFunding} onChange={e=>setAnalysisFunding(e.target.value)}><option value="">All funding</option>{analysisFundingOptions.map(x=><option key={x}>{x}</option>)}</select></div>
-        <div><label style={label}>Domestic / International</label><select style={inp} value={analysisScope} onChange={e=>setAnalysisScope(e.target.value)}><option value="">All</option><option>Domestic</option><option>International</option></select></div>
         <div><button style={btn(false)} onClick={()=>{setAnalysisCategory("");setAnalysisSubCategory("");setAnalysisPerson("");setAnalysisFunding("");setAnalysisScope("");setSearch("");setFromDate(fyStart);setToDate("")}}>Reset</button></div>
       </div>
 
@@ -830,8 +841,7 @@ export default function Expenses(){
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:".75rem"}}>
           <div><label style={label}>Category</label><select style={inp} value={classifyForm.Category} onChange={e=>setClassifyForm(p=>({...p,Category:e.target.value,SubCategory:""}))}><option value="">— Select —</option>{categoryOptions.map(x=><option key={x}>{x}</option>)}{classifyForm.Category&&!categoryOptions.includes(classifyForm.Category)&&<option>{classifyForm.Category}</option>}</select></div>
           <div><label style={label}>Subcategory</label><input style={inp} list="bank-classification-subcategories" value={classifyForm.SubCategory} onChange={e=>setClassifyForm(p=>({...p,SubCategory:e.target.value}))} placeholder="Domestic Flight / Cab..."/><datalist id="bank-classification-subcategories">{[...new Set([...(DEFAULT_SUBCATEGORIES[classifyForm.Category]||[]),...expenses.flatMap(e=>{const m=readExpenseMeta(e.Notes).meta;return m.subCategory?[m.subCategory]:[]})])].map(x=><option key={x} value={x}/>)}</datalist></div>
-          <div><label style={label}>Expense For / Traveller</label><input style={inp} list="bank-classification-people" value={classifyForm.ExpenseFor} onChange={e=>setClassifyForm(p=>({...p,ExpenseFor:e.target.value}))} placeholder="Manu / Dinu / Zara..."/><datalist id="bank-classification-people">{allPeople.map(x=><option key={x} value={x}/>)}</datalist></div>
-          <div><label style={label}>Domestic / International</label><select style={inp} value={classifyForm.TravelScope} onChange={e=>setClassifyForm(p=>({...p,TravelScope:e.target.value}))}><option value="">— Not applicable —</option><option>Domestic</option><option>International</option></select></div>
+          <div><label style={label}>Expense For / Traveller</label><select style={inp} value={classifyForm.ExpenseFor} onChange={e=>setClassifyForm(p=>({...p,ExpenseFor:e.target.value}))}><option value="">— Select person / traveller —</option>{allPeople.map(x=><option key={x} value={x}>{x}</option>)}{classifyForm.ExpenseFor&&!allPeople.includes(classifyForm.ExpenseFor)&&<option value={classifyForm.ExpenseFor}>{classifyForm.ExpenseFor}</option>}</select></div>
         </div>
         <div style={{display:"flex",justifyContent:"space-between",gap:".65rem",marginTop:"1rem",flexWrap:"wrap"}}>
           <button type="button" style={{...btn(false),color:"var(--danger)"}} onClick={clearClassification}>Clear Classification</button>
@@ -871,8 +881,12 @@ export default function Expenses(){
               </select>
               {addingSubCategory&&<div style={{display:"flex",gap:".4rem",marginTop:".4rem"}}><input style={{...inp,minWidth:0}} autoFocus value={newSubCategory} onChange={e=>setNewSubCategory(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addSubCategory()}if(e.key==="Escape"){setAddingSubCategory(false);setNewSubCategory("")}}} placeholder="New subcategory"/><button type="button" style={{...btn(),padding:".4rem .65rem"}} onClick={addSubCategory}>Add</button></div>}
             </div>
-            <div><label style={label}>Expense For / Traveller</label><input style={inp} list="expense-for-options" value={form.ExpenseFor} onChange={e=>set("ExpenseFor",e.target.value)} placeholder="Person name(s)"/><datalist id="expense-for-options">{allPeople.map(x=><option key={x} value={x}/>)}</datalist></div>
-            <div><label style={label}>Domestic / International</label><select style={inp} value={form.TravelScope} onChange={e=>set("TravelScope",e.target.value)}><option value="">— Not applicable —</option><option>Domestic</option><option>International</option></select></div>
+            <div><label style={label}>Expense For / Traveller</label>
+              <select style={inp} value={addingExpenseFor?"__add_person__":form.ExpenseFor} onChange={e=>changeExpenseFor(e.target.value)}>
+                <option value="">— Select person / traveller —</option>{allPeople.map(x=><option key={x} value={x}>{x}</option>)}{form.ExpenseFor&&!allPeople.includes(form.ExpenseFor)&&<option value={form.ExpenseFor}>{form.ExpenseFor}</option>}<option disabled>────────────</option><option value="__add_person__">+ Add Person / Traveller</option>
+              </select>
+              {addingExpenseFor&&<div style={{display:"flex",gap:".4rem",marginTop:".4rem"}}><input style={{...inp,minWidth:0}} autoFocus value={newExpenseFor} onChange={e=>setNewExpenseFor(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addExpenseFor()}if(e.key==="Escape"){setAddingExpenseFor(false);setNewExpenseFor("")}}} placeholder="Enter person / traveller name"/><button type="button" style={{...btn(),padding:".4rem .65rem"}} onClick={addExpenseFor}>Add</button></div>}
+            </div>
             <div><label style={label}>Amount (₹) *</label><input style={inp} type="number" min="0" step=".01" required value={form.Amount} onChange={e=>set("Amount",e.target.value)}/></div>
 
             <div><label style={label}>Paid By Type *</label><select style={inp} value={form.PaidByType} onChange={e=>changePayerType(e.target.value)}><option>Partner</option><option>Staff</option></select></div>
