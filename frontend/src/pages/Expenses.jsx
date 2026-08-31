@@ -273,6 +273,7 @@ export default function Expenses(){
   const[fundingDrill,setFundingDrill]=useState({});
   const[showCategoryDrill,setShowCategoryDrill]=useState(false);
   const[showFundingDrill,setShowFundingDrill]=useState(false);
+  const[subCategoryDrill,setSubCategoryDrill]=useState({});
 
   const[fromDate,setFromDate]=useState(fyStart);
   const[toDate,setToDate]=useState("");
@@ -921,28 +922,43 @@ export default function Expenses(){
                   <span style={{fontWeight:650,overflowWrap:"anywhere"}}>{open?"▼":"▶"} {k}</span><strong style={{whiteSpace:"nowrap"}}>{fmt(v)}</strong>
                 </button>
                 {open&&<div style={{margin:".4rem 0 .5rem 1rem",paddingLeft:".65rem",borderLeft:"2px solid var(--border)"}}>
-                  <div style={{display:"grid",gridTemplateColumns:"minmax(110px,1fr) minmax(140px,1.4fr) auto",gap:".45rem .75rem",alignItems:"start"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"minmax(160px,1fr) auto",gap:".35rem .75rem",alignItems:"start"}}>
                     <div style={{fontSize:".64rem",fontWeight:800,color:"var(--muted)"}}>SUBCATEGORY</div>
-                    <div style={{fontSize:".64rem",fontWeight:800,color:"var(--muted)"}}>VENDOR</div>
                     <div style={{fontSize:".64rem",fontWeight:800,color:"var(--muted)",textAlign:"right"}}>AMOUNT</div>
-                    {(() => {
-                      const rows=(g.rows||[]);
-                      const grouped={};
-                      for(const r of rows){
-                        const sub=r.subCategory||"Unclassified";
+                    {sortedPairs(g.subs).map(([sub,amt])=>{
+                      const drillKey=`${k}|||${sub}`;
+                      const subOpen=!!subCategoryDrill[drillKey];
+                      const subRows=(g.rows||[]).filter(r=>(r.subCategory||"Unclassified")===sub);
+                      const vendorTotals={};
+                      for(const r of subRows){
                         const vendor=r.rawPayable?.VendorName||r.rawExpense?.VendorOrPerson||r.rawBankRow?.Description||"—";
-                        const key=`${sub}|||${vendor}`;
-                        if(!grouped[key])grouped[key]={sub,vendor,amount:0};
-                        grouped[key].amount+=r.amount;
+                        const vendorKey=String(vendor||"—").trim()||"—";
+                        vendorTotals[vendorKey]=(vendorTotals[vendorKey]||0)+r.amount;
                       }
-                      return Object.values(grouped).sort((a,b)=>b.amount-a.amount).map(x=><>
-                        <div key={`${x.sub}-${x.vendor}-s`} style={{fontSize:".75rem",overflowWrap:"anywhere"}}>{x.sub}</div>
-                        <div key={`${x.sub}-${x.vendor}-v`} style={{fontSize:".75rem",overflowWrap:"anywhere"}}>{x.vendor||"—"}</div>
-                        <strong key={`${x.sub}-${x.vendor}-a`} style={{fontSize:".75rem",whiteSpace:"nowrap",textAlign:"right"}}>{fmt(x.amount)}</strong>
-                      </>);
-                    })()}
+                      return <div key={drillKey} style={{gridColumn:"1/-1",borderBottom:"1px solid var(--border)",padding:".18rem 0"}}>
+                        <button type="button" onClick={()=>setSubCategoryDrill(p=>({...p,[drillKey]:!p[drillKey]}))} style={{width:"100%",display:"grid",gridTemplateColumns:"minmax(160px,1fr) auto",gap:".75rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:".12rem 0",cursor:"pointer",textAlign:"left"}}>
+                          <span style={{fontSize:".76rem",overflowWrap:"anywhere"}}>{subOpen?"▼":"▶"} {sub}</span>
+                          <strong style={{fontSize:".76rem",whiteSpace:"nowrap",textAlign:"right"}}>{fmt(amt)}</strong>
+                        </button>
+                        {subOpen&&<div style={{margin:".3rem 0 .35rem 1.05rem",paddingLeft:".55rem",borderLeft:"2px solid rgba(255,255,255,.08)"}}>
+                          <div style={{display:"grid",gridTemplateColumns:"minmax(150px,1fr) auto",gap:".28rem .75rem"}}>
+                            <div style={{fontSize:".62rem",fontWeight:800,color:"var(--muted)"}}>VENDOR</div>
+                            <div style={{fontSize:".62rem",fontWeight:800,color:"var(--muted)",textAlign:"right"}}>AMOUNT</div>
+                            {sortedPairs(vendorTotals).map(([vendor,vamt])=><>
+                              <div key={`${drillKey}-${vendor}-v`} style={{fontSize:".73rem",overflowWrap:"anywhere"}}>{vendor}</div>
+                              <strong key={`${drillKey}-${vendor}-a`} style={{fontSize:".73rem",whiteSpace:"nowrap",textAlign:"right"}}>{fmt(vamt)}</strong>
+                            </>)}
+                          </div>
+                          <button type="button" style={{...btn(false),marginTop:".4rem",padding:".3rem .5rem",fontSize:".7rem"}} onClick={()=>{
+                            setAnalysisCategory(k);
+                            setAnalysisSubCategory(sub==="Unclassified"?"":sub);
+                            setAnalysisPage(1);
+                          }}>Show {subRows.length} transactions</button>
+                        </div>}
+                      </div>
+                    })}
                   </div>
-                  <button type="button" style={{...btn(false),marginTop:".55rem",padding:".35rem .55rem",fontSize:".72rem"}} onClick={()=>{setAnalysisCategory(k);setAnalysisPage(1)}}>Show {g.rows?.length||0} transactions</button>
+                  <button type="button" style={{...btn(false),marginTop:".55rem",padding:".35rem .55rem",fontSize:".72rem"}} onClick={()=>{setAnalysisCategory(k);setAnalysisSubCategory("");setAnalysisPage(1)}}>Show all {g.rows?.length||0} {k} transactions</button>
                 </div>}
               </div>
             })}
@@ -1048,7 +1064,7 @@ export default function Expenses(){
           </div>
         </div>
       </div>
-      <div style={{fontSize:".72rem",color:"var(--muted)",marginBottom:".25rem"}}><strong>Drill-down:</strong> By Category and By Funding Source stay collapsed until clicked. Click again to hide. Category drill-down uses a compact Subcategory / Vendor / Amount view; “Show transactions” filters the detailed table.</div>
+      <div style={{fontSize:".72rem",color:"var(--muted)",marginBottom:".25rem"}}><strong>Drill-down:</strong> By Category and By Funding Source stay collapsed until clicked. In By Category, expand a Category to see summed Subcategories, then expand a Subcategory to see its Vendor breakup. “Show transactions” filters the detailed table.</div>
       <div style={{fontSize:".72rem",color:"var(--muted)"}}><strong>Double-count safeguard:</strong> Vendor Bills are counted on their bill date and can now be classified by Category, Subcategory, Person/Traveller and Domestic/International. Later Zivara bank payments that settle those bills are excluded from expense totals. Personal-paid expenses are counted once when incurred; later reimbursements are not added again. Only genuine direct Zivara bank expenses without an underlying Vendor Bill are counted from Transactions. PDF/Excel export the same filtered management-expense view.</div>
     </>}
 
