@@ -143,21 +143,44 @@ function isPayableSettlementBankRow(row,payables){
 
   const ref=normExpenseText(row.ReferenceID||"");
   const desc=normExpenseText(row.Description||"");
-  if(!ref&&!desc)return false;
+  const rowDate=String(row.Date||"").slice(0,10);
+  const rowAmount=Number(row.AmountOut||0);
+  const rows=payables||[];
 
-  return (payables||[]).some(p=>{
+  // Strong one-to-one links.
+  if(rows.some(p=>{
     const payableId=normExpenseText(p.PayableID||"");
     const paymentRef=normExpenseText(p.ReferenceNo||"");
     const billNo=normExpenseText(p.BillNo||"");
-    const vendor=normExpenseText(p.VendorName||"");
     if(payableId&&(ref===payableId||desc.includes(payableId)))return true;
     if(paymentRef&&ref&&ref===paymentRef)return true;
     if(billNo&&desc.includes(billNo))return true;
-    // Batch vendor settlements often carry only the vendor name in narration.
-    // Treat them as settlement-only when the row is managed/protected or posted to a payable-style ledger.
-    if(vendor&&desc.includes(vendor)&&(row.Managed||managed||ledger.includes("payable")))return true;
     return false;
-  });
+  }))return true;
+
+  // Batch payment safeguard:
+  // If several Vendor Bills for one vendor were marked paid on the same date/reference,
+  // and their Paid Amount adds up to this bank debit, this bank row is settlement only.
+  const groups={};
+  for(const p of rows){
+    if(String(p.Status||"").toLowerCase()==="cancelled")continue;
+    const paid=Number(p.PaidAmount||0);
+    if(paid<=0)continue;
+    const payDate=String(p.PaymentDate||"").slice(0,10);
+    const paymentRef=normExpenseText(p.ReferenceNo||"");
+    const vendor=normExpenseText(p.VendorName||"");
+    if(!vendor)continue;
+    if(rowDate&&payDate&&rowDate!==payDate)continue;
+    const referenceMatch=ref&&paymentRef&&ref===paymentRef;
+    const vendorMention=vendor&&desc.includes(vendor);
+    if(!referenceMatch&&!vendorMention)continue;
+    const key=`${vendor}|${paymentRef||rowDate}`;
+    if(!groups[key])groups[key]={sum:0,vendor,ref:paymentRef};
+    groups[key].sum+=paid;
+  }
+  if(rowAmount>0&&Object.values(groups).some(g=>Math.abs(g.sum-rowAmount)<=1))return true;
+
+  return false;
 }
 
 function Badge({value}){
@@ -840,7 +863,37 @@ export default function Expenses(){
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:".75rem"}}>
           <div><label style={label}>Category</label><select style={inp} value={classifyForm.Category} onChange={e=>setClassifyForm(p=>({...p,Category:e.target.value,SubCategory:""}))}><option value="">— Select —</option>{categoryOptions.map(x=><option key={x}>{x}</option>)}{classifyForm.Category&&!categoryOptions.includes(classifyForm.Category)&&<option>{classifyForm.Category}</option>}</select></div>
-          <div><label style={label}>Subcategory</label><input style={inp} list="bank-classification-subcategories" value={classifyForm.SubCategory} onChange={e=>setClassifyForm(p=>({...p,SubCategory:e.target.value}))} placeholder="Domestic Flight / Cab..."/><datalist id="bank-classification-subcategories">{[...new Set([...(DEFAULT_SUBCATEGORIES[classifyForm.Category]||[]),...expenses.flatMap(e=>{const m=readExpenseMeta(e.Notes).meta;return m.subCategory?[m.subCategory]:[]})])].map(x=><option key={x} value={x}/>)}</datalist></div>
+          <div>
+            <label style={label}>Subcategory</label>
+            <select
+              style={inp}
+              value={classifyForm.SubCategory}
+              onChange={e=>setClassifyForm(p=>({...p,SubCategory:e.target.value}))}
+              disabled={!classifyForm.Category}
+            >
+              <option value="">— Select subcategory —</option>
+              {[...new Set([
+                ...(DEFAULT_SUBCATEGORIES[classifyForm.Category]||[]),
+                ...expenses.flatMap(e=>{
+                  const meta=readExpenseMeta(e.Notes).meta;
+                  const cat=String(e.Category||e.ExpenseType||"").trim();
+                  return cat===classifyForm.Category&&meta.subCategory?[String(meta.subCategory).trim()]:[];
+                }),
+                ...Object.values(vendorBillClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[]),
+                ...Object.values(bankClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[])
+              ].filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"})).map(x=><option key={x} value={x}>{x}</option>)}
+              {classifyForm.SubCategory&&![...new Set([
+                ...(DEFAULT_SUBCATEGORIES[classifyForm.Category]||[]),
+                ...expenses.flatMap(e=>{
+                  const meta=readExpenseMeta(e.Notes).meta;
+                  const cat=String(e.Category||e.ExpenseType||"").trim();
+                  return cat===classifyForm.Category&&meta.subCategory?[String(meta.subCategory).trim()]:[];
+                }),
+                ...Object.values(vendorBillClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[]),
+                ...Object.values(bankClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[])
+              ].filter(Boolean))].includes(classifyForm.SubCategory)&&<option value={classifyForm.SubCategory}>{classifyForm.SubCategory}</option>}
+            </select>
+          </div>
           <div><label style={label}>Expense For / Traveller</label><select style={inp} value={classifyForm.ExpenseFor} onChange={e=>setClassifyForm(p=>({...p,ExpenseFor:e.target.value}))}><option value="">— Select person / traveller —</option>{allPeople.map(x=><option key={x} value={x}>{x}</option>)}{classifyForm.ExpenseFor&&!allPeople.includes(classifyForm.ExpenseFor)&&<option value={classifyForm.ExpenseFor}>{classifyForm.ExpenseFor}</option>}</select></div>
         </div>
         <div style={{display:"flex",justifyContent:"space-between",gap:".65rem",marginTop:"1rem",flexWrap:"wrap"}}>
