@@ -135,6 +135,53 @@ function vendorBillSubCategory(row){
   if(text.includes("cab")||text.includes("taxi"))return "Cab Charges";
   return "";
 }
+function isPersonalExpenseDuplicateOfVendorBill(expense,payables){
+  const eAmount=Number(expense.Amount||0);
+  const eDate=String(expense.Date||"").slice(0,10);
+  const ePaidBy=normExpenseText(expense.PaidBy||"");
+  const eVendor=normExpenseText(expense.VendorOrPerson||"");
+  const eDesc=normExpenseText(expense.Description||"");
+  if(eAmount<=0||!ePaidBy)return false;
+
+  const dayValue=d=>{
+    const t=Date.parse(String(d||"").slice(0,10));
+    return Number.isFinite(t)?Math.floor(t/86400000):null;
+  };
+  const eDay=dayValue(eDate);
+
+  return (payables||[]).some(v=>{
+    if(String(v.Status||"").toLowerCase()==="cancelled")return false;
+    const paidByType=normExpenseText(v.PaidByType||"Company");
+    if(paidByType==="company")return false;
+
+    const vPaidBy=normExpenseText(v.PaidByName||v.ReimburseTo||"");
+    if(!vPaidBy||vPaidBy!==ePaidBy)return false;
+
+    const gross=Number(v.GrossAmount||0);
+    const net=Number(v.NetPayable||0);
+    const paid=Number(v.PaidAmount||0);
+    const amountMatch=[gross,net,paid].some(x=>x>0&&Math.abs(x-eAmount)<=2);
+    if(!amountMatch)return false;
+
+    const vDay=dayValue(v.BillDate||v.PaymentDate);
+    if(eDay!=null&&vDay!=null&&Math.abs(eDay-vDay)>3)return false;
+
+    const vVendor=normExpenseText(v.VendorName||"");
+    const vDesc=normExpenseText(v.Description||"");
+    const vendorMatch=!!(eVendor&&vVendor&&(eVendor.includes(vVendor)||vVendor.includes(eVendor)));
+    const descMatch=!!(eDesc&&vDesc&&(eDesc.includes(vDesc)||vDesc.includes(eDesc)));
+    const crossMatch=!!(
+      (eDesc&&vVendor&&eDesc.includes(vVendor))||
+      (eVendor&&vDesc&&vDesc.includes(eVendor))
+    );
+
+    // Same person + near-identical amount + same/near date is already strong;
+    // vendor/description overlap makes it safer. If text is missing, still allow exact-day match.
+    const exactDay=eDay!=null&&vDay!=null&&eDay===vDay;
+    return vendorMatch||descMatch||crossMatch||exactDay;
+  });
+}
+
 function isPayableSettlementBankRow(row,payables){
   const managed=normExpenseText(row.ManagedBy||"");
   const ledger=normExpenseText(row.LedgerName||"");
@@ -214,6 +261,10 @@ export default function Expenses(){
   const[classifyKind,setClassifyKind]=useState("bank");
   const[classifyRow,setClassifyRow]=useState(null);
   const[classifyForm,setClassifyForm]=useState({Category:"",SubCategory:"",ExpenseFor:"",TravelScope:""});
+  const[classifyAddingCategory,setClassifyAddingCategory]=useState(false);
+  const[classifyNewCategory,setClassifyNewCategory]=useState("");
+  const[classifyAddingSubCategory,setClassifyAddingSubCategory]=useState(false);
+  const[classifyNewSubCategory,setClassifyNewSubCategory]=useState("");
   const[view,setView]=useState("entries");
   const[analysisPageSize,setAnalysisPageSize]=useState(25);
   const[analysisPage,setAnalysisPage]=useState(1);
@@ -540,6 +591,8 @@ export default function Expenses(){
       ExpenseFor:existing.ExpenseFor||"",
       TravelScope:existing.TravelScope||""
     });
+    setClassifyAddingCategory(false);setClassifyNewCategory("");
+    setClassifyAddingSubCategory(false);setClassifyNewSubCategory("");
     setClassifyOpen(true);
   }
   function openVendorBillClassification(row){
@@ -553,8 +606,31 @@ export default function Expenses(){
       ExpenseFor:existing.ExpenseFor||"",
       TravelScope:existing.TravelScope||(/international|overseas/i.test(autoSub)?"International":/domestic/i.test(autoSub)?"Domestic":"")
     });
+    setClassifyAddingCategory(false);setClassifyNewCategory("");
+    setClassifyAddingSubCategory(false);setClassifyNewSubCategory("");
     setClassifyOpen(true);
   }
+  function changeClassifyCategory(value){
+    if(value==="__add_category__"){setClassifyAddingCategory(true);setClassifyNewCategory("");return}
+    setClassifyAddingCategory(false);setClassifyNewCategory("");
+    setClassifyForm(p=>({...p,Category:value,SubCategory:""}));
+  }
+  function addClassifyCategory(){
+    const value=String(classifyNewCategory||"").trim();if(!value)return;
+    setClassifyForm(p=>({...p,Category:value,SubCategory:""}));
+    setClassifyAddingCategory(false);setClassifyNewCategory("");
+  }
+  function changeClassifySubCategory(value){
+    if(value==="__add_subcategory__"){setClassifyAddingSubCategory(true);setClassifyNewSubCategory("");return}
+    setClassifyAddingSubCategory(false);setClassifyNewSubCategory("");
+    setClassifyForm(p=>({...p,SubCategory:value}));
+  }
+  function addClassifySubCategory(){
+    const value=String(classifyNewSubCategory||"").trim();if(!value)return;
+    setClassifyForm(p=>({...p,SubCategory:value}));
+    setClassifyAddingSubCategory(false);setClassifyNewSubCategory("");
+  }
+
   function saveClassification(){
     const data={
       Category:String(classifyForm.Category||"").trim(),
@@ -587,9 +663,13 @@ export default function Expenses(){
   }
 
   const managementRows=useMemo(()=>{
-    const personal=expenses.map(e=>{
+    const personal=expenses.flatMap(e=>{
+      // If the same personally-paid expense already exists as a Vendor Bill,
+      // keep the Vendor Bill as the management expense source and suppress this
+      // duplicate Partner / Staff Expense row from Expense Analysis only.
+      if(isPersonalExpenseDuplicateOfVendorBill(e,payables))return [];
       const {meta}=readExpenseMeta(e.Notes);
-      return {
+      return [{
         id:`EXP-${e.ExpenseID}`,date:String(e.Date||"").slice(0,10),
         category:String(e.Category||e.ExpenseType||"Other").trim()||"Other",
         subCategory:String(meta.subCategory||"").trim(),
@@ -599,7 +679,7 @@ export default function Expenses(){
         amount:Number(e.Amount||0),description:e.Description||e.VendorOrPerson||"",
         source:"Partner / Staff Expense",status:e.Status||"",
         rawExpense:e
-      };
+      }];
     });
 
     // Vendor Bills are recognised as expenses on the BILL DATE.
@@ -897,13 +977,13 @@ export default function Expenses(){
         </div>
 
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:".75rem"}}>
-          <div><label style={label}>Category</label><select style={inp} value={classifyForm.Category} onChange={e=>setClassifyForm(p=>({...p,Category:e.target.value,SubCategory:""}))}><option value="">— Select —</option>{categoryOptions.map(x=><option key={x}>{x}</option>)}{classifyForm.Category&&!categoryOptions.includes(classifyForm.Category)&&<option>{classifyForm.Category}</option>}</select></div>
+          <div><label style={label}>Category</label><select style={inp} value={classifyAddingCategory?"__add_category__":classifyForm.Category} onChange={e=>changeClassifyCategory(e.target.value)}><option value="">— Select category —</option>{categoryOptions.map(x=><option key={x} value={x}>{x}</option>)}{classifyForm.Category&&!categoryOptions.includes(classifyForm.Category)&&<option value={classifyForm.Category}>{classifyForm.Category}</option>}<option disabled>────────────</option><option value="__add_category__">+ Add Category</option></select>{classifyAddingCategory&&<div style={{display:"flex",gap:".4rem",marginTop:".4rem"}}><input style={{...inp,minWidth:0}} autoFocus value={classifyNewCategory} onChange={e=>setClassifyNewCategory(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addClassifyCategory()}if(e.key==="Escape"){setClassifyAddingCategory(false);setClassifyNewCategory("")}}} placeholder="Enter new category"/><button type="button" style={{...btn(),padding:".4rem .65rem"}} onClick={addClassifyCategory}>Add</button></div>}</div>
           <div>
             <label style={label}>Subcategory</label>
             <select
               style={inp}
-              value={classifyForm.SubCategory}
-              onChange={e=>setClassifyForm(p=>({...p,SubCategory:e.target.value}))}
+              value={classifyAddingSubCategory?"__add_subcategory__":classifyForm.SubCategory}
+              onChange={e=>changeClassifySubCategory(e.target.value)}
               disabled={!classifyForm.Category}
             >
               <option value="">— Select subcategory —</option>
@@ -927,7 +1007,10 @@ export default function Expenses(){
                 ...Object.values(vendorBillClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[]),
                 ...Object.values(bankClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[])
               ].filter(Boolean))].includes(classifyForm.SubCategory)&&<option value={classifyForm.SubCategory}>{classifyForm.SubCategory}</option>}
+              <option disabled>────────────</option>
+              <option value="__add_subcategory__">+ Add Subcategory</option>
             </select>
+            {classifyAddingSubCategory&&<div style={{display:"flex",gap:".4rem",marginTop:".4rem"}}><input style={{...inp,minWidth:0}} autoFocus value={classifyNewSubCategory} onChange={e=>setClassifyNewSubCategory(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addClassifySubCategory()}if(e.key==="Escape"){setClassifyAddingSubCategory(false);setClassifyNewSubCategory("")}}} placeholder="Enter new subcategory"/><button type="button" style={{...btn(),padding:".4rem .65rem"}} onClick={addClassifySubCategory}>Add</button></div>}
           </div>
           <div><label style={label}>Expense For / Traveller</label><select style={inp} value={classifyForm.ExpenseFor} onChange={e=>setClassifyForm(p=>({...p,ExpenseFor:e.target.value}))}><option value="">— Select person / traveller —</option>{allPeople.map(x=><option key={x} value={x}>{x}</option>)}{classifyForm.ExpenseFor&&!allPeople.includes(classifyForm.ExpenseFor)&&<option value={classifyForm.ExpenseFor}>{classifyForm.ExpenseFor}</option>}</select></div>
         </div>
