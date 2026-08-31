@@ -83,6 +83,7 @@ function bankExpenseCategory(row){
     .trim() || "Other";
 }
 
+const UNCLASSIFIED_SUBCATEGORY="__UNCLASSIFIED__";
 const BANK_CLASSIFICATION_KEY="zivara_expense_bank_classifications_v1";
 function loadBankClassifications(){
   try{
@@ -741,7 +742,8 @@ export default function Expenses(){
   const analysisRows=useMemo(()=>managementRows.filter(r=>{
     if(fromDate&&r.date<fromDate)return false;if(toDate&&r.date>toDate)return false;
     if(analysisCategory&&r.category!==analysisCategory)return false;
-    if(analysisSubCategory&&r.subCategory!==analysisSubCategory)return false;
+    if(analysisSubCategory===UNCLASSIFIED_SUBCATEGORY&&String(r.subCategory||"").trim())return false;
+    if(analysisSubCategory&&analysisSubCategory!==UNCLASSIFIED_SUBCATEGORY&&r.subCategory!==analysisSubCategory)return false;
     if(analysisPerson&&!String(r.person||"").toLowerCase().includes(analysisPerson.toLowerCase()))return false;
     if(analysisFunding&&r.funding!==analysisFunding)return false;
     if(analysisScope&&r.scope!==analysisScope)return false;
@@ -894,7 +896,7 @@ export default function Expenses(){
         <div><label style={label}>From</label><input style={inp} type="date" value={fromDate} onChange={e=>changeFromDate(e.target.value)}/></div>
         <div><label style={label}>To</label><input style={inp} type="date" min={fromDate||undefined} value={toDate} onChange={e=>setToDate(e.target.value)}/></div>
         <div><label style={label}>Category</label><select style={inp} value={analysisCategory} onChange={e=>{setAnalysisCategory(e.target.value);setAnalysisSubCategory("")}}><option value="">All categories</option>{analysisCategories.map(x=><option key={x}>{x}</option>)}</select></div>
-        <div><label style={label}>Subcategory</label><select style={inp} value={analysisSubCategory} onChange={e=>setAnalysisSubCategory(e.target.value)}><option value="">All subcategories</option>{analysisSubs.map(x=><option key={x}>{x}</option>)}</select></div>
+        <div><label style={label}>Subcategory</label><select style={inp} value={analysisSubCategory} onChange={e=>setAnalysisSubCategory(e.target.value)}><option value="">All subcategories</option><option value={UNCLASSIFIED_SUBCATEGORY}>Unclassified</option>{analysisSubs.map(x=><option key={x}>{x}</option>)}</select></div>
         <div><label style={label}>Person / Traveller</label><input style={inp} value={analysisPerson} onChange={e=>setAnalysisPerson(e.target.value)} placeholder="Manu, Dinu, Zara..."/></div>
         <div><label style={label}>Funding Source</label><select style={inp} value={analysisFunding} onChange={e=>setAnalysisFunding(e.target.value)}><option value="">All funding</option>{analysisFundingOptions.map(x=><option key={x}>{x}</option>)}</select></div>
         <div><button style={btn(false)} onClick={()=>{setAnalysisCategory("");setAnalysisSubCategory("");setAnalysisPerson("");setAnalysisFunding("");setAnalysisScope("");setSearch("");setFromDate(fyStart);setToDate("")}}>Reset</button></div>
@@ -936,7 +938,12 @@ export default function Expenses(){
                         vendorTotals[vendorKey]=(vendorTotals[vendorKey]||0)+r.amount;
                       }
                       return <div key={drillKey} style={{gridColumn:"1/-1",borderBottom:"1px solid var(--border)",padding:".18rem 0"}}>
-                        <button type="button" onClick={()=>setSubCategoryDrill(p=>({...p,[drillKey]:!p[drillKey]}))} style={{width:"100%",display:"grid",gridTemplateColumns:"minmax(160px,1fr) auto",gap:".75rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:".12rem 0",cursor:"pointer",textAlign:"left"}}>
+                        <button type="button" onClick={()=>{
+                          setSubCategoryDrill(p=>({...p,[drillKey]:!p[drillKey]}));
+                          setAnalysisCategory(k);
+                          setAnalysisSubCategory(sub==="Unclassified"?UNCLASSIFIED_SUBCATEGORY:sub);
+                          setAnalysisPage(1);
+                        }} style={{width:"100%",display:"grid",gridTemplateColumns:"minmax(160px,1fr) auto",gap:".75rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:".12rem 0",cursor:"pointer",textAlign:"left"}}>
                           <span style={{fontSize:".76rem",overflowWrap:"anywhere"}}>{subOpen?"▼":"▶"} {sub}</span>
                           <strong style={{fontSize:".76rem",whiteSpace:"nowrap",textAlign:"right"}}>{fmt(amt)}</strong>
                         </button>
@@ -951,7 +958,7 @@ export default function Expenses(){
                           </div>
                           <button type="button" style={{...btn(false),marginTop:".4rem",padding:".3rem .5rem",fontSize:".7rem"}} onClick={()=>{
                             setAnalysisCategory(k);
-                            setAnalysisSubCategory(sub==="Unclassified"?"":sub);
+                            setAnalysisSubCategory(sub==="Unclassified"?UNCLASSIFIED_SUBCATEGORY:sub);
                             setAnalysisPage(1);
                           }}>Show {subRows.length} transactions</button>
                         </div>}
@@ -1064,7 +1071,7 @@ export default function Expenses(){
           </div>
         </div>
       </div>
-      <div style={{fontSize:".72rem",color:"var(--muted)",marginBottom:".25rem"}}><strong>Drill-down:</strong> By Category and By Funding Source stay collapsed until clicked. In By Category, expand a Category to see summed Subcategories, then expand a Subcategory to see its Vendor breakup. “Show transactions” filters the detailed table.</div>
+      <div style={{fontSize:".72rem",color:"var(--muted)",marginBottom:".25rem"}}><strong>Drill-down:</strong> By Category and By Funding Source stay collapsed until clicked. In By Category, clicking a Subcategory now immediately filters the detailed table to that Subcategory and also expands its Vendor breakup. Unclassified therefore shows only unclassified rows.</div>
       <div style={{fontSize:".72rem",color:"var(--muted)"}}><strong>Double-count safeguard:</strong> Vendor Bills are counted on their bill date and can now be classified by Category, Subcategory, Person/Traveller and Domestic/International. Later Zivara bank payments that settle those bills are excluded from expense totals. Personal-paid expenses are counted once when incurred; later reimbursements are not added again. Only genuine direct Zivara bank expenses without an underlying Vendor Bill are counted from Transactions. PDF/Excel export the same filtered management-expense view.</div>
     </>}
 
