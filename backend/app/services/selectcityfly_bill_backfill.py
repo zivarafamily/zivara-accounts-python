@@ -1,37 +1,17 @@
-"""SelectCityFly April-2026 vendor-ledger repair v3.
+"""SelectCityFly April-2026 vendor-ledger repair v4.
 
-This repair is deliberately narrow and deterministic.
+This version does not rely on the normal payable vendor-ledger resolver.
+It directly rebuilds the exact 21 April Vendor Bill purchase journals against
+the canonical selected ledger VEND2C876042DB.
 
-Problem
--------
-The selected canonical ledger:
-    SelectCityFly Tour & Travels 25-26
-    Ledger Code: VEND2C876042DB
-is missing exactly 21 April 2026 Vendor Bill credits totalling Rs 6,00,171.
-
-The likely cause is duplicate/legacy Vendor master linkage: the old April bills
-can have a different VendorID even though VendorName is the same. A normal
-"does payable_bill journal exist?" test therefore does not fix the selected
-canonical ledger.
-
-What this repair does
----------------------
-1. Finds the canonical SelectCityFly Accounts Payable ledger by ledger code.
-2. Derives its canonical VendorID from Ledger.system_key = "vendor:<VendorID>".
-3. Verifies the exact 21 April bill numbers and exact expected total Rs 6,00,171.
-4. Directly normalizes ONLY those 21 Payables to the canonical VendorID using
-   SQLAlchemy Core UPDATE (this intentionally bypasses ORM payment sync events).
-5. Rebuilds ONLY each payable_bill purchase journal.
-6. Verifies that every rebuilt journal credits the canonical ledger.
-7. Commits only after all validation passes.
-
-It NEVER calls accounting_sync._sync_payable(), so it cannot recreate payable
-payments, bank transfers or reimbursements.
+Only payable_bill journals are deleted/recreated.
+Bank transactions, payable payments and reimbursements are never touched.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
+import json
 import logging
 import re
 
@@ -46,10 +26,10 @@ from app.services import accounting_sync as ac
 logger = logging.getLogger(__name__)
 
 TARGET_LEDGER_CODE = "VEND2C876042DB"
-TARGET_VENDOR_NAME_TOKEN = "selectcityflytourtravels"
+TARGET_VENDOR_TOKEN = "selectcityflytourtravels"
 EXPECTED_TOTAL = Decimal("600171.00")
 
-EXPECTED_BILLS = {
+EXPECTED_BILLS = [
     "SCF/26-27/0111",
     "SCF/26-27/0163",
     "SCF/26-27/0164",
@@ -71,223 +51,348 @@ EXPECTED_BILLS = {
     "SCF/26-27/0233",
     "SCF/26-27/0234",
     "SCF/26-27/0261",
-}
+]
 
 
-def _compact(value: str) -> str:
+def _d(value):
+    return ac._d(value)
+
+
+def _compact(value):
     return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
 
 
+def _items(payable):
+    raw = getattr(payable, "line_items", None)
+    if isinstance(raw, list):
+        return raw
+    try:
+        data = json.loads(raw or "[]")
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _roundoff(payable):
+    items = _items(payable)
+    if not items:
+        return Decimal("0.00")
+    return _d(items[0].get("RoundOffAmount", 0))
+
+
+def _selected_ledger(connection, llp_id, ledger_id):
+    if not ledger_id:
+        return None
+    row = connection.execute(
+        select(Ledger.__table__.c.id).where(
+            Ledger.__table__.c.id == ledger_id,
+            Ledger.__table__.c.llp_id == llp_id,
+        )
+    ).first()
+    return row[0] if row else None
+
+
+def _roundoff_ledger(connection, llp_id):
+    return ac._ensure_ledger(
+        connection,
+        llp_id=llp_id,
+        system_key="roundoff",
+        name="Round Off",
+        group_name="Administrative Expenses",
+        account_type="Expense",
+        code="ROUNDOFF",
+        opening_balance=0,
+        opening_side="Dr",
+        notes="System ledger for bill rounding differences.",
+        adopt_same_name=True,
+    )
+
+
 def _canonical_ledger(db):
-    exact = (
-        db.query(Ledger)
-        .filter(Ledger.ledger_code == TARGET_LEDGER_CODE)
-        .all()
-    )
-    if len(exact) == 1:
-        return exact[0]
-
-    # Fallback only if the ledger code was changed manually.
-    candidates = [
-        x for x in db.query(Ledger).filter(Ledger.group_name == "Accounts Payable").all()
-        if TARGET_VENDOR_NAME_TOKEN in _compact(x.ledger_name)
-    ]
-    if len(candidates) != 1:
+    rows = db.query(Ledger).filter(Ledger.ledger_code == TARGET_LEDGER_CODE).all()
+    if len(rows) != 1:
         raise RuntimeError(
-            f"Expected one canonical SelectCityFly Accounts Payable ledger; found {len(candidates)}"
+            f"Expected exactly one ledger with code {TARGET_LEDGER_CODE}; found {len(rows)}"
         )
-    return candidates[0]
+    ledger = rows[0]
+    if "accounts payable" not in str(ledger.group_name or "").lower():
+        raise RuntimeError(
+            f"{TARGET_LEDGER_CODE} is not an Accounts Payable ledger"
+        )
+    return ledger
 
 
-def _canonical_vendor_id(db, ledger: Ledger) -> str:
+def _canonical_vendor_id(db, ledger):
     key = str(ledger.system_key or "")
-    if key.startswith("vendor:") and key.split(":", 1)[1]:
+    if key.startswith("vendor:"):
         vendor_id = key.split(":", 1)[1]
-        vendor = db.get(Vendor, vendor_id)
-        if vendor:
+        if db.get(Vendor, vendor_id):
             return vendor_id
-
-    # Fallback: find a Vendor master in the same LLP whose exact linked ledger
-    # is the selected canonical ledger.
-    for vendor in db.query(Vendor).filter(Vendor.llp_id == ledger.llp_id).all():
-        if TARGET_VENDOR_NAME_TOKEN not in _compact(vendor.vendor_name):
-            continue
-        linked = (
-            db.query(Ledger)
-            .filter(
-                Ledger.llp_id == ledger.llp_id,
-                Ledger.system_key == f"vendor:{vendor.id}",
-            )
-            .first()
-        )
-        if linked and linked.id == ledger.id:
-            return vendor.id
-
-    raise RuntimeError(
-        f"Canonical ledger {ledger.ledger_name} does not resolve to a Vendor master"
-    )
+    return ""
 
 
-def _target_rows(db, llp_id: str):
+def _target_payables(db, ledger):
     rows = (
         db.query(LLPPayable)
         .filter(
-            LLPPayable.llp_id == llp_id,
+            LLPPayable.llp_id == ledger.llp_id,
             LLPPayable.bill_no.in_(EXPECTED_BILLS),
         )
-        .order_by(LLPPayable.bill_date, LLPPayable.bill_no, LLPPayable.id)
         .all()
     )
+    by_bill = {}
+    for row in rows:
+        bill = str(row.bill_no or "").strip()
+        if bill in by_bill:
+            raise RuntimeError(f"Duplicate payable rows found for {bill}")
+        by_bill[bill] = row
 
-    found = {str(x.bill_no or "").strip() for x in rows}
-    missing = sorted(EXPECTED_BILLS - found)
-    extras = sorted(found - EXPECTED_BILLS)
+    missing = [bill for bill in EXPECTED_BILLS if bill not in by_bill]
+    if missing:
+        raise RuntimeError(f"Target Vendor Bills are missing from Payables table: {missing}")
 
-    if len(rows) != len(EXPECTED_BILLS) or missing or extras:
+    ordered = [by_bill[bill] for bill in EXPECTED_BILLS]
+    wrong_vendor = [
+        p.bill_no for p in ordered
+        if TARGET_VENDOR_TOKEN not in _compact(p.vendor_name)
+    ]
+    if wrong_vendor:
         raise RuntimeError(
-            "SelectCityFly April repair validation failed: "
-            f"expected {len(EXPECTED_BILLS)} exact bills, found {len(rows)}; "
-            f"missing={missing}, extras={extras}"
+            f"Target bill numbers do not belong to SelectCityFly: {wrong_vendor}"
         )
 
-    if any(str(x.status or "").strip().lower() == "cancelled" for x in rows):
-        cancelled = [x.bill_no for x in rows if str(x.status or "").strip().lower() == "cancelled"]
-        raise RuntimeError(f"Repair stopped because target bills are cancelled: {cancelled}")
+    return ordered
 
-    total = sum((Decimal(str(x.net_payable or 0)) for x in rows), Decimal("0.00"))
-    if total.quantize(Decimal("0.01")) != EXPECTED_TOTAL:
-        raise RuntimeError(
-            f"SelectCityFly April repair stopped: target Net Payable total is {total}, "
-            f"expected {EXPECTED_TOTAL}"
+
+def _write_bill_to_canonical_ledger(connection, payable, vendor_ledger_id):
+    """Rebuild only the purchase journal for one payable."""
+
+    source_type = "payable_bill"
+    ac._delete_journal(connection, payable.llp_id, source_type, payable.id)
+
+    if str(payable.status or "").strip().lower() == "cancelled":
+        return
+
+    gross = _d(payable.gross_amount)
+    gst = _d(payable.gst_amount)
+    tcs = _d(payable.tcs_amount)
+    actual_tds = min(_d(payable.tds_deducted_amount), gross)
+    vendor_credit = _d(payable.net_payable)
+
+    items = _items(payable)
+    lines = []
+    taxable_from_items = Decimal("0.00")
+
+    for item in items:
+        taxable = _d(item.get("TaxableAmount") or item.get("taxable"))
+        if taxable <= 0:
+            continue
+
+        taxable_from_items += taxable
+        ledger_id = _selected_ledger(
+            connection,
+            payable.llp_id,
+            item.get("LedgerID"),
         )
-
-    return rows
-
-
-def _journal_credits_ledger(db, payable_id: str, ledger_id: str) -> bool:
-    journal = (
-        db.query(JournalEntry)
-        .filter(
-            JournalEntry.source_type == "payable_bill",
-            JournalEntry.source_id == payable_id,
-        )
-        .first()
-    )
-    if not journal:
-        return False
-
-    return (
-        db.query(JournalLine)
-        .filter(
-            JournalLine.journal_entry_id == journal.id,
-            JournalLine.ledger_id == ledger_id,
-            JournalLine.credit > Decimal("0.00"),
-        )
-        .first()
-        is not None
-    )
-
-
-def repair_selectcityfly_missing_bill_journals() -> dict:
-    """Force the exact missing April bills onto the canonical SelectCityFly ledger.
-
-    Safe to run repeatedly. If all 21 bills are already correctly linked and
-    posted, it returns repairedCount=0.
-    """
-    db = SessionLocal()
-    try:
-        ledger = _canonical_ledger(db)
-        vendor_id = _canonical_vendor_id(db, ledger)
-        vendor = db.get(Vendor, vendor_id)
-        if not vendor:
-            raise RuntimeError(f"Canonical VendorID {vendor_id} not found")
-
-        rows = _target_rows(db, ledger.llp_id)
-
-        needs_repair = [
-            p for p in rows
-            if p.vendor_id != vendor_id
-            or not _journal_credits_ledger(db, p.id, ledger.id)
-        ]
-
-        if not needs_repair:
-            result = {
-                "vendor": vendor.vendor_name,
-                "ledgerCode": ledger.ledger_code,
-                "targetBillCount": len(rows),
-                "targetTotal": float(EXPECTED_TOTAL),
-                "repairedCount": 0,
-                "message": "All 21 April bills are already correctly linked to the canonical ledger.",
-            }
-            logger.warning("SelectCityFly repair v3: %s", result)
-            return result
-
-        connection = db.connection()
-
-        # Normalize VendorID directly to avoid triggering LLPPayable after_update
-        # payment synchronization.
-        ids = [p.id for p in needs_repair]
-        connection.execute(
-            update(LLPPayable.__table__)
-            .where(LLPPayable.__table__.c.id.in_(ids))
-            .values(
-                vendor_id=vendor_id,
-                vendor_name=vendor.vendor_name,
+        if not ledger_id:
+            ledger_id = ac._expense_ledger(
+                connection,
+                payable.llp_id,
+                payable.expense_type,
+                payable.vendor_category,
+            )
+        lines.append(
+            (
+                ledger_id,
+                taxable,
+                0,
+                item.get("Particulars") or payable.description or payable.bill_no,
             )
         )
 
-        # Reload target rows with the canonical VendorID.
-        db.expire_all()
-        repaired_rows = (
-            db.query(LLPPayable)
-            .filter(LLPPayable.id.in_(ids))
-            .order_by(LLPPayable.bill_date, LLPPayable.bill_no, LLPPayable.id)
+    if taxable_from_items <= 0:
+        expense_component = max(gross - gst - tcs, Decimal("0.00"))
+        expense_ledger = ac._expense_ledger(
+            connection,
+            payable.llp_id,
+            payable.expense_type,
+            payable.vendor_category,
+        )
+        lines.append(
+            (
+                expense_ledger,
+                expense_component,
+                0,
+                payable.description or payable.bill_no,
+            )
+        )
+
+    if gst > 0:
+        gst_ledger = ac._tax_ledger(
+            connection,
+            payable.llp_id,
+            "GSTINPUT",
+            "GST Input",
+            "Duties & Taxes",
+            "Asset",
+            "Dr",
+        )
+        lines.append((gst_ledger, gst, 0, "Input GST"))
+
+    if tcs > 0:
+        tcs_ledger = ac._tax_ledger(
+            connection,
+            payable.llp_id,
+            "TCSREC",
+            "TCS Receivable",
+            "Duties & Taxes",
+            "Asset",
+            "Dr",
+        )
+        lines.append((tcs_ledger, tcs, 0, "TCS Receivable"))
+
+    if actual_tds > 0:
+        tds_ledger = ac._tax_ledger(
+            connection,
+            payable.llp_id,
+            "TDSPAY",
+            "TDS Payable",
+            "Duties & Taxes",
+            "Liability",
+            "Cr",
+        )
+        lines.append((tds_ledger, 0, actual_tds, "TDS Payable"))
+
+    ro = _roundoff(payable)
+    if ro:
+        roundoff_ledger = _roundoff_ledger(connection, payable.llp_id)
+        if ro > 0:
+            lines.append((roundoff_ledger, ro, 0, "Round Off"))
+        else:
+            lines.append((roundoff_ledger, 0, abs(ro), "Round Off"))
+
+    # Force the liability credit to the ledger the user is actually viewing.
+    lines.append(
+        (
+            vendor_ledger_id,
+            0,
+            vendor_credit,
+            payable.vendor_name or "SelectCityFly",
+        )
+    )
+
+    journal_id = ac._write_journal(
+        connection,
+        llp_id=payable.llp_id,
+        entry_date=payable.bill_date,
+        voucher_type="Purchase",
+        voucher_no=payable.bill_no or payable.id,
+        narration=payable.description or f"Vendor bill {payable.bill_no}",
+        source_type=source_type,
+        source_id=payable.id,
+        lines=lines,
+    )
+
+    if not journal_id:
+        debit_total = sum((_d(x[1]) for x in lines), Decimal("0.00"))
+        credit_total = sum((_d(x[2]) for x in lines), Decimal("0.00"))
+        raise RuntimeError(
+            f"Could not write {payable.bill_no}: journal unbalanced "
+            f"Dr={debit_total} Cr={credit_total}"
+        )
+
+
+def repair_selectcityfly_missing_bill_journals():
+    db = SessionLocal()
+    try:
+        ledger = _canonical_ledger(db)
+        payables = _target_payables(db, ledger)
+        connection = db.connection()
+
+        vendor_id = _canonical_vendor_id(db, ledger)
+
+        # If the canonical ledger is linked to a Vendor master, also normalize the
+        # old April Payables to that VendorID. Core UPDATE avoids ORM payment events.
+        if vendor_id:
+            ids = [p.id for p in payables]
+            connection.execute(
+                update(LLPPayable.__table__)
+                .where(LLPPayable.__table__.c.id.in_(ids))
+                .values(vendor_id=vendor_id)
+            )
+            db.expire_all()
+            payables = _target_payables(db, ledger)
+
+        # Force rebuild all 21 target purchase journals. This is idempotent because
+        # _write_journal deletes the existing payable_bill journal for each source_id
+        # before writing exactly one replacement.
+        for payable in payables:
+            _write_bill_to_canonical_ledger(connection, payable, ledger.id)
+
+        db.flush()
+
+        # Verify exact canonical-ledger credit for the 21 target journals.
+        target_ids = [p.id for p in payables]
+        journals = (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.llp_id == ledger.llp_id,
+                JournalEntry.source_type == "payable_bill",
+                JournalEntry.source_id.in_(target_ids),
+            )
+            .all()
+        )
+        journal_ids = [j.id for j in journals]
+
+        credits = (
+            db.query(JournalLine)
+            .filter(
+                JournalLine.journal_entry_id.in_(journal_ids),
+                JournalLine.ledger_id == ledger.id,
+                JournalLine.credit > Decimal("0.00"),
+            )
             .all()
         )
 
-        repaired = []
-        for payable in repaired_rows:
-            # Rebuild ONLY purchase/bill journal.
-            ac._sync_payable_bill(connection, payable)
-            db.flush()
+        credit_total = sum(
+            (Decimal(str(x.credit or 0)) for x in credits),
+            Decimal("0.00"),
+        ).quantize(Decimal("0.01"))
 
-            if not _journal_credits_ledger(db, payable.id, ledger.id):
-                raise RuntimeError(
-                    f"Bill {payable.bill_no} did not credit canonical ledger "
-                    f"{ledger.ledger_code} after rebuild"
-                )
-
-            repaired.append(
-                {
-                    "BillNo": payable.bill_no,
-                    "BillDate": payable.bill_date.isoformat() if payable.bill_date else "",
-                    "NetPayable": float(payable.net_payable or 0),
-                }
+        if len(journals) != 21:
+            raise RuntimeError(
+                f"Expected 21 rebuilt payable_bill journals, found {len(journals)}"
+            )
+        if len(credits) != 21:
+            raise RuntimeError(
+                f"Expected 21 SelectCityFly credit lines, found {len(credits)}"
+            )
+        if credit_total != EXPECTED_TOTAL:
+            raise RuntimeError(
+                f"Rebuilt SelectCityFly April credits total {credit_total}; "
+                f"expected {EXPECTED_TOTAL}"
             )
 
         db.commit()
 
-        repaired_total = sum(
-            (Decimal(str(x["NetPayable"])) for x in repaired),
-            Decimal("0.00"),
-        ).quantize(Decimal("0.01"))
-
         result = {
-            "vendor": vendor.vendor_name,
+            "ok": True,
+            "ledger": ledger.ledger_name,
             "ledgerCode": ledger.ledger_code,
-            "targetBillCount": len(rows),
-            "targetTotal": float(EXPECTED_TOTAL),
-            "repairedCount": len(repaired),
-            "repairedTotal": float(repaired_total),
-            "repairedBills": repaired,
-            "message": "Canonical SelectCityFly April bill journals rebuilt successfully.",
+            "repairedCount": 21,
+            "repairedCreditTotal": float(credit_total),
+            "billNumbers": EXPECTED_BILLS,
+            "message": (
+                "21 April SelectCityFly purchase journals were force-rebuilt "
+                "against the canonical vendor ledger."
+            ),
         }
-        logger.warning("SelectCityFly repair v3 COMPLETED: %s", result)
+        logger.warning("SELECTCITYFLY REPAIR V4 COMPLETED: %s", result)
         return result
 
     except Exception:
         db.rollback()
-        logger.exception("SelectCityFly repair v3 FAILED")
+        logger.exception("SELECTCITYFLY REPAIR V4 FAILED")
         raise
     finally:
         db.close()
