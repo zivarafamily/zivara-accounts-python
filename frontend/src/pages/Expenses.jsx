@@ -195,20 +195,27 @@ function isPayableSettlementBankRow(row,payables){
   const rowAmount=Number(row.AmountOut||0);
   const rows=payables||[];
 
-  // Strong one-to-one links.
+  // Vendor-ledger safeguard:
+  // bank payment posted to a vendor ledger that already has Vendor Bills
+  // is settlement only, not a new expense.
+  if(ledger&&rows.some(p=>{
+    const vendor=normExpenseText(p.VendorName||"");
+    if(!vendor)return false;
+    return ledger===vendor||ledger.includes(vendor)||vendor.includes(ledger);
+  }))return true;
+
   if(rows.some(p=>{
     const payableId=normExpenseText(p.PayableID||"");
     const paymentRef=normExpenseText(p.ReferenceNo||"");
     const billNo=normExpenseText(p.BillNo||"");
+    const vendor=normExpenseText(p.VendorName||"");
     if(payableId&&(ref===payableId||desc.includes(payableId)))return true;
     if(paymentRef&&ref&&ref===paymentRef)return true;
     if(billNo&&desc.includes(billNo))return true;
+    if(vendor&&desc.includes(vendor))return true;
     return false;
   }))return true;
 
-  // Batch payment safeguard:
-  // If several Vendor Bills for one vendor were marked paid on the same date/reference,
-  // and their Paid Amount adds up to this bank debit, this bank row is settlement only.
   const groups={};
   for(const p of rows){
     if(String(p.Status||"").toLowerCase()==="cancelled")continue;
@@ -221,12 +228,13 @@ function isPayableSettlementBankRow(row,payables){
     if(rowDate&&payDate&&rowDate!==payDate)continue;
     const referenceMatch=ref&&paymentRef&&ref===paymentRef;
     const vendorMention=vendor&&desc.includes(vendor);
-    if(!referenceMatch&&!vendorMention)continue;
+    const ledgerMatch=ledger&&(ledger===vendor||ledger.includes(vendor)||vendor.includes(ledger));
+    if(!referenceMatch&&!vendorMention&&!ledgerMatch)continue;
     const key=`${vendor}|${paymentRef||rowDate}`;
-    if(!groups[key])groups[key]={sum:0,vendor,ref:paymentRef};
+    if(!groups[key])groups[key]={sum:0};
     groups[key].sum+=paid;
   }
-  if(rowAmount>0&&Object.values(groups).some(g=>Math.abs(g.sum-rowAmount)<=1))return true;
+  if(rowAmount>0&&Object.values(groups).some(g=>Math.abs(g.sum-rowAmount)<=2))return true;
 
   return false;
 }
