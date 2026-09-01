@@ -249,7 +249,6 @@ export default function Expenses(){
   const[vendors,setVendors]=useState([]);
   const[partners,setPartners]=useState([]);
   const[users,setUsers]=useState([]);
-  const[ledgers,setLedgers]=useState([]);
   const[form,setForm]=useState(initial);
   const[formOpen,setFormOpen]=useState(false);
   const[editId,setEditId]=useState(null);
@@ -299,8 +298,8 @@ export default function Expenses(){
   async function load(){
     setLoading(true);
     try{
-      const[e,v,p,u,b,pay,l]=await Promise.allSettled([
-        apiGet("getExpenses"),apiGet("getVendors"),apiGet("getPartners"),apiGet("getUsers"),apiGet("getBankTransactions"),apiGet("getLLPPayables"),apiGet("getLedgers")
+      const[e,v,p,u,b,pay]=await Promise.allSettled([
+        apiGet("getExpenses"),apiGet("getVendors"),apiGet("getPartners"),apiGet("getUsers"),apiGet("getBankTransactions"),apiGet("getLLPPayables")
       ]);
       if(e.status==="fulfilled"&&e.value.ok)setExpenses(e.value.data||[]);
       if(v.status==="fulfilled"&&v.value.ok)setVendors((v.value.data||[]).filter(x=>x.Status!=="Inactive"));
@@ -308,7 +307,6 @@ export default function Expenses(){
       if(u.status==="fulfilled"&&u.value.ok)setUsers((u.value.data||[]).filter(x=>x.Status!=="Inactive"));
       if(b.status==="fulfilled"&&b.value.ok)setBankTransactions(b.value.data||[]);
       if(pay.status==="fulfilled"&&pay.value.ok)setPayables(pay.value.data||[]);
-      if(l.status==="fulfilled"&&l.value.ok)setLedgers((l.value.data||[]).filter(x=>x.Status!=="Inactive"));
     }finally{setLoading(false)}
   }
   useEffect(()=>{load()},[]);
@@ -827,256 +825,6 @@ export default function Expenses(){
     setExpandedAnalysisRows(prev=>({...prev,[id]:!prev[id]}));
   }
 
-  async function exportConsolidatedOutflowsExcel(){
-    const rows=[];
-    const add=row=>{
-      const date=String(row.date||"").slice(0,10);
-      if(date&&date<fyStart)return;
-      rows.push({
-        date,
-        recordType:row.recordType||"Other",
-        source:row.source||"",
-        funding:row.funding||"",
-        person:row.person||"",
-        vendorPerson:row.vendorPerson||"",
-        category:row.category||"",
-        subCategory:row.subCategory||"",
-        description:row.description||"",
-        reference:row.reference||"",
-        sourceAmount:Number(row.sourceAmount||0),
-        expenseAmount:Number(row.expenseAmount||0),
-        bankOutflow:Number(row.bankOutflow||0),
-        cashOutflow:Number(row.cashOutflow||0),
-        personalOutflow:Number(row.personalOutflow||0),
-        claimEffect:Number(row.claimEffect||0),
-        countsExpense:row.countsExpense||"No",
-        countsOutflow:row.countsOutflow||"No",
-        treatment:row.treatment||"",
-        status:row.status||"",
-        sourceId:row.sourceId||""
-      });
-    };
-
-    // 1. Vendor Bills: expense recognition happens on Bill Date.
-    // Payment is a separate settlement movement and must not be counted as expense again.
-    for(const v of payables){
-      if(String(v.Status||"").toLowerCase()==="cancelled")continue;
-      const gross=Number(v.GrossAmount||0);if(gross<=0)continue;
-      const cls=vendorBillClassifications[v.PayableID]||{};
-      const sub=String(cls.SubCategory||vendorBillSubCategory(v)||"").trim();
-      const personallyPaid=normExpenseText(v.PaidByType||"Company")!=="company"&&String(v.PaidByName||"").trim();
-      add({
-        date:v.BillDate,recordType:"Vendor Bill",source:"Vendor Bills",
-        funding:personallyPaid?`${v.PaidByName} / Vendor Bill`:"Zivara / Vendor Bill",
-        person:personallyPaid?String(v.PaidByName||"").trim():String(cls.ExpenseFor||"").trim(),
-        vendorPerson:v.VendorName||"",category:String(cls.Category||vendorBillCategory(v)||"Vendor Bill").trim(),
-        subCategory:sub,description:v.Description||"",reference:v.BillNo||v.PayableID,
-        sourceAmount:gross,expenseAmount:gross,countsExpense:"Yes",countsOutflow:"No",
-        treatment:"Expense recognised on Bill Date. Later payment is settlement only.",
-        status:v.Status||"",sourceId:v.PayableID
-      });
-    }
-
-    // 2. Partner / Staff expenses: keep every source row for reconciliation.
-    // If it duplicates a personally-paid Vendor Bill, the row stays visible but
-    // expense recognition is zero here because the Vendor Bill is the preferred expense source.
-    for(const e of expenses){
-      const amount=Number(e.Amount||0);if(amount<=0)continue;
-      const {meta}=readExpenseMeta(e.Notes);
-      const duplicate=isPersonalExpenseDuplicateOfVendorBill(e,payables);
-      add({
-        date:e.Date,recordType:"Partner / Staff Expense",source:"Partner / Staff Expenses",
-        funding:e.PaidBy||"Personal",person:e.PaidBy||"",vendorPerson:e.VendorOrPerson||"",
-        category:String(e.Category||e.ExpenseType||"Other").trim()||"Other",
-        subCategory:String(meta.subCategory||"").trim(),description:e.Description||"",reference:e.ExpenseID,
-        sourceAmount:amount,expenseAmount:duplicate?0:amount,personalOutflow:amount,claimEffect:amount,
-        countsExpense:duplicate?"No":"Yes",countsOutflow:"Yes",
-        treatment:duplicate
-          ?"Personal outflow retained for Partner/Staff reconciliation; expense counted through matching Vendor Bill."
-          :"Personally-paid business expense; creates amount due to Partner/Staff until settled.",
-        status:e.Status||"",sourceId:e.ExpenseID
-      });
-    }
-
-    // 3. Every Zivara bank debit. This is the bank-outflow control total.
-    // Only genuine direct-expense rows count as expense; settlements/transfers remain visible but non-expense.
-    for(const r of bankTransactions){
-      const amount=Number(r.AmountOut||0);if(amount<=0)continue;
-      const settlement=isPayableSettlementBankRow(r,payables);
-      const cls=bankClassifications[r.EntryID]||{};
-      const autoCategory=bankExpenseCategory(r);
-      const category=String(cls.Category||autoCategory||"").trim();
-      const text=normExpenseText(`${r.ManagedBy||""} ${r.ReferenceType||""} ${r.Description||""}`);
-      const isReimbursement=text.includes("reimbursement")||text.includes("[purpose: expense reimbursement]")||text.includes("against invoice")||text.includes("expenses paid as per invoice");
-      const direct=!settlement&&!isReimbursement&&!!category;
-      const ledger=ledgers.find(l=>String(l.LedgerID||"")===String(r.LedgerID||""));
-      const ledgerGroup=normExpenseText(ledger?.GroupName||"");
-      const personLedger=ledger&&(ledgerGroup.includes("partner")||ledgerGroup.includes("staff")||ledgerGroup.includes("current liabilities"));
-      const matchedPerson=personLedger?ledger.LedgerName:allPeople.find(x=>normExpenseText(x)===normExpenseText(r.LedgerName||""))||"";
-      const type=isReimbursement?"Reimbursement":settlement?"Vendor Settlement":direct?"Direct Zivara Expense":"Other Bank Outflow / Transfer";
-      const treatment=isReimbursement
-        ?"Settlement only — reduces Partner/Staff liability; not a new expense."
-        :settlement
-          ?"Settlement only — pays Vendor liability; underlying Vendor Bill is the expense."
-          :direct
-            ?"Direct Zivara-paid expense; bank outflow and expense recognition are the same event."
-            :"Outward bank movement retained for audit. Not counted as expense unless classified as a genuine direct expense.";
-      add({
-        date:r.Date,recordType:type,source:"Transactions / Bank",
-        funding:r.BankAccountName||r.BankName||"Zivara Bank",person:matchedPerson,
-        vendorPerson:r.LedgerName||"",category:direct?category:"",
-        subCategory:direct?String(cls.SubCategory||"").trim():"",
-        description:r.Description||"",reference:r.ReferenceID||r.EntryID,
-        sourceAmount:amount,expenseAmount:direct?amount:0,bankOutflow:amount,
-        claimEffect:isReimbursement&&matchedPerson?-amount:0,
-        countsExpense:direct?"Yes":"No",countsOutflow:"Yes",treatment,status:"Paid",sourceId:r.EntryID
-      });
-    }
-
-    // 4. Company-paid Vendor Bill cash settlements do not appear in bank transactions.
-    for(const v of payables){
-      const paid=Number(v.PaidAmount||0);if(paid<=0)continue;
-      const company=normExpenseText(v.PaidByType||"Company")==="company";
-      const mode=normExpenseText(v.PaymentMode||"");
-      if(!company||!['cash','petty cash'].includes(mode))continue;
-      add({
-        date:v.PaymentDate,recordType:"Vendor Settlement · Cash",source:"Vendor Bills",
-        funding:mode==="petty cash"?"Zivara Petty Cash":"Zivara Cash",vendorPerson:v.VendorName||"",
-        description:`Settlement of ${v.BillNo||v.PayableID}`,reference:v.ReferenceNo||v.PayableID,
-        sourceAmount:paid,cashOutflow:paid,countsExpense:"No",countsOutflow:"Yes",
-        treatment:"Cash settlement only — Vendor Bill already carries the expense.",status:v.Status||"",sourceId:v.PayableID
-      });
-    }
-
-    // 5. Personally-paid Vendor Bills not duplicated in Partner/Staff Expenses.
-    // These are personal outward movements that increase the amount due to that person.
-    for(const v of payables){
-      const paid=Number(v.PaidAmount||0);if(paid<=0)continue;
-      const personallyPaid=normExpenseText(v.PaidByType||"Company")!=="company"&&String(v.PaidByName||"").trim();
-      if(!personallyPaid)continue;
-      const representedByExpense=expenses.some(e=>isPersonalExpenseDuplicateOfVendorBill(e,[v]));
-      if(representedByExpense)continue;
-      add({
-        date:v.PaymentDate||v.BillDate,recordType:"Vendor Bill · Personal Payment",source:"Vendor Bills",
-        funding:v.PaidByName||"Personal",person:v.PaidByName||v.ReimburseTo||"",vendorPerson:v.VendorName||"",
-        description:`Personally paid ${v.BillNo||v.PayableID}`,reference:v.ReferenceNo||v.PayableID,
-        sourceAmount:paid,personalOutflow:paid,claimEffect:paid,countsExpense:"No",countsOutflow:"Yes",
-        treatment:"Personal settlement movement only; Vendor Bill already carries the expense.",status:v.Status||"",sourceId:v.PayableID
-      });
-    }
-
-    // 6. Petty-cash expense reimbursements are not returned by the bank-transactions endpoint.
-    for(const e of expenses){
-      if(String(e.Status||"")!=="Reimbursed"||!e.ReimburseDate)continue;
-      const mode=normExpenseText(e.ReimburseMode||e.ReimburseAccount||"");
-      if(mode!=="petty cash")continue;
-      const amount=Number(e.Amount||0);if(amount<=0)continue;
-      const person=e.ReimburseTo||e.PaidBy||"";
-      add({
-        date:e.ReimburseDate,recordType:"Reimbursement · Petty Cash",source:"Partner / Staff Expenses",
-        funding:"Zivara Petty Cash",person,vendorPerson:person,description:`Reimbursement: ${e.Description||e.ExpenseID}`,
-        reference:e.ReimburseRef||e.ExpenseID,sourceAmount:amount,cashOutflow:amount,claimEffect:-amount,
-        countsExpense:"No",countsOutflow:"Yes",
-        treatment:"Settlement only — reimburses Partner/Staff expense already recognised earlier.",status:"Reimbursed",sourceId:e.ExpenseID
-      });
-    }
-
-    // 7. Partner / Staff ledger journals for reconciliation (refunds, inter-person transfers, adjustments).
-    // Underlying system payable-personal postings are already represented above, so they are skipped here.
-    try{
-      const names=new Set([...partnerNames,...staffNames,...expenses.map(e=>e.PaidBy),...expenses.map(e=>e.ReimburseTo)].map(x=>normExpenseText(x)).filter(Boolean));
-      const personLedgers=ledgers.filter(l=>{
-        const group=normExpenseText(l.GroupName||"");
-        const system=normExpenseText(l.SystemKey||"");
-        const name=normExpenseText(l.LedgerName||"");
-        return names.has(name)&&(group.includes("partner")||group.includes("staff")||group.includes("current liabilities")||system.startsWith("partner:")||system.startsWith("person:"));
-      });
-      const responses=await Promise.allSettled(personLedgers.map(l=>apiGet("getLedgerStatement",{ledger_id:l.LedgerID})));
-      const seen=new Set();
-      responses.forEach((res,i)=>{
-        if(res.status!=="fulfilled"||!res.value?.ok)return;
-        const ledger=personLedgers[i];
-        for(const r of res.value.data||[]){
-          const source=normExpenseText(r.SourceType||"");
-          const voucher=normExpenseText(r.VoucherType||"");
-          if(source==="payable_payment_personal"||source==="expense")continue;
-          if(source!=="manual"&&voucher!=="journal")continue;
-          const debit=Number(r.Debit||0),credit=Number(r.Credit||0);
-          if(debit<=0&&credit<=0)continue;
-          const key=`${r.SourceID||r.JournalID||r.VoucherNo}|${ledger.LedgerID}|${debit}|${credit}|${r.Date}`;
-          if(seen.has(key))continue;seen.add(key);
-          const text=String(r.Narration||r.Particulars||"");
-          const tagged=(text.match(/\[JournalType:\s*([^\]]+)\]/i)||[])[1]||"";
-          const lower=text.toLowerCase();
-          const type=tagged||(
-            lower.includes("refund")||lower.includes("cancel")?"Refund / Cancellation":
-            lower.includes("paid to")||lower.includes("received from")?"Inter-person Settlement":"General Adjustment"
-          );
-          const inter=/inter-person/i.test(type);
-          const refund=/refund|cancellation/i.test(type);
-          add({
-            date:r.Date,recordType:`Partner/Staff Journal · ${type}`,source:"Partner / Staff Ledger",
-            funding:ledger.LedgerName,person:ledger.LedgerName,vendorPerson:"",description:text,
-            reference:r.VoucherNo||r.SourceID||"",sourceAmount:Math.max(debit,credit),
-            personalOutflow:inter&&credit>0?credit:0,claimEffect:credit-debit,
-            countsExpense:"No",countsOutflow:inter&&credit>0?"Yes":"No",
-            treatment:refund
-              ?"Reconciliation item — refund/cancellation reduces Partner/Staff claim."
-              :inter
-                ?(credit>0?"Partner/Staff paid another person on behalf of Zivara; increases sender claim.":"Received from another person; reduces receiver claim.")
-                :"Reconciliation adjustment only; not a new expense or Zivara bank outflow.",
-            status:"Posted",sourceId:r.SourceID||r.JournalID||""
-          });
-        }
-      });
-    }catch(err){
-      console.warn("Partner/Staff ledger reconciliation rows could not be loaded",err);
-    }
-
-    rows.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.recordType).localeCompare(String(b.recordType)));
-    if(!rows.length)return alert("No consolidated outflow records to export.");
-
-    const sum=key=>rows.reduce((total,r)=>total+Number(r[key]||0),0);
-    const totalExpense=sum("expenseAmount"),bankOut=sum("bankOutflow"),cashOut=sum("cashOutflow"),personalOut=sum("personalOutflow"),claimNet=sum("claimEffect");
-    const totalOut=bankOut+cashOut+personalOut;
-    const vendorExpense=rows.filter(r=>r.recordType==="Vendor Bill").reduce((a,r)=>a+r.expenseAmount,0);
-    const staffExpense=rows.filter(r=>r.recordType==="Partner / Staff Expense").reduce((a,r)=>a+r.expenseAmount,0);
-    const directExpense=rows.filter(r=>r.recordType==="Direct Zivara Expense").reduce((a,r)=>a+r.expenseAmount,0);
-    const vendorSettlements=rows.filter(r=>String(r.recordType).startsWith("Vendor Settlement")).reduce((a,r)=>a+r.bankOutflow+r.cashOutflow,0);
-    const reimbursements=rows.filter(r=>String(r.recordType).startsWith("Reimbursement")).reduce((a,r)=>a+r.bankOutflow+r.cashOutflow,0);
-
-    const summary=`<table class="summary">
-      <tr><th colspan="2">Zivara Consolidated Outflows & Expense Reconciliation</th></tr>
-      <tr><td>Accounting period from</td><td>${escapeHtml(exportDate(fyStart))}</td></tr>
-      <tr><td>Total Recognised Expense</td><td class="amt">${totalExpense.toFixed(2)}</td></tr>
-      <tr><td>Vendor Bill Expense</td><td class="amt">${vendorExpense.toFixed(2)}</td></tr>
-      <tr><td>Partner / Staff Expense counted</td><td class="amt">${staffExpense.toFixed(2)}</td></tr>
-      <tr><td>Direct Zivara Expense</td><td class="amt">${directExpense.toFixed(2)}</td></tr>
-      <tr><td>Zivara Bank Outflow</td><td class="amt">${bankOut.toFixed(2)}</td></tr>
-      <tr><td>Zivara Cash / Petty Cash Outflow</td><td class="amt">${cashOut.toFixed(2)}</td></tr>
-      <tr><td>Partner / Staff Personal Outflow</td><td class="amt">${personalOut.toFixed(2)}</td></tr>
-      <tr><td>Total Outward Movement</td><td class="amt">${totalOut.toFixed(2)}</td></tr>
-      <tr><td>Vendor Settlements (non-expense)</td><td class="amt">${vendorSettlements.toFixed(2)}</td></tr>
-      <tr><td>Reimbursements (non-expense)</td><td class="amt">${reimbursements.toFixed(2)}</td></tr>
-      <tr><td>Net Partner / Staff Claim Effect</td><td class="amt">${claimNet.toFixed(2)}</td></tr>
-      <tr><td>Detailed Records</td><td>${rows.length}</td></tr>
-    </table>`;
-
-    const headers=["Date","Record Type","Source","Funding Source","Partner / Staff","Vendor / Counterparty","Category","Subcategory","Description","Reference / UTR","Source Amount","Expense Recognised","Zivara Bank Outflow","Zivara Cash Outflow","Partner/Staff Personal Outflow","Partner/Staff Claim Effect","Counts as Expense?","Counts as Outflow?","Treatment / Reconciliation","Status","Source ID"];
-    const detail=rows.map(r=>`<tr>${[
-      exportDate(r.date),r.recordType,r.source,r.funding,r.person,r.vendorPerson,r.category,r.subCategory,r.description,r.reference,
-      r.sourceAmount.toFixed(2),r.expenseAmount.toFixed(2),r.bankOutflow.toFixed(2),r.cashOutflow.toFixed(2),r.personalOutflow.toFixed(2),r.claimEffect.toFixed(2),
-      r.countsExpense,r.countsOutflow,r.treatment,r.status,r.sourceId
-    ].map((v,i)=>`<td${i>=10&&i<=15?' class="amt"':''}>${escapeHtml(v)}</td>`).join("")}</tr>`).join("");
-
-    const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>
-      body{font-family:Arial,sans-serif;font-size:10pt}.summary{border-collapse:collapse;margin-bottom:18px}.summary th{font-size:14pt;text-align:left;background:#dbeafe}
-      table{border-collapse:collapse}th,td{border:1px solid #b8c0cc;padding:5px 7px;vertical-align:top}th{background:#e9edf3;font-weight:700}.amt{text-align:right;mso-number-format:"0.00"}
-    </style></head><body>${summary}<table><tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join("")}</tr>${detail}</table></body></html>`;
-    const blob=new Blob([html],{type:"application/vnd.ms-excel;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");
-    a.href=url;a.download=`zivara-consolidated-outflows-from-${fyStart}.xls`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
-  }
-
   function exportAnalysisExcel(){
     if(!analysisRows.length)return alert("No analysis rows to export.");
     const summary=`<table><tr><th colspan="2">Expense Analysis Summary</th></tr><tr><td>Total Expense</td><td>${analysisTotal.toFixed(2)}</td></tr><tr><td>Records</td><td>${analysisRows.length}</td></tr></table>`;
@@ -1087,9 +835,80 @@ export default function Expenses(){
   }
   function exportAnalysisPDF(){
     if(!analysisRows.length)return alert("No analysis rows to export.");
-    const w=window.open("","_blank","width=1200,height=850");if(!w)return alert("Please allow pop-ups to export PDF.");
-    const rows=analysisRows.map(r=>`<tr><td>${escapeHtml(exportDate(r.date))}</td><td>${escapeHtml(r.category)}</td><td>${escapeHtml(r.subCategory||"—")}</td><td>${escapeHtml(r.person||"—")}</td><td>${escapeHtml(r.scope||"—")}</td><td>${escapeHtml(r.funding)}</td><td class="num">${escapeHtml(fmt(r.amount))}</td><td>${escapeHtml(r.source)}</td><td>${escapeHtml(r.description)}</td></tr>`).join("");
-    w.document.write(`<!doctype html><html><head><style>body{font-family:Arial,sans-serif;font-size:10px;color:#111;padding:18px}h1{font-size:18px;margin:0 0 4px}.summary{margin:10px 0 14px;font-size:12px;line-height:1.7}table{width:100%;border-collapse:collapse}th,td{border:1px solid #aaa;padding:4px;vertical-align:top;overflow-wrap:anywhere}th{background:#eee;text-align:left}.num{text-align:right;white-space:nowrap}@page{size:A4 landscape;margin:10mm}</style></head><body><h1>Zivara Family Office LLP — Expense Analysis</h1><div class="summary"><strong>Total:</strong> ${escapeHtml(fmt(analysisTotal))} · <strong>Vendor Bills:</strong> ${escapeHtml(fmt(analysisSourceTotals.vendorBills))} · <strong>Personally Paid:</strong> ${escapeHtml(fmt(analysisSourceTotals.personal))} · <strong>Direct Zivara:</strong> ${escapeHtml(fmt(analysisSourceTotals.directZivara))} · <strong>Records:</strong> ${analysisRows.length}</div><table><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th></tr>${rows}</table><script>window.onload=()=>window.print()<\/script></body></html>`);w.document.close();
+    const w=window.open("","_blank","width=1300,height=900");if(!w)return alert("Please allow pop-ups to export PDF.");
+
+    const pct=value=>analysisTotal>0?`${((Number(value||0)/analysisTotal)*100).toFixed(1)}%`:"0.0%";
+    const filterSummary=[
+      fromDate?`From ${exportDate(fromDate)}`:"",
+      toDate?`To ${exportDate(toDate)}`:"",
+      analysisCategory?`Category: ${analysisCategory}`:"",
+      analysisSubCategory===UNCLASSIFIED_SUBCATEGORY?"Subcategory: Unclassified":analysisSubCategory?`Subcategory: ${analysisSubCategory}`:"",
+      analysisPerson?`Person / Traveller: ${analysisPerson}`:"",
+      analysisFunding?`Funding: ${analysisFunding}`:"",
+      analysisScope?`Scope: ${analysisScope}`:"",
+      search?`Search: ${search}`:""
+    ].filter(Boolean).join(" · ")||"All Expense Analysis records";
+
+    const subTotals=Object.entries(analysisRows.reduce((a,r)=>{
+      const key=String(r.subCategory||"Unclassified").trim()||"Unclassified";
+      a[key]=(a[key]||0)+r.amount;return a;
+    },{})).sort((a,b)=>b[1]-a[1]);
+
+    const vendorTotals=Object.entries(analysisRows.reduce((a,r)=>{
+      const raw=r.rawPayable?.VendorName||r.rawExpense?.VendorOrPerson||r.rawBankRow?.LedgerName||r.rawBankRow?.Description||r.source||"Other";
+      const key=String(raw||"Other").trim()||"Other";
+      a[key]=(a[key]||0)+r.amount;return a;
+    },{})).sort((a,b)=>b[1]-a[1]);
+
+    const summaryTable=(title,pairs)=>`<section class="summary-section"><h2>${escapeHtml(title)}</h2><table class="summary-table"><thead><tr><th>${escapeHtml(title.replace(/ Summary$/,""))}</th><th class="num">Amount</th><th class="num">% of Total</th></tr></thead><tbody>${pairs.map(([name,amount])=>`<tr><td>${escapeHtml(name)}</td><td class="num">${escapeHtml(fmt(amount))}</td><td class="num">${escapeHtml(pct(amount))}</td></tr>`).join("")}</tbody></table></section>`;
+
+    const categoryDetail=analysisCategoryTotals.map(([category,total])=>{
+      const group=categoryDrillData[category]||{subs:{},rows:[]};
+      const subSections=sortedPairs(group.subs).map(([sub,subTotal])=>{
+        const subRows=(group.rows||[]).filter(r=>(r.subCategory||"Unclassified")===sub);
+        const vendors={};
+        for(const r of subRows){
+          const raw=r.rawPayable?.VendorName||r.rawExpense?.VendorOrPerson||r.rawBankRow?.LedgerName||r.rawBankRow?.Description||r.source||"Other";
+          const key=String(raw||"Other").trim()||"Other";
+          vendors[key]=(vendors[key]||0)+r.amount;
+        }
+        return `<div class="sub-block"><div class="sub-head"><strong>${escapeHtml(sub)}</strong><strong>${escapeHtml(fmt(subTotal))}</strong></div><table class="mini"><thead><tr><th>Vendor / Source</th><th class="num">Amount</th></tr></thead><tbody>${sortedPairs(vendors).map(([vendor,amount])=>`<tr><td>${escapeHtml(vendor)}</td><td class="num">${escapeHtml(fmt(amount))}</td></tr>`).join("")}</tbody></table></div>`;
+      }).join("");
+      return `<section class="category-block"><div class="category-head"><h2>${escapeHtml(category)}</h2><div><strong>${escapeHtml(fmt(total))}</strong> · ${escapeHtml(pct(total))}</div></div>${subSections}</section>`;
+    }).join("");
+
+    const detailRows=analysisRows.map(r=>`<tr><td>${escapeHtml(exportDate(r.date))}</td><td>${escapeHtml(r.category)}</td><td>${escapeHtml(r.subCategory||"Unclassified")}</td><td>${escapeHtml(r.person||"—")}</td><td>${escapeHtml(r.scope||"—")}</td><td>${escapeHtml(r.funding)}</td><td class="num">${escapeHtml(fmt(r.amount))}</td><td>${escapeHtml(r.source)}</td><td>${escapeHtml(r.description)}</td></tr>`).join("");
+
+    w.document.write(`<!doctype html><html><head><title>Expense Analysis - Full View</title><style>
+      *{box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9.5px;color:#111;padding:16px;line-height:1.35}h1{font-size:19px;margin:0 0 3px}h2{font-size:12px;margin:0}.muted{color:#666}.filters{margin:4px 0 12px;color:#555;font-size:9.5px}.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:10px 0 14px}.metric{border:1px solid #bbb;border-radius:5px;padding:7px}.metric .k{font-size:7.5px;color:#666;font-weight:bold;text-transform:uppercase}.metric .v{font-size:12px;font-weight:bold;margin-top:2px}.overview{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}.summary-section{break-inside:avoid;margin:0 0 10px}.summary-section h2{margin:0 0 4px}.summary-table,.mini,.detail{width:100%;border-collapse:collapse}.summary-table th,.summary-table td,.mini th,.mini td,.detail th,.detail td{border:1px solid #aaa;padding:3.5px;vertical-align:top;overflow-wrap:anywhere}.summary-table th,.mini th,.detail th{background:#eee;text-align:left}.num{text-align:right!important;white-space:nowrap}.page-title{margin:14px 0 7px;padding-top:6px;border-top:2px solid #333;font-size:14px;font-weight:bold}.category-block{break-inside:avoid;margin-bottom:12px;border:1px solid #aaa;padding:7px}.category-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:5px}.sub-block{margin:6px 0 0 8px;break-inside:avoid}.sub-head{display:flex;justify-content:space-between;gap:12px;background:#f5f5f5;border:1px solid #bbb;border-bottom:0;padding:4px}.mini{margin:0}.detail thead{display:table-header-group}.detail tr{break-inside:avoid}.report-note{margin-top:8px;color:#555;font-size:8.5px}@page{size:A4 landscape;margin:8mm}@media print{body{padding:0}.overview{grid-template-columns:1fr 1fr}.category-block{page-break-inside:avoid}}
+    </style></head><body>
+      <h1>Zivara Family Office LLP - Expense Analysis</h1>
+      <div class="muted">Full management-expense view</div>
+      <div class="filters">${escapeHtml(filterSummary)}</div>
+      <div class="cards">
+        <div class="metric"><div class="k">Total Expense</div><div class="v">${escapeHtml(fmt(analysisTotal))}</div></div>
+        <div class="metric"><div class="k">Vendor Bills</div><div class="v">${escapeHtml(fmt(analysisSourceTotals.vendorBills))}</div></div>
+        <div class="metric"><div class="k">Personally Paid</div><div class="v">${escapeHtml(fmt(analysisSourceTotals.personal))}</div></div>
+        <div class="metric"><div class="k">Direct Zivara</div><div class="v">${escapeHtml(fmt(analysisSourceTotals.directZivara))}</div></div>
+        <div class="metric"><div class="k">Records</div><div class="v">${analysisRows.length}</div></div>
+      </div>
+
+      <div class="page-title">Management Summary - Full List</div>
+      <div class="overview">
+        ${summaryTable("Category Summary",analysisCategoryTotals)}
+        ${summaryTable("Subcategory Summary",subTotals)}
+        ${summaryTable("Vendor / Source Summary",vendorTotals)}
+        ${summaryTable("Funding Source Summary",analysisFundingTotals)}
+      </div>
+
+      <div class="page-title">Category > Subcategory > Vendor / Source</div>
+      ${categoryDetail}
+
+      <div class="page-title">Detailed Expense Analysis - ${analysisRows.length} Records</div>
+      <table class="detail"><thead><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th class="num">Amount</th><th>Source</th><th>Description / Narration</th></tr></thead><tbody>${detailRows}</tbody></table>
+      <div class="report-note">Vendor Bills are recognised on bill date. Vendor settlements and reimbursements are not counted again as expenses. This PDF uses the same active Expense Analysis filters as the on-screen report.</div>
+      <script>window.onload=()=>window.print()<\/script>
+    </body></html>`);w.document.close();
   }
 
   const accountingExpenseName={
@@ -1269,9 +1088,8 @@ export default function Expenses(){
             <select style={{...inp,width:"auto",minWidth:95}} value={analysisPageSize} onChange={e=>setAnalysisPageSize(Number(e.target.value))}>
               {[25,50,100].map(n=><option key={n} value={n}>{n} rows</option>)}
             </select>
-            <button style={btn(false)} onClick={exportConsolidatedOutflowsExcel}>Export Consolidated Outflows</button>
             <button style={btn(false)} onClick={exportAnalysisExcel}>Export Excel</button>
-            <button style={btn(false)} onClick={exportAnalysisPDF}>Export PDF</button>
+            <button style={btn(false)} onClick={exportAnalysisPDF}>Export Full PDF</button>
           </div>
         </div>
 
