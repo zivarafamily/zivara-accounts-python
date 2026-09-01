@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +22,13 @@ try:
     from app.services import existing_bank_batch_settlement  # noqa: F401
 except ImportError:
     existing_bank_batch_settlement = None
+
+try:
+    from app.services.selectcityfly_bill_backfill import (
+        repair_selectcityfly_missing_bill_journals,
+    )
+except ImportError:
+    repair_selectcityfly_missing_bill_journals = None
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
@@ -54,6 +63,18 @@ def _sync_accounting_startup():
 @app.on_event("startup")
 def sync_accounting_masters():
     _sync_accounting_startup()
+
+    # Targeted historical repair only. This does not call the payable payment
+    # synchronizer, so the existing SelectCityFly bank transfers are untouched.
+    if repair_selectcityfly_missing_bill_journals:
+        try:
+            repair_selectcityfly_missing_bill_journals()
+        except Exception:
+            # Never take the whole application offline for a maintenance repair.
+            # The full traceback remains visible in Render logs for diagnosis.
+            logging.getLogger(__name__).exception(
+                "SelectCityFly Vendor Bill journal repair did not complete"
+            )
 
 
 app.mount(
