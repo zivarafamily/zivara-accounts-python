@@ -1,11 +1,23 @@
-"""SelectCityFly April-2026 vendor-ledger repair v4.
+"""SelectCityFly April-2026 vendor-ledger repair v5.
 
-This version does not rely on the normal payable vendor-ledger resolver.
-It directly rebuilds the exact 21 April Vendor Bill purchase journals against
-the canonical selected ledger VEND2C876042DB.
+Root cause fixed in v5
+----------------------
+The April Vendor Bills exist, but two historical bills have Net Payable rounded
+to the final invoice value while their stored RoundOff metadata is zero:
 
-Only payable_bill journals are deleted/recreated.
-Bank transactions, payable payments and reimbursements are never touched.
+- SCF/26-27/0111: accounting components = 15,199.12, Net Payable = 15,200.00
+  required balancing round-off = +0.88 Dr
+- SCF/26-27/0234: accounting components = 35,799.72, Net Payable = 35,800.00
+  required balancing round-off = +0.28 Dr
+
+The normal journal writer refuses any unbalanced journal. Earlier repairs
+therefore rolled back the entire set.
+
+V5 reconstructs the exact 21 April purchase journals against the canonical
+SelectCityFly ledger and calculates any required balancing Round Off from the
+journal itself, rather than trusting old stored RoundOff metadata.
+
+Only payable_bill journals are replaced. Bank payments are never touched.
 """
 
 from __future__ import annotations
@@ -73,13 +85,6 @@ def _items(payable):
         return []
 
 
-def _roundoff(payable):
-    items = _items(payable)
-    if not items:
-        return Decimal("0.00")
-    return _d(items[0].get("RoundOffAmount", 0))
-
-
 def _selected_ledger(connection, llp_id, ledger_id):
     if not ledger_id:
         return None
@@ -103,7 +108,7 @@ def _roundoff_ledger(connection, llp_id):
         code="ROUNDOFF",
         opening_balance=0,
         opening_side="Dr",
-        notes="System ledger for bill rounding differences.",
+        notes="System ledger for invoice rounding differences.",
         adopt_same_name=True,
     )
 
@@ -116,9 +121,7 @@ def _canonical_ledger(db):
         )
     ledger = rows[0]
     if "accounts payable" not in str(ledger.group_name or "").lower():
-        raise RuntimeError(
-            f"{TARGET_LEDGER_CODE} is not an Accounts Payable ledger"
-        )
+        raise RuntimeError(f"{TARGET_LEDGER_CODE} is not an Accounts Payable ledger")
     return ledger
 
 
@@ -157,21 +160,25 @@ def _target_payables(db, ledger):
         if TARGET_VENDOR_TOKEN not in _compact(p.vendor_name)
     ]
     if wrong_vendor:
+        raise RuntimeError(f"Target bill numbers do not belong to SelectCityFly: {wrong_vendor}")
+
+    total = sum((_d(p.net_payable) for p in ordered), Decimal("0.00"))
+    if total.quantize(Decimal("0.01")) != EXPECTED_TOTAL:
         raise RuntimeError(
-            f"Target bill numbers do not belong to SelectCityFly: {wrong_vendor}"
+            f"Target 21 Net Payable total is {total}; expected {EXPECTED_TOTAL}"
         )
 
     return ordered
 
 
 def _write_bill_to_canonical_ledger(connection, payable, vendor_ledger_id):
-    """Rebuild only the purchase journal for one payable."""
-
     source_type = "payable_bill"
+
+    # Replace ONLY this bill journal.
     ac._delete_journal(connection, payable.llp_id, source_type, payable.id)
 
     if str(payable.status or "").strip().lower() == "cancelled":
-        return
+        raise RuntimeError(f"Target bill {payable.bill_no} is Cancelled")
 
     gross = _d(payable.gross_amount)
     gst = _d(payable.gst_amount)
@@ -189,11 +196,7 @@ def _write_bill_to_canonical_ledger(connection, payable, vendor_ledger_id):
             continue
 
         taxable_from_items += taxable
-        ledger_id = _selected_ledger(
-            connection,
-            payable.llp_id,
-            item.get("LedgerID"),
-        )
+        ledger_id = _selected_ledger(connection, payable.llp_id, item.get("LedgerID"))
         if not ledger_id:
             ledger_id = ac._expense_ledger(
                 connection,
@@ -205,7 +208,7 @@ def _write_bill_to_canonical_ledger(connection, payable, vendor_ledger_id):
             (
                 ledger_id,
                 taxable,
-                0,
+                Decimal("0.00"),
                 item.get("Particulars") or payable.description or payable.bill_no,
             )
         )
@@ -222,7 +225,7 @@ def _write_bill_to_canonical_ledger(connection, payable, vendor_ledger_id):
             (
                 expense_ledger,
                 expense_component,
-                0,
+                Decimal("0.00"),
                 payable.description or payable.bill_no,
             )
         )
@@ -237,7 +240,7 @@ def _write_bill_to_canonical_ledger(connection, payable, vendor_ledger_id):
             "Asset",
             "Dr",
         )
-        lines.append((gst_ledger, gst, 0, "Input GST"))
+        lines.append((gst_ledger, gst, Decimal("0.00"), "Input GST"))
 
     if tcs > 0:
         tcs_ledger = ac._tax_ledger(
@@ -249,7 +252,7 @@ def _write_bill_to_canonical_ledger(connection, payable, vendor_ledger_id):
             "Asset",
             "Dr",
         )
-        lines.append((tcs_ledger, tcs, 0, "TCS Receivable"))
+        lines.append((tcs_ledger, tcs, Decimal("0.00"), "TCS Receivable"))
 
     if actual_tds > 0:
         tds_ledger = ac._tax_ledger(
@@ -261,25 +264,43 @@ def _write_bill_to_canonical_ledger(connection, payable, vendor_ledger_id):
             "Liability",
             "Cr",
         )
-        lines.append((tds_ledger, 0, actual_tds, "TDS Payable"))
+        lines.append((tds_ledger, Decimal("0.00"), actual_tds, "TDS Payable"))
 
-    ro = _roundoff(payable)
-    if ro:
-        roundoff_ledger = _roundoff_ledger(connection, payable.llp_id)
-        if ro > 0:
-            lines.append((roundoff_ledger, ro, 0, "Round Off"))
-        else:
-            lines.append((roundoff_ledger, 0, abs(ro), "Round Off"))
-
-    # Force the liability credit to the ledger the user is actually viewing.
+    # Force liability to the canonical SelectCityFly ledger.
     lines.append(
         (
             vendor_ledger_id,
-            0,
+            Decimal("0.00"),
             vendor_credit,
             payable.vendor_name or "SelectCityFly",
         )
     )
+
+    # Historical bills may have rounded Net Payable without stored RoundOff.
+    # Calculate the exact balancing amount from the journal itself.
+    debit_before = sum((_d(x[1]) for x in lines), Decimal("0.00"))
+    credit_before = sum((_d(x[2]) for x in lines), Decimal("0.00"))
+    difference = (credit_before - debit_before).quantize(Decimal("0.01"))
+
+    if difference != Decimal("0.00"):
+        if abs(difference) > Decimal("5.00"):
+            raise RuntimeError(
+                f"{payable.bill_no} requires unexpected balancing adjustment "
+                f"{difference}; repair stopped"
+            )
+        rl = _roundoff_ledger(connection, payable.llp_id)
+        if difference > 0:
+            lines.append((rl, difference, Decimal("0.00"), "Invoice Round Off"))
+        else:
+            lines.append((rl, Decimal("0.00"), abs(difference), "Invoice Round Off"))
+
+    debit_total = sum((_d(x[1]) for x in lines), Decimal("0.00"))
+    credit_total = sum((_d(x[2]) for x in lines), Decimal("0.00"))
+
+    if debit_total != credit_total:
+        raise RuntimeError(
+            f"{payable.bill_no} remains unbalanced: Dr {debit_total} / Cr {credit_total}"
+        )
 
     journal_id = ac._write_journal(
         connection,
@@ -292,14 +313,14 @@ def _write_bill_to_canonical_ledger(connection, payable, vendor_ledger_id):
         source_id=payable.id,
         lines=lines,
     )
-
     if not journal_id:
-        debit_total = sum((_d(x[1]) for x in lines), Decimal("0.00"))
-        credit_total = sum((_d(x[2]) for x in lines), Decimal("0.00"))
-        raise RuntimeError(
-            f"Could not write {payable.bill_no}: journal unbalanced "
-            f"Dr={debit_total} Cr={credit_total}"
-        )
+        raise RuntimeError(f"Journal writer returned no journal for {payable.bill_no}")
+
+    return {
+        "BillNo": payable.bill_no,
+        "NetPayable": float(vendor_credit),
+        "AutoRoundOff": float(difference),
+    }
 
 
 def repair_selectcityfly_missing_bill_journals():
@@ -310,28 +331,23 @@ def repair_selectcityfly_missing_bill_journals():
         connection = db.connection()
 
         vendor_id = _canonical_vendor_id(db, ledger)
-
-        # If the canonical ledger is linked to a Vendor master, also normalize the
-        # old April Payables to that VendorID. Core UPDATE avoids ORM payment events.
         if vendor_id:
-            ids = [p.id for p in payables]
+            # Normalize legacy VendorID without firing ORM payable-payment events.
             connection.execute(
                 update(LLPPayable.__table__)
-                .where(LLPPayable.__table__.c.id.in_(ids))
+                .where(LLPPayable.__table__.c.id.in_([p.id for p in payables]))
                 .values(vendor_id=vendor_id)
             )
             db.expire_all()
             payables = _target_payables(db, ledger)
 
-        # Force rebuild all 21 target purchase journals. This is idempotent because
-        # _write_journal deletes the existing payable_bill journal for each source_id
-        # before writing exactly one replacement.
-        for payable in payables:
-            _write_bill_to_canonical_ledger(connection, payable, ledger.id)
+        rebuilt = [
+            _write_bill_to_canonical_ledger(connection, p, ledger.id)
+            for p in payables
+        ]
 
         db.flush()
 
-        # Verify exact canonical-ledger credit for the 21 target journals.
         target_ids = [p.id for p in payables]
         journals = (
             db.query(JournalEntry)
@@ -353,24 +369,18 @@ def repair_selectcityfly_missing_bill_journals():
             )
             .all()
         )
-
         credit_total = sum(
             (Decimal(str(x.credit or 0)) for x in credits),
             Decimal("0.00"),
         ).quantize(Decimal("0.01"))
 
         if len(journals) != 21:
-            raise RuntimeError(
-                f"Expected 21 rebuilt payable_bill journals, found {len(journals)}"
-            )
+            raise RuntimeError(f"Expected 21 rebuilt journals; found {len(journals)}")
         if len(credits) != 21:
-            raise RuntimeError(
-                f"Expected 21 SelectCityFly credit lines, found {len(credits)}"
-            )
+            raise RuntimeError(f"Expected 21 canonical vendor credits; found {len(credits)}")
         if credit_total != EXPECTED_TOTAL:
             raise RuntimeError(
-                f"Rebuilt SelectCityFly April credits total {credit_total}; "
-                f"expected {EXPECTED_TOTAL}"
+                f"Canonical April credits total {credit_total}; expected {EXPECTED_TOTAL}"
             )
 
         db.commit()
@@ -381,18 +391,18 @@ def repair_selectcityfly_missing_bill_journals():
             "ledgerCode": ledger.ledger_code,
             "repairedCount": 21,
             "repairedCreditTotal": float(credit_total),
-            "billNumbers": EXPECTED_BILLS,
-            "message": (
-                "21 April SelectCityFly purchase journals were force-rebuilt "
-                "against the canonical vendor ledger."
+            "autoRoundOffTotal": float(
+                sum((Decimal(str(x["AutoRoundOff"])) for x in rebuilt), Decimal("0.00"))
             ),
+            "rebuilt": rebuilt,
+            "message": "SelectCityFly April purchase journals rebuilt and balanced.",
         }
-        logger.warning("SELECTCITYFLY REPAIR V4 COMPLETED: %s", result)
+        logger.warning("SELECTCITYFLY REPAIR V5 COMPLETED: %s", result)
         return result
 
     except Exception:
         db.rollback()
-        logger.exception("SELECTCITYFLY REPAIR V4 FAILED")
+        logger.exception("SELECTCITYFLY REPAIR V5 FAILED")
         raise
     finally:
         db.close()
