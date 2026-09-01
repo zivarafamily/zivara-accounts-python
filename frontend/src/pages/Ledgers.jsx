@@ -11,6 +11,7 @@ const initial={LedgerCode:"",LedgerName:"",GroupName:"Current Assets",AccountTyp
 const fmt=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
 const esc=s=>String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
 const dmy=v=>{const s=String(v||"").slice(0,10),p=s.split("-");return p.length===3?`${p[2]}-${p[1]}-${p[0]}`:s};
+const fyStart="2026-04-01";
 
 function typeForGroup(g){
   if(["Cash & Bank","Current Assets","Fixed Assets","Investments","Capital Advances","Accounts Receivable"].includes(g))return"Asset";
@@ -54,6 +55,7 @@ function sourceAction(row){
 export default function Ledgers(){
   const navigate=useNavigate();
   const[rows,setRows]=useState([]),[selected,setSelected]=useState(""),[statement,setStatement]=useState([]),[search,setSearch]=useState(""),[open,setOpen]=useState(false),[editId,setEditId]=useState(""),[form,setForm]=useState(initial),[customGroup,setCustomGroup]=useState(false),[sourceFilter,setSourceFilter]=useState("All");
+  const[fromDate,setFromDate]=useState(fyStart),[toDate,setToDate]=useState("");
 
   async function load(){const r=await apiGet("getLedgers");if(r.ok)setRows(r.data||[])}
   async function pick(id){setSelected(id);setSourceFilter("All");if(!id)return setStatement([]);const r=await apiGet("getLedgerStatement",{ledger_id:id});if(r.ok)setStatement(r.data||[])}
@@ -63,7 +65,13 @@ export default function Ledgers(){
   const groups=useMemo(()=>[...new Set([...standardGroups,...rows.map(x=>x.GroupName).filter(Boolean)])].sort((a,b)=>a.localeCompare(b)),[rows]);
   const filtered=rows.filter(x=>!search||[x.LedgerName,x.LedgerCode,x.GroupName].some(v=>String(v||"").toLowerCase().includes(search.toLowerCase())));
   const current=statement.length?statement[statement.length-1]:null;
-  const visibleStatement=useMemo(()=>sourceFilter==="All"?statement:statement.filter(r=>sourceKind(r)===sourceFilter),[statement,sourceFilter]);
+  const visibleStatement=useMemo(()=>statement.filter(r=>{
+    const d=String(r.Date||"").slice(0,10);
+    if(fromDate&&d&&d<fromDate)return false;
+    if(toDate&&d&&d>toDate)return false;
+    if(sourceFilter!=="All"&&sourceKind(r)!==sourceFilter)return false;
+    return true;
+  }),[statement,sourceFilter,fromDate,toDate]);
   const filterTotals=useMemo(()=>visibleStatement.reduce((x,r)=>({debit:x.debit+Number(r.Debit||0),credit:x.credit+Number(r.Credit||0)}),{debit:0,credit:0}),[visibleStatement]);
   const filterNet=Math.abs(filterTotals.debit-filterTotals.credit);
   const filterNetSide=filterTotals.debit===filterTotals.credit?"—":filterTotals.debit>filterTotals.credit?"Dr":"Cr";
@@ -95,9 +103,10 @@ export default function Ledgers(){
     if(!ledger)return;
     const head=["Date","Source","Voucher","Narration","Debit","Credit","Balance"];
     const body=visibleStatement.map(r=>[dmy(r.Date),sourceKind(r),`${r.VoucherType||""}${r.VoucherNo?` · ${r.VoucherNo}`:""}`,r.Narration||r.Particulars||"",Number(r.Debit||0).toFixed(2),Number(r.Credit||0).toFixed(2),`${Number(r.RunningBalance||0).toFixed(2)} ${r.BalanceSide||""}`]);
-    const html=`<html><head><meta charset="utf-8"></head><body><h2>${esc(ledger.LedgerName)} Ledger</h2><p>View: ${esc(sourceFilter)} | Opening: ${esc(fmt(ledger.OpeningBalance))} ${esc(ledger.OpeningSide)}</p><table border="1"><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${body.map(r=>`<tr>${r.map(v=>`<td>${esc(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></body></html>`;
+    const range=`${fromDate?dmy(fromDate):"Beginning"} to ${toDate?dmy(toDate):"Latest"}`;
+    const html=`<html><head><meta charset="utf-8"></head><body><h2>${esc(ledger.LedgerName)} Ledger</h2><p>View: ${esc(sourceFilter)} | Date: ${esc(range)} | Opening: ${esc(fmt(ledger.OpeningBalance))} ${esc(ledger.OpeningSide)}</p><table border="1"><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${body.map(r=>`<tr>${r.map(v=>`<td>${esc(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></body></html>`;
     const blob=new Blob([html],{type:"application/vnd.ms-excel;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");
-    a.href=url;a.download=`ledger-${String(ledger.LedgerName||"ledger").replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-${sourceFilter.toLowerCase().replace(/\s+/g,"-")}.xls`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    a.href=url;a.download=`ledger-${String(ledger.LedgerName||"ledger").replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-${fromDate||"all"}-to-${toDate||"latest"}-${sourceFilter.toLowerCase().replace(/\s+/g,"-")}.xls`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
   }
 
   function exportPDF(){
@@ -105,7 +114,8 @@ export default function Ledgers(){
     const w=window.open("","_blank","width=1200,height=800");if(!w)return alert("Please allow pop-ups to export PDF.");
     const bal=current?`${fmt(current.RunningBalance)} ${current.BalanceSide}`:`${fmt(ledger.OpeningBalance)} ${ledger.OpeningSide}`;
     const trs=visibleStatement.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(sourceKind(r))}</td><td>${esc(r.VoucherType||"")}${r.VoucherNo?` · ${esc(r.VoucherNo)}`:""}</td><td>${esc(r.Narration||r.Particulars||"")}</td><td class="n">${Number(r.Debit||0)>0?esc(fmt(r.Debit)):"—"}</td><td class="n">${Number(r.Credit||0)>0?esc(fmt(r.Credit)):"—"}</td><td class="n">${esc(fmt(r.RunningBalance))} ${esc(r.BalanceSide||"")}</td></tr>`).join("");
-    w.document.write(`<!doctype html><html><head><title>${esc(ledger.LedgerName)} Ledger</title><style>body{font-family:Arial;padding:20px;font-size:11px}h1{font-size:20px}.meta{color:#555;margin-bottom:12px}.sum{display:flex;gap:25px;margin:12px 0 16px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px}th{background:#eee;text-align:left}.n{text-align:right;white-space:nowrap}@page{size:landscape;margin:10mm}</style></head><body><h1>Zivara Family Office LLP — Ledger Statement</h1><div class="meta">${esc(ledger.LedgerName)} · ${esc(ledger.LedgerCode||"")} · ${esc(ledger.GroupName||"")} · View: ${esc(sourceFilter)}</div><div class="sum"><div><b>Opening:</b> ${esc(fmt(ledger.OpeningBalance))} ${esc(ledger.OpeningSide)}</div><div><b>Current Balance:</b> ${esc(bal)}</div><div><b>Displayed:</b> ${visibleStatement.length}</div></div><table><thead><tr><th>Date</th><th>Source</th><th>Management Type</th><th>Voucher</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>${trs||'<tr><td colspan="7">No transactions</td></tr>'}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`);w.document.close();
+    const range=`${fromDate?dmy(fromDate):"Beginning"} to ${toDate?dmy(toDate):"Latest"}`;
+    w.document.write(`<!doctype html><html><head><title>${esc(ledger.LedgerName)} Ledger</title><style>body{font-family:Arial;padding:20px;font-size:11px}h1{font-size:20px}.meta{color:#555;margin-bottom:12px}.sum{display:flex;gap:25px;margin:12px 0 16px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px}th{background:#eee;text-align:left}.n{text-align:right;white-space:nowrap}@page{size:landscape;margin:10mm}</style></head><body><h1>Zivara Family Office LLP — Ledger Statement</h1><div class="meta">${esc(ledger.LedgerName)} · ${esc(ledger.LedgerCode||"")} · ${esc(ledger.GroupName||"")} · View: ${esc(sourceFilter)} · Date: ${esc(range)}</div><div class="sum"><div><b>Opening:</b> ${esc(fmt(ledger.OpeningBalance))} ${esc(ledger.OpeningSide)}</div><div><b>Current Balance:</b> ${esc(bal)}</div><div><b>Displayed:</b> ${visibleStatement.length}</div></div><table><thead><tr><th>Date</th><th>Source</th><th>Management Type</th><th>Voucher</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>${trs||'<tr><td colspan="8">No transactions</td></tr>'}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`);w.document.close();
   }
 
   return <div style={{display:"flex",flexDirection:"column",gap:"1.25rem"}}>
@@ -145,6 +155,18 @@ export default function Ledgers(){
           {["All","Expenses","Bank Transfers","Journals","Vendor Bills","Other"].map(x=><button key={x} onClick={()=>setSourceFilter(x)} style={{...btn(sourceFilter===x),padding:".42rem .7rem"}}>{x}</button>)}
           <span style={{fontSize:".72rem",color:"var(--muted)",marginLeft:"auto"}}>{visibleStatement.length} of {statement.length} entries</span>
         </div>
+        <div style={{display:"flex",gap:".55rem",flexWrap:"wrap",alignItems:"end",marginTop:".7rem",paddingTop:".7rem",borderTop:"1px solid var(--border)"}}>
+          <div style={{minWidth:160}}>
+            <div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700,marginBottom:".25rem"}}>FROM DATE</div>
+            <input style={inp} type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)}/>
+          </div>
+          <div style={{minWidth:160}}>
+            <div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700,marginBottom:".25rem"}}>TO DATE</div>
+            <input style={inp} type="date" value={toDate} min={fromDate||undefined} onChange={e=>setToDate(e.target.value)}/>
+          </div>
+          <button type="button" style={btn()} onClick={()=>{setFromDate(fyStart);setToDate("")}}>FY 2026-27</button>
+          <button type="button" style={btn()} onClick={()=>{setFromDate("");setToDate("")}}>Clear Dates</button>
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:".55rem",marginTop:".75rem",paddingTop:".75rem",borderTop:"1px solid var(--border)"}}>
           <div><div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700}}>SELECTED DEBIT</div><div style={{fontWeight:800}}>{fmt(filterTotals.debit)}</div></div>
           <div><div style={{fontSize:".65rem",color:"var(--muted)",fontWeight:700}}>SELECTED CREDIT</div><div style={{fontWeight:800}}>{fmt(filterTotals.credit)}</div></div>
@@ -155,7 +177,7 @@ export default function Ledgers(){
       </div>
 
       <div style={{...card,padding:0,overflow:"hidden"}}>
-        <table><thead><tr><th>Date</th><th>Source</th><th>Voucher</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Action</th></tr></thead>
+        <table><thead><tr><th>Date</th><th>Source</th><th>Management Type</th><th>Voucher</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Action</th></tr></thead>
         <tbody>{visibleStatement.length?visibleStatement.map((r,i)=>{const action=sourceAction(r);return <tr key={`${r.JournalID}-${i}`}><td>{r.Date||"—"}</td><td><span style={{fontSize:".72rem",fontWeight:700}}>{sourceKind(r)}</span></td><td><span style={{fontSize:".7rem",color:"var(--muted)"}}>{sourceKind(r)==="Journals"?journalClass(r):sourceKind(r)==="Expenses"?"Personal Expense":sourceKind(r)==="Bank Transfers"?"Zivara Bank Transfer":"—"}</span></td><td>{r.VoucherType}{r.VoucherNo?` · ${r.VoucherNo}`:""}</td><td>{r.Narration||r.Particulars||"—"}</td><td>{Number(r.Debit||0)>0?fmt(r.Debit):"—"}</td><td>{Number(r.Credit||0)>0?fmt(r.Credit):"—"}</td><td>{fmt(r.RunningBalance)} {r.BalanceSide}</td><td style={{whiteSpace:"nowrap"}}>{action?<button style={btn()} onClick={()=>openSource(r)}>{action.label}</button>:<span style={{fontSize:".72rem",color:"var(--muted)"}}>Protected</span>}</td></tr>}):<tr><td colSpan="9" style={{padding:"2rem",textAlign:"center"}}>No entries in this view.</td></tr>}</tbody></table>
       </div>
     </>}
