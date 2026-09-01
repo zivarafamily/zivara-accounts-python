@@ -16,6 +16,11 @@ try:
 except ImportError:
     neo_invoice_accounting = None
 
+try:
+    from app.services import existing_bank_batch_settlement  # noqa: F401
+except ImportError:
+    existing_bank_batch_settlement = None
+
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
 
