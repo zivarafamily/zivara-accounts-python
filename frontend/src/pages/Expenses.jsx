@@ -52,10 +52,56 @@ const DEFAULT_SUBCATEGORIES={
   Travel:["Domestic Flight","International Flight","Cab Charges","Train","Bus","Visa","Airport Transfer"],
   Hotel:["Domestic Hotel","International Hotel"],
   Food:["Meals","Business Meal","Travel Meal"],
-  Office:["Printing","Stationery","Subscription","Courier"],
+  Office:["Printing","Stationery","Subscription","Courier","Furnishing"],
   Vendor:["Professional Fee","Service Charge"],
   Misc:["Miscellaneous"]
 };
+
+const EXPENSE_TAXONOMY_KEY="zivara_expense_taxonomy_v1";
+const EMPTY_EXPENSE_TAXONOMY={categoryAliases:{},subCategoryAliases:{},customCategories:[],customSubCategories:[],hiddenCategories:[],hiddenSubCategories:[]};
+function loadExpenseTaxonomy(){
+  try{
+    const raw=JSON.parse(localStorage.getItem(EXPENSE_TAXONOMY_KEY)||"{}");
+    return {
+      categoryAliases:raw?.categoryAliases&&typeof raw.categoryAliases==="object"?raw.categoryAliases:{},
+      subCategoryAliases:raw?.subCategoryAliases&&typeof raw.subCategoryAliases==="object"?raw.subCategoryAliases:{},
+      customCategories:Array.isArray(raw?.customCategories)?raw.customCategories:[],
+      customSubCategories:Array.isArray(raw?.customSubCategories)?raw.customSubCategories:[],
+      hiddenCategories:Array.isArray(raw?.hiddenCategories)?raw.hiddenCategories:[],
+      hiddenSubCategories:Array.isArray(raw?.hiddenSubCategories)?raw.hiddenSubCategories:[]
+    };
+  }catch{return {...EMPTY_EXPENSE_TAXONOMY}}
+}
+function saveExpenseTaxonomy(value){
+  try{localStorage.setItem(EXPENSE_TAXONOMY_KEY,JSON.stringify(value||EMPTY_EXPENSE_TAXONOMY))}catch{}
+}
+function resolveExpenseAlias(value,map){
+  let current=String(value||"").trim(),guard=0;
+  const seen=new Set();
+  while(current&&guard++<20){
+    const key=Object.keys(map||{}).find(k=>k.toLowerCase()===current.toLowerCase());
+    if(!key||seen.has(key.toLowerCase()))break;
+    seen.add(key.toLowerCase());
+    const next=String(map[key]||"").trim();
+    if(!next||next.toLowerCase()===current.toLowerCase())break;
+    current=next;
+  }
+  return current;
+}
+const canonicalCategoryValue=(taxonomy,value)=>resolveExpenseAlias(value,taxonomy?.categoryAliases||{});
+const canonicalSubCategoryValue=(taxonomy,value)=>resolveExpenseAlias(value,taxonomy?.subCategoryAliases||{});
+const isExpenseCategoryHidden=(taxonomy,value)=>(taxonomy?.hiddenCategories||[]).some(x=>String(x||"").trim().toLowerCase()===String(value||"").trim().toLowerCase());
+const isExpenseSubCategoryHidden=(taxonomy,value)=>(taxonomy?.hiddenSubCategories||[]).some(x=>String(x||"").trim().toLowerCase()===String(value||"").trim().toLowerCase());
+function uniqueExpenseLabels(values){
+  const byKey=new Map();
+  for(const raw of values||[]){
+    const value=String(raw||"").trim().replace(/\s+/g," ");
+    if(!value)continue;
+    const key=value.toLowerCase();
+    if(!byKey.has(key))byKey.set(key,value);
+  }
+  return [...byKey.values()];
+}
 function readExpenseMeta(notes){
   const text=String(notes||"");
   const start=text.indexOf(EXP_META_PREFIX);
@@ -283,6 +329,8 @@ export default function Expenses(){
   const[showCategoryDrill,setShowCategoryDrill]=useState(false);
   const[showFundingDrill,setShowFundingDrill]=useState(false);
   const[subCategoryDrill,setSubCategoryDrill]=useState({});
+  const[expenseTaxonomy,setExpenseTaxonomy]=useState(()=>loadExpenseTaxonomy());
+  const[taxonomyOpen,setTaxonomyOpen]=useState(false);
 
   const[fromDate,setFromDate]=useState(fyStart);
   const[toDate,setToDate]=useState("");
@@ -312,6 +360,7 @@ export default function Expenses(){
   useEffect(()=>{load()},[]);
   useEffect(()=>{saveBankClassifications(bankClassifications)},[bankClassifications]);
   useEffect(()=>{saveVendorBillClassifications(vendorBillClassifications)},[vendorBillClassifications]);
+  useEffect(()=>{saveExpenseTaxonomy(expenseTaxonomy)},[expenseTaxonomy]);
 
   const partnerNames=useMemo(
     ()=>[...new Set(partners.map(p=>String(p.PartnerName||"").trim()).filter(Boolean))].sort(),
@@ -352,30 +401,81 @@ export default function Expenses(){
         .filter(Boolean)),
       ...Object.values(vendorBillClassifications||{}).map(x=>String(x?.Category||"").trim()).filter(Boolean),
       ...Object.values(bankClassifications||{}).map(x=>String(x?.Category||"").trim()).filter(Boolean),
+      ...(expenseTaxonomy.customCategories||[]),
       "Travel","Hotel","Food","Office","Vendor","Misc"
-    ];
-
-    // De-duplicate case-insensitively while keeping the clearest existing label.
-    const byKey=new Map();
-    for(const value of raw){
-      const clean=String(value||"").trim().replace(/\s+/g," ");
-      if(!clean)continue;
-      const key=clean.toLowerCase();
-      if(!byKey.has(key))byKey.set(key,clean);
-    }
-
-    return [...byKey.values()].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"}));
-  },[expenses,vendors,payables,vendorBillClassifications,bankClassifications]);
+    ].map(x=>canonicalCategoryValue(expenseTaxonomy,x)).filter(x=>x&&!isExpenseCategoryHidden(expenseTaxonomy,x));
+    return uniqueExpenseLabels(raw).sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"}));
+  },[expenses,vendors,payables,vendorBillClassifications,bankClassifications,expenseTaxonomy]);
 
   const subCategoryOptions=useMemo(()=>{
+    const formCategory=canonicalCategoryValue(expenseTaxonomy,form.Category);
     const saved=expenses.flatMap(e=>{
       const {meta}=readExpenseMeta(e.Notes);
-      const cat=String(e.Category||e.ExpenseType||"").trim();
-      return cat===form.Category&&meta.subCategory?[String(meta.subCategory).trim()]:[];
+      const cat=canonicalCategoryValue(expenseTaxonomy,String(e.Category||e.ExpenseType||"").trim());
+      return cat===formCategory&&meta.subCategory?[canonicalSubCategoryValue(expenseTaxonomy,String(meta.subCategory).trim())]:[];
     });
-    return [...new Set([...(DEFAULT_SUBCATEGORIES[form.Category]||[]),...saved].filter(Boolean))]
+    const custom=(expenseTaxonomy.customSubCategories||[]).flatMap(x=>{
+      if(typeof x==="string")return [canonicalSubCategoryValue(expenseTaxonomy,x)];
+      const cat=canonicalCategoryValue(expenseTaxonomy,x?.category||"");
+      return (!cat||cat===formCategory)&&x?.name?[canonicalSubCategoryValue(expenseTaxonomy,x.name)]:[];
+    });
+    const defaults=(DEFAULT_SUBCATEGORIES[formCategory]||[]).map(x=>canonicalSubCategoryValue(expenseTaxonomy,x));
+    return uniqueExpenseLabels([...defaults,...saved,...custom].filter(x=>x&&!isExpenseSubCategoryHidden(expenseTaxonomy,x)))
       .sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"}));
-  },[expenses,form.Category]);
+  },[expenses,form.Category,expenseTaxonomy]);
+
+  const taxonomyCategoryRows=useMemo(()=>{
+    const counts={};
+    const add=(value,count=0)=>{
+      const name=canonicalCategoryValue(expenseTaxonomy,value);if(!name||isExpenseCategoryHidden(expenseTaxonomy,name))return;
+      const key=name.toLowerCase();if(!counts[key])counts[key]={name,count:0};counts[key].count+=count;
+    };
+    for(const e of expenses)add(e.Category||e.ExpenseType,1);
+    for(const v of payables)add((vendorBillClassifications[v.PayableID]||{}).Category||vendorBillCategory(v),1);
+    for(const r of bankTransactions){const c=(bankClassifications[r.EntryID]||{}).Category||bankExpenseCategory(r);if(c)add(c,1)}
+    for(const x of expenseTaxonomy.customCategories||[])add(x,0);
+    ["Travel","Hotel","Food","Office","Vendor","Misc"].forEach(x=>add(x,0));
+    return Object.values(counts).sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:"base"}));
+  },[expenses,payables,bankTransactions,vendorBillClassifications,bankClassifications,expenseTaxonomy]);
+
+  const taxonomySubCategoryRows=useMemo(()=>{
+    const counts={};
+    const add=(value,count=0)=>{
+      const name=canonicalSubCategoryValue(expenseTaxonomy,value);if(!name||isExpenseSubCategoryHidden(expenseTaxonomy,name))return;
+      const key=name.toLowerCase();if(!counts[key])counts[key]={name,count:0};counts[key].count+=count;
+    };
+    for(const e of expenses)add(readExpenseMeta(e.Notes).meta.subCategory,1);
+    for(const v of payables)add((vendorBillClassifications[v.PayableID]||{}).SubCategory||vendorBillSubCategory(v),1);
+    for(const r of bankTransactions)add((bankClassifications[r.EntryID]||{}).SubCategory,1);
+    Object.values(DEFAULT_SUBCATEGORIES).flat().forEach(x=>add(x,0));
+    for(const x of expenseTaxonomy.customSubCategories||[])add(typeof x==="string"?x:x?.name,0);
+    return Object.values(counts).sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:"base"}));
+  },[expenses,payables,bankTransactions,vendorBillClassifications,bankClassifications,expenseTaxonomy]);
+
+
+  const classifySubCategoryOptions=useMemo(()=>{
+    const cat=canonicalCategoryValue(expenseTaxonomy,classifyForm.Category);
+    if(!cat)return [];
+    const values=[...(DEFAULT_SUBCATEGORIES[cat]||[])];
+    for(const e of expenses){
+      const meta=readExpenseMeta(e.Notes).meta;
+      const ecat=canonicalCategoryValue(expenseTaxonomy,e.Category||e.ExpenseType||"");
+      if(ecat===cat&&meta.subCategory)values.push(meta.subCategory);
+    }
+    for(const x of Object.values(vendorBillClassifications||{})){
+      if(canonicalCategoryValue(expenseTaxonomy,x?.Category||"")===cat&&x?.SubCategory)values.push(x.SubCategory);
+    }
+    for(const x of Object.values(bankClassifications||{})){
+      if(canonicalCategoryValue(expenseTaxonomy,x?.Category||"")===cat&&x?.SubCategory)values.push(x.SubCategory);
+    }
+    for(const x of expenseTaxonomy.customSubCategories||[]){
+      if(typeof x==="string")values.push(x);
+      else if(!x?.category||canonicalCategoryValue(expenseTaxonomy,x.category)===cat)values.push(x?.name);
+    }
+    return uniqueExpenseLabels(values.map(x=>canonicalSubCategoryValue(expenseTaxonomy,x)).filter(x=>x&&!isExpenseSubCategoryHidden(expenseTaxonomy,x)))
+      .sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"}));
+  },[classifyForm.Category,expenses,vendorBillClassifications,bankClassifications,expenseTaxonomy]);
+
 
   const filtered=useMemo(()=>expenses
     .filter(e=>{
@@ -422,8 +522,8 @@ export default function Expenses(){
     const parsed=readExpenseMeta(e.Notes);
     setForm({
       Date:String(e.Date||"").slice(0,10),
-      ExpenseType:e.ExpenseType||"Misc",Category:e.Category||"",
-      SubCategory:parsed.meta.subCategory||"",ExpenseFor:parsed.meta.expenseFor||"",TravelScope:parsed.meta.travelScope||"",
+      ExpenseType:e.ExpenseType||"Misc",Category:canonicalCategoryValue(expenseTaxonomy,e.Category||""),
+      SubCategory:canonicalSubCategoryValue(expenseTaxonomy,parsed.meta.subCategory||""),ExpenseFor:parsed.meta.expenseFor||"",TravelScope:parsed.meta.travelScope||"",
       PaidByType:inferPayerType(e.PaidBy||""),PaidBy:e.PaidBy||"",
       ChargeTo:e.ChargeTo||"",PaymentMode:e.PaymentMode||"Cash",
       Amount:e.Amount||"",VendorOrPerson:e.VendorOrPerson||"",
@@ -457,18 +557,21 @@ export default function Expenses(){
   function changeCategory(value){
     if(value==="__add_category__"){setAddingCategory(true);setNewCategory("");return}
     setAddingCategory(false);setNewCategory("");
-    setForm(p=>({...p,Category:value,SubCategory:""}));
+    setForm(p=>({...p,Category:canonicalCategoryValue(expenseTaxonomy,value),SubCategory:""}));
   }
   function addCategory(){
     const value=String(newCategory||"").trim();if(!value)return;
+    setExpenseTaxonomy(prev=>({...prev,customCategories:uniqueExpenseLabels([...(prev.customCategories||[]),value]),hiddenCategories:(prev.hiddenCategories||[]).filter(x=>String(x||"").toLowerCase()!==value.toLowerCase())}));
     setForm(p=>({...p,Category:value,SubCategory:""}));setAddingCategory(false);setNewCategory("");
   }
   function changeSubCategory(value){
     if(value==="__add_subcategory__"){setAddingSubCategory(true);setNewSubCategory("");return}
-    setAddingSubCategory(false);setNewSubCategory("");set("SubCategory",value);
+    setAddingSubCategory(false);setNewSubCategory("");set("SubCategory",canonicalSubCategoryValue(expenseTaxonomy,value));
   }
   function addSubCategory(){
     const value=String(newSubCategory||"").trim();if(!value)return;
+    const category=canonicalCategoryValue(expenseTaxonomy,form.Category);
+    setExpenseTaxonomy(prev=>({...prev,customSubCategories:[...(prev.customSubCategories||[]),{category,name:value}],hiddenSubCategories:(prev.hiddenSubCategories||[]).filter(x=>String(x||"").toLowerCase()!==value.toLowerCase())}));
     set("SubCategory",value);setAddingSubCategory(false);setNewSubCategory("");
   }
   function changeExpenseFor(value){
@@ -478,6 +581,63 @@ export default function Expenses(){
   function addExpenseFor(){
     const value=String(newExpenseFor||"").trim();if(!value)return;
     set("ExpenseFor",value);setAddingExpenseFor(false);setNewExpenseFor("");
+  }
+  function renameTaxonomyLabel(kind,oldName){
+    const oldValue=String(oldName||"").trim();if(!oldValue)return;
+    const next=prompt(`Rename / merge ${kind==="category"?"category":"subcategory"} "${oldValue}" to:`,oldValue);
+    const newValue=String(next||"").trim();if(!newValue||newValue.toLowerCase()===oldValue.toLowerCase())return;
+    setExpenseTaxonomy(prev=>{
+      const key=kind==="category"?"categoryAliases":"subCategoryAliases";
+      const map={...(prev[key]||{})};
+      // Redirect any older aliases that currently resolve to this label.
+      for(const [from,to] of Object.entries(map)){
+        if(resolveExpenseAlias(to,map).toLowerCase()===oldValue.toLowerCase())map[from]=newValue;
+      }
+      map[oldValue]=newValue;
+      const customCategories=(prev.customCategories||[]).map(x=>String(x||"").toLowerCase()===oldValue.toLowerCase()?newValue:x);
+      const customSubCategories=(prev.customSubCategories||[]).map(x=>{
+        if(typeof x==="string")return x.toLowerCase()===oldValue.toLowerCase()?newValue:x;
+        return {...x,name:String(x?.name||"").toLowerCase()===oldValue.toLowerCase()?newValue:x?.name};
+      });
+      return {...prev,[key]:map,customCategories:uniqueExpenseLabels(customCategories),customSubCategories,
+        hiddenCategories:kind==="category"?(prev.hiddenCategories||[]).filter(x=>![oldValue.toLowerCase(),newValue.toLowerCase()].includes(String(x||"").toLowerCase())):(prev.hiddenCategories||[]),
+        hiddenSubCategories:kind==="subcategory"?(prev.hiddenSubCategories||[]).filter(x=>![oldValue.toLowerCase(),newValue.toLowerCase()].includes(String(x||"").toLowerCase())):(prev.hiddenSubCategories||[])};
+    });
+    if(kind==="category"){
+      setAnalysisCategory(v=>String(v||"").toLowerCase()===oldValue.toLowerCase()?newValue:v);
+      setForm(v=>({...v,Category:String(v.Category||"").toLowerCase()===oldValue.toLowerCase()?newValue:v.Category}));
+      setClassifyForm(v=>({...v,Category:String(v.Category||"").toLowerCase()===oldValue.toLowerCase()?newValue:v.Category}));
+    }else{
+      setAnalysisSubCategory(v=>String(v||"").toLowerCase()===oldValue.toLowerCase()?newValue:v);
+      setForm(v=>({...v,SubCategory:String(v.SubCategory||"").toLowerCase()===oldValue.toLowerCase()?newValue:v.SubCategory}));
+      setClassifyForm(v=>({...v,SubCategory:String(v.SubCategory||"").toLowerCase()===oldValue.toLowerCase()?newValue:v.SubCategory}));
+    }
+  }
+  function deleteTaxonomyLabel(kind,name,count){
+    if(Number(count||0)>0){alert(`${name} is used by ${count} current record(s). Use Rename / Merge instead so no expense loses its classification.`);return}
+    if(!confirm(`Delete unused ${kind==="category"?"category":"subcategory"} "${name}" from the pick lists?`))return;
+    setExpenseTaxonomy(prev=>{
+      if(kind==="category"){
+        const aliases=Object.fromEntries(Object.entries(prev.categoryAliases||{}).filter(([k,v])=>k.toLowerCase()!==name.toLowerCase()&&String(v||"").toLowerCase()!==name.toLowerCase()));
+        return {...prev,categoryAliases:aliases,
+          customCategories:(prev.customCategories||[]).filter(x=>String(x||"").toLowerCase()!==name.toLowerCase()),
+          customSubCategories:(prev.customSubCategories||[]).filter(x=>typeof x==="string"||String(x?.category||"").toLowerCase()!==name.toLowerCase()),
+          hiddenCategories:uniqueExpenseLabels([...(prev.hiddenCategories||[]),name])};
+      }
+      const aliases=Object.fromEntries(Object.entries(prev.subCategoryAliases||{}).filter(([k,v])=>k.toLowerCase()!==name.toLowerCase()&&String(v||"").toLowerCase()!==name.toLowerCase()));
+      return {...prev,subCategoryAliases:aliases,
+        customSubCategories:(prev.customSubCategories||[]).filter(x=>String(typeof x==="string"?x:x?.name||"").toLowerCase()!==name.toLowerCase()),
+        hiddenSubCategories:uniqueExpenseLabels([...(prev.hiddenSubCategories||[]),name])};
+    });
+  }
+  function addTaxonomyCategory(){
+    const value=String(prompt("New category name:")||"").trim();if(!value)return;
+    setExpenseTaxonomy(prev=>({...prev,customCategories:uniqueExpenseLabels([...(prev.customCategories||[]),value]),hiddenCategories:(prev.hiddenCategories||[]).filter(x=>String(x||"").toLowerCase()!==value.toLowerCase())}));
+  }
+  function addTaxonomySubCategory(){
+    const category=String(prompt("Category for the new subcategory:",canonicalCategoryValue(expenseTaxonomy,form.Category||analysisCategory||"Office"))||"").trim();if(!category)return;
+    const value=String(prompt("New subcategory name:")||"").trim();if(!value)return;
+    setExpenseTaxonomy(prev=>({...prev,customCategories:uniqueExpenseLabels([...(prev.customCategories||[]),category]),customSubCategories:[...(prev.customSubCategories||[]),{category,name:value}],hiddenSubCategories:(prev.hiddenSubCategories||[]).filter(x=>String(x||"").toLowerCase()!==value.toLowerCase())}));
   }
   function setGstPart(key,value){
     setForm(p=>{
@@ -600,8 +760,8 @@ export default function Expenses(){
     setClassifyKind("bank");
     setClassifyRow(row);
     setClassifyForm({
-      Category:existing.Category||bankExpenseCategory(row)||"",
-      SubCategory:existing.SubCategory||"",
+      Category:canonicalCategoryValue(expenseTaxonomy,existing.Category||bankExpenseCategory(row)||""),
+      SubCategory:canonicalSubCategoryValue(expenseTaxonomy,existing.SubCategory||""),
       ExpenseFor:existing.ExpenseFor||"",
       TravelScope:existing.TravelScope||""
     });
@@ -615,8 +775,8 @@ export default function Expenses(){
     setClassifyKind("vendor");
     setClassifyRow(row);
     setClassifyForm({
-      Category:existing.Category||vendorBillCategory(row)||"",
-      SubCategory:existing.SubCategory||autoSub||"",
+      Category:canonicalCategoryValue(expenseTaxonomy,existing.Category||vendorBillCategory(row)||""),
+      SubCategory:canonicalSubCategoryValue(expenseTaxonomy,existing.SubCategory||autoSub||""),
       ExpenseFor:existing.ExpenseFor||"",
       TravelScope:existing.TravelScope||(/international|overseas/i.test(autoSub)?"International":/domestic/i.test(autoSub)?"Domestic":"")
     });
@@ -627,28 +787,31 @@ export default function Expenses(){
   function changeClassifyCategory(value){
     if(value==="__add_category__"){setClassifyAddingCategory(true);setClassifyNewCategory("");return}
     setClassifyAddingCategory(false);setClassifyNewCategory("");
-    setClassifyForm(p=>({...p,Category:value,SubCategory:""}));
+    setClassifyForm(p=>({...p,Category:canonicalCategoryValue(expenseTaxonomy,value),SubCategory:""}));
   }
   function addClassifyCategory(){
     const value=String(classifyNewCategory||"").trim();if(!value)return;
+    setExpenseTaxonomy(prev=>({...prev,customCategories:uniqueExpenseLabels([...(prev.customCategories||[]),value]),hiddenCategories:(prev.hiddenCategories||[]).filter(x=>String(x||"").toLowerCase()!==value.toLowerCase())}));
     setClassifyForm(p=>({...p,Category:value,SubCategory:""}));
     setClassifyAddingCategory(false);setClassifyNewCategory("");
   }
   function changeClassifySubCategory(value){
     if(value==="__add_subcategory__"){setClassifyAddingSubCategory(true);setClassifyNewSubCategory("");return}
     setClassifyAddingSubCategory(false);setClassifyNewSubCategory("");
-    setClassifyForm(p=>({...p,SubCategory:value}));
+    setClassifyForm(p=>({...p,SubCategory:canonicalSubCategoryValue(expenseTaxonomy,value)}));
   }
   function addClassifySubCategory(){
     const value=String(classifyNewSubCategory||"").trim();if(!value)return;
+    const category=canonicalCategoryValue(expenseTaxonomy,classifyForm.Category);
+    setExpenseTaxonomy(prev=>({...prev,customSubCategories:[...(prev.customSubCategories||[]),{category,name:value}],hiddenSubCategories:(prev.hiddenSubCategories||[]).filter(x=>String(x||"").toLowerCase()!==value.toLowerCase())}));
     setClassifyForm(p=>({...p,SubCategory:value}));
     setClassifyAddingSubCategory(false);setClassifyNewSubCategory("");
   }
 
   function saveClassification(){
     const data={
-      Category:String(classifyForm.Category||"").trim(),
-      SubCategory:String(classifyForm.SubCategory||"").trim(),
+      Category:canonicalCategoryValue(expenseTaxonomy,String(classifyForm.Category||"").trim()),
+      SubCategory:canonicalSubCategoryValue(expenseTaxonomy,String(classifyForm.SubCategory||"").trim()),
       ExpenseFor:String(classifyForm.ExpenseFor||"").trim(),
       TravelScope:/international|overseas/i.test(String(classifyForm.SubCategory||""))?"International":/domestic/i.test(String(classifyForm.SubCategory||""))?"Domestic":""
     };
@@ -685,8 +848,8 @@ export default function Expenses(){
       const {meta}=readExpenseMeta(e.Notes);
       return [{
         id:`EXP-${e.ExpenseID}`,date:String(e.Date||"").slice(0,10),
-        category:String(e.Category||e.ExpenseType||"Other").trim()||"Other",
-        subCategory:String(meta.subCategory||"").trim(),
+        category:canonicalCategoryValue(expenseTaxonomy,String(e.Category||e.ExpenseType||"Other").trim())||"Other",
+        subCategory:canonicalSubCategoryValue(expenseTaxonomy,String(meta.subCategory||"").trim()),
         person:String(meta.expenseFor||e.ChargeTo||"").trim(),
         funding:String(e.PaidBy||"").trim()||"Personal",
         scope:/international|overseas/i.test(String(meta.subCategory||""))?"International":/domestic/i.test(String(meta.subCategory||""))?"Domestic":"",
@@ -705,12 +868,12 @@ export default function Expenses(){
       const personallyPaid=normExpenseText(v.PaidByType||"Company")!=="company"&&String(v.PaidByName||"").trim();
       const classification=vendorBillClassifications[v.PayableID]||{};
       const autoSub=vendorBillSubCategory(v);
-      const sub=String(classification.SubCategory||autoSub||"").trim();
+      const sub=canonicalSubCategoryValue(expenseTaxonomy,String(classification.SubCategory||autoSub||"").trim());
       const scope=String(classification.TravelScope||(/international|overseas/i.test(sub)?"International":/domestic/i.test(sub)?"Domestic":"")).trim();
       return [{
         id:`PAY-${v.PayableID}`,
         date:String(v.BillDate||"").slice(0,10),
-        category:String(classification.Category||vendorBillCategory(v)||"Vendor Bill").trim(),
+        category:canonicalCategoryValue(expenseTaxonomy,String(classification.Category||vendorBillCategory(v)||"Vendor Bill").trim()),
         subCategory:sub,
         person:String(classification.ExpenseFor||"").trim(),
         funding:personallyPaid?String(v.PaidByName).trim():"Zivara / Vendor Bill",
@@ -729,11 +892,11 @@ export default function Expenses(){
       // already-recognised Vendor Bill / payable.
       if(isPayableSettlementBankRow(r,payables))return [];
       const amount=Number(r.AmountOut||0),autoCategory=bankExpenseCategory(r),classification=bankClassifications[r.EntryID]||{};
-      const category=String(classification.Category||autoCategory||"").trim();
+      const category=canonicalCategoryValue(expenseTaxonomy,String(classification.Category||autoCategory||"").trim());
       if(amount<=0||!category)return [];
       return [{
         id:`BANK-${r.EntryID}`,entryId:r.EntryID,date:String(r.Date||"").slice(0,10),category,
-        subCategory:String(classification.SubCategory||"").trim(),
+        subCategory:canonicalSubCategoryValue(expenseTaxonomy,String(classification.SubCategory||"").trim()),
         person:String(classification.ExpenseFor||"").trim(),
         funding:"Zivara",
         scope:String(classification.TravelScope||"").trim(),
@@ -745,7 +908,7 @@ export default function Expenses(){
       }];
     });
     return [...personal,...vendorBills,...company];
-  },[expenses,payables,bankTransactions,bankClassifications,vendorBillClassifications]);
+  },[expenses,payables,bankTransactions,bankClassifications,vendorBillClassifications,expenseTaxonomy]);
 
   const analysisRows=useMemo(()=>managementRows.filter(r=>{
     if(fromDate&&r.date<fromDate)return false;if(toDate&&r.date>toDate)return false;
@@ -923,6 +1086,7 @@ export default function Expenses(){
         <p style={{color:"var(--muted)",fontSize:".8rem",margin:".2rem 0 0"}}>Personal-paid business expenses and reimbursements</p>
       </div>
       <div style={{display:"flex",gap:".5rem",flexWrap:"wrap"}}>
+        <button style={btn(false)} onClick={()=>setTaxonomyOpen(true)}>Manage Categories</button>
         <button style={btn(false)} onClick={()=>setView(view==="entries"?"analysis":"entries")}>{view==="entries"?"Expense Analysis":"Expense Entries"}</button>
         {view==="entries"&&<button style={btn()} onClick={openAdd}>+ Add Expense</button>}
       </div>
@@ -1154,6 +1318,29 @@ export default function Expenses(){
       <div style={{fontSize:".72rem",color:"var(--muted)"}}><strong>Double-count safeguard:</strong> Vendor Bills are counted on their bill date and can now be classified by Category, Subcategory, Person/Traveller and Domestic/International. Later Zivara bank payments that settle those bills are excluded from expense totals. Personal-paid expenses are counted once when incurred; later reimbursements are not added again. Only genuine direct Zivara bank expenses without an underlying Vendor Bill are counted from Transactions. PDF/Excel export the same filtered management-expense view.</div>
     </>}
 
+    {taxonomyOpen&&<div onMouseDown={e=>{if(e.target===e.currentTarget)setTaxonomyOpen(false)}} style={{position:"fixed",inset:0,zIndex:1200,background:"rgba(0,0,0,.64)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
+      <div style={{...card,width:"min(900px,96vw)",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"1rem",flexWrap:"wrap",marginBottom:".85rem"}}>
+          <div><h3 style={{margin:0,fontWeight:800}}>Manage Categories & Subcategories</h3><div style={{fontSize:".72rem",color:"var(--muted)",marginTop:".22rem"}}>Rename / Merge corrects spelling across Expense Analysis without changing amounts, GST, payments or accounting journals.</div></div>
+          <button style={btn(false)} onClick={()=>setTaxonomyOpen(false)}>Close</button>
+        </div>
+        <div style={{padding:".65rem .75rem",border:"1px solid var(--border)",borderRadius:"7px",fontSize:".72rem",color:"var(--muted)",marginBottom:".85rem"}}>
+          For your current duplicate, use <strong style={{color:"var(--text)"}}>Rename / Merge</strong> on <strong style={{color:"var(--text)"}}>Furnshing</strong> and enter <strong style={{color:"var(--text)"}}>Furnishing</strong>. The totals merge immediately, and Edit Expense will show the corrected value. Delete is blocked while a label is still used by records.
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:".85rem"}}>
+          <div style={{border:"1px solid var(--border)",borderRadius:"8px",overflow:"hidden"}}>
+            <div style={{padding:".65rem .75rem",display:"flex",justifyContent:"space-between",alignItems:"center",gap:".5rem",borderBottom:"1px solid var(--border)"}}><strong>Categories · {taxonomyCategoryRows.length}</strong><button type="button" style={{...btn(false),padding:".35rem .55rem",fontSize:".72rem"}} onClick={addTaxonomyCategory}>+ Add</button></div>
+            <div style={{maxHeight:"55vh",overflowY:"auto"}}>{taxonomyCategoryRows.map(x=><div key={x.name} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:".5rem",alignItems:"center",padding:".5rem .65rem",borderBottom:"1px solid var(--border)"}}><div><div style={{fontWeight:650,overflowWrap:"anywhere"}}>{x.name}</div><div style={{fontSize:".66rem",color:"var(--muted)"}}>{x.count} record(s)</div></div><div style={{display:"flex",gap:".35rem"}}><button type="button" style={{...btn(false),padding:".3rem .45rem",fontSize:".68rem"}} onClick={()=>renameTaxonomyLabel("category",x.name)}>Rename / Merge</button><button type="button" style={{...btn(false),padding:".3rem .45rem",fontSize:".68rem",color:"var(--danger)"}} onClick={()=>deleteTaxonomyLabel("category",x.name,x.count)}>Delete</button></div></div>)}</div>
+          </div>
+          <div style={{border:"1px solid var(--border)",borderRadius:"8px",overflow:"hidden"}}>
+            <div style={{padding:".65rem .75rem",display:"flex",justifyContent:"space-between",alignItems:"center",gap:".5rem",borderBottom:"1px solid var(--border)"}}><strong>Subcategories · {taxonomySubCategoryRows.length}</strong><button type="button" style={{...btn(false),padding:".35rem .55rem",fontSize:".72rem"}} onClick={addTaxonomySubCategory}>+ Add</button></div>
+            <div style={{maxHeight:"55vh",overflowY:"auto"}}>{taxonomySubCategoryRows.map(x=><div key={x.name} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:".5rem",alignItems:"center",padding:".5rem .65rem",borderBottom:"1px solid var(--border)"}}><div><div style={{fontWeight:650,overflowWrap:"anywhere"}}>{x.name}</div><div style={{fontSize:".66rem",color:"var(--muted)"}}>{x.count} record(s)</div></div><div style={{display:"flex",gap:".35rem"}}><button type="button" style={{...btn(false),padding:".3rem .45rem",fontSize:".68rem"}} onClick={()=>renameTaxonomyLabel("subcategory",x.name)}>Rename / Merge</button><button type="button" style={{...btn(false),padding:".3rem .45rem",fontSize:".68rem",color:"var(--danger)"}} onClick={()=>deleteTaxonomyLabel("subcategory",x.name,x.count)}>Delete</button></div></div>)}</div>
+          </div>
+        </div>
+        <div style={{marginTop:".75rem",fontSize:".68rem",color:"var(--muted)"}}>Category/subcategory rename rules are management-reporting aliases stored with the same browser storage approach already used by Expense Analysis classifications. Saving an edited Expense writes the corrected canonical label back to that Expense record.</div>
+      </div>
+    </div>}
+
     {classifyOpen&&<div onMouseDown={e=>{if(e.target===e.currentTarget)setClassifyOpen(false)}} style={{position:"fixed",inset:0,zIndex:1100,background:"rgba(0,0,0,.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
       <div style={{...card,width:"min(620px,95vw)",boxShadow:"0 20px 60px rgba(0,0,0,.35)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"1rem",marginBottom:"1rem"}}>
@@ -1192,26 +1379,8 @@ export default function Expenses(){
               disabled={!classifyForm.Category}
             >
               <option value="">— Select subcategory —</option>
-              {[...new Set([
-                ...(DEFAULT_SUBCATEGORIES[classifyForm.Category]||[]),
-                ...expenses.flatMap(e=>{
-                  const meta=readExpenseMeta(e.Notes).meta;
-                  const cat=String(e.Category||e.ExpenseType||"").trim();
-                  return cat===classifyForm.Category&&meta.subCategory?[String(meta.subCategory).trim()]:[];
-                }),
-                ...Object.values(vendorBillClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[]),
-                ...Object.values(bankClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[])
-              ].filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"})).map(x=><option key={x} value={x}>{x}</option>)}
-              {classifyForm.SubCategory&&![...new Set([
-                ...(DEFAULT_SUBCATEGORIES[classifyForm.Category]||[]),
-                ...expenses.flatMap(e=>{
-                  const meta=readExpenseMeta(e.Notes).meta;
-                  const cat=String(e.Category||e.ExpenseType||"").trim();
-                  return cat===classifyForm.Category&&meta.subCategory?[String(meta.subCategory).trim()]:[];
-                }),
-                ...Object.values(vendorBillClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[]),
-                ...Object.values(bankClassifications||{}).flatMap(x=>x?.Category===classifyForm.Category&&x?.SubCategory?[String(x.SubCategory).trim()]:[])
-              ].filter(Boolean))].includes(classifyForm.SubCategory)&&<option value={classifyForm.SubCategory}>{classifyForm.SubCategory}</option>}
+              {classifySubCategoryOptions.map(x=><option key={x} value={x}>{x}</option>)}
+              {classifyForm.SubCategory&&!classifySubCategoryOptions.includes(classifyForm.SubCategory)&&<option value={classifyForm.SubCategory}>{classifyForm.SubCategory}</option>}
               <option disabled>────────────</option>
               <option value="__add_subcategory__">+ Add Subcategory</option>
             </select>
