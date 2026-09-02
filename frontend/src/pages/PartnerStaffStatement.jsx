@@ -195,7 +195,7 @@ export default function PartnerStaffStatement(){
         EntryID:x.EntryID,BankAccountID:x.BankAccountID,Date:String(x.Date||"").slice(0,10),
         Type:receipt?"Receipt":"Payment",AmountIn:receipt?Number(x.AmountIn||0):"",
         AmountOut:receipt?"":Number(x.AmountOut||0),ReferenceType:x.ReferenceType||"Ledger",
-        ReferenceID:x.ReferenceID||"",Description,LedgerID:x.LedgerID||personLedger?.LedgerID||""
+        ReferenceID:x.ReferenceID||"",Description:description,LedgerID:x.LedgerID||personLedger?.LedgerID||""
       });
       await load();
       const r=await apiGet("getLedgerStatement",{ledger_id:personLedger.LedgerID});
