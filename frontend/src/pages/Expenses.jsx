@@ -996,6 +996,101 @@ export default function Expenses(){
     const blob=new Blob([html],{type:"application/vnd.ms-excel;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");
     a.href=url;a.download=`expense-analysis-${fromDate||"all"}-to-${toDate||"latest"}.xls`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
   }
+
+  function exportCategorySummaryPDF(){
+    if(!analysisRows.length)return alert("No category summary to export.");
+    const w=window.open("","_blank","width=900,height=1100");if(!w)return alert("Please allow pop-ups to export PDF.");
+
+    const reportRange=fromDate&&toDate
+      ?`${exportDate(fromDate)} to ${exportDate(toDate)}`
+      :fromDate?`From ${exportDate(fromDate)}`
+      :toDate?`Up to ${exportDate(toDate)}`
+      :"From 01-04-2026 to latest";
+
+    const activeFilters=[
+      analysisCategory?`Category: ${analysisCategory}`:"",
+      analysisSubCategory===UNCLASSIFIED_SUBCATEGORY?"Subcategory: Unclassified":analysisSubCategory?`Subcategory: ${analysisSubCategory}`:"",
+      analysisPerson?`Person / Traveller: ${analysisPerson}`:"",
+      analysisFunding?`Funding: ${analysisFunding}`:"",
+      analysisScope?`Scope: ${analysisScope}`:"",
+      search?`Search: ${search}`:""
+    ].filter(Boolean);
+
+    const categoryRows=analysisCategoryTotals.map(([category,total],index)=>{
+      const g=categoryDrillData[category]||{subs:{}};
+      const subs=sortedPairs(g.subs);
+      const subRows=subs.length
+        ?subs.map(([sub,amount])=>`<div class="sub-row"><div class="sub-name"><span class="dot"></span>${escapeHtml(sub||"Unclassified")}</div><div class="amount">${escapeHtml(fmt(amount))}</div></div>`).join("")
+        :`<div class="sub-row empty"><div class="sub-name"><span class="dot"></span>No subcategory</div><div class="amount">—</div></div>`;
+      return `<section class="category-block">
+        <div class="category-row">
+          <div class="category-name"><span class="category-no">${index+1}</span><span>${escapeHtml(category)}</span></div>
+          <div class="category-total">${escapeHtml(fmt(total))}</div>
+        </div>
+        <div class="sub-list">${subRows}</div>
+      </section>`;
+    }).join("");
+
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Expense Category Summary</title><style>
+      *{box-sizing:border-box}
+      html,body{margin:0;padding:0;background:#fff;color:#172033}
+      body{font-family:"Segoe UI",Arial,Helvetica,sans-serif;font-size:10.2px;line-height:1.38;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .page{padding:4mm 1mm 0}
+      .topline{height:3px;background:#102d5d;margin-bottom:9px}
+      .header{display:grid;grid-template-columns:minmax(0,1fr) 52mm;gap:10mm;align-items:start;margin-bottom:8px}
+      .brand{font-size:8px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#66748d;margin-bottom:5px}
+      h1{font-family:Georgia,"Times New Roman",serif;font-size:25px;line-height:1.08;color:#102d5d;margin:0 0 4px;font-weight:700}
+      .subtitle{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#67758c;font-weight:650}
+      .accent{width:28mm;height:2px;background:#102d5d;margin:8px 0 7px}
+      .period{font-size:9.5px;color:#516078;font-weight:600}
+      .total-card{border:1px solid #c8d1df;border-radius:7px;padding:9px 10px;text-align:right;background:#f8fafc}
+      .total-card .k{font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#68758a}
+      .total-card .v{font-family:Georgia,"Times New Roman",serif;font-size:19px;color:#102d5d;font-weight:700;margin-top:3px;white-space:nowrap}
+      .filters{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px}
+      .chip{border:1px solid #d5dbe5;border-radius:10px;padding:2px 6px;color:#536177;background:#fafbfc;font-size:7.8px}
+      .table-head{display:grid;grid-template-columns:1fr auto;gap:12px;background:#102d5d;color:#fff;padding:6px 9px;border-radius:5px 5px 0 0;font-size:8px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+      .category-block{border-left:1px solid #d8dee8;border-right:1px solid #d8dee8;border-bottom:1px solid #d8dee8;break-inside:avoid;page-break-inside:avoid}
+      .category-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;background:#f0f4f9;padding:5px 9px}
+      .category-name{display:flex;align-items:center;gap:7px;font-size:10.7px;font-weight:800;color:#102d5d}
+      .category-no{width:20px;height:20px;border:1px solid #c4d0df;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#fff;font-size:8px;flex:0 0 auto}
+      .category-total{font-size:10.6px;font-weight:800;color:#102d5d;white-space:nowrap}
+      .sub-list{padding-left:35px}
+      .sub-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:4px 9px 4px 0;border-top:1px dotted #d7dde6;align-items:start}
+      .sub-row:first-child{border-top:0}
+      .sub-name{display:flex;align-items:flex-start;gap:7px;color:#39465a;overflow-wrap:anywhere}
+      .dot{width:3px;height:3px;background:#6c7c94;border-radius:50%;margin-top:5px;flex:0 0 auto}
+      .amount{text-align:right;white-space:nowrap;color:#202b3d;font-weight:600}
+      .empty{color:#7a8597;font-style:italic}
+      .footer{display:flex;justify-content:space-between;gap:12px;border-top:1px solid #aeb8c7;margin-top:9px;padding-top:5px;font-size:7.5px;color:#7a8494;font-style:italic}
+      @page{size:A4 portrait;margin:11mm 12mm 12mm}
+      @media print{
+        .page{padding:0}
+        .category-block{break-inside:avoid;page-break-inside:avoid}
+        .table-head{break-after:avoid;page-break-after:avoid}
+      }
+    </style></head><body><main class="page">
+      <div class="topline"></div>
+      <header class="header">
+        <div>
+          <div class="brand">Zivara Family Office LLP</div>
+          <h1>Partner / Staff Expenses</h1>
+          <div class="subtitle">Category and Subcategory Summary</div>
+          <div class="accent"></div>
+          <div class="period">${escapeHtml(reportRange)} · ${analysisRows.length} expense records</div>
+        </div>
+        <div class="total-card">
+          <div class="k">Grand Total</div>
+          <div class="v">${escapeHtml(fmt(analysisTotal))}</div>
+        </div>
+      </header>
+      ${activeFilters.length?`<div class="filters">${activeFilters.map(x=>`<span class="chip">${escapeHtml(x)}</span>`).join("")}</div>`:""}
+      <div class="table-head"><div>Category / Subcategory</div><div>Amount (₹)</div></div>
+      ${categoryRows}
+      <footer class="footer"><span>All amounts are in Indian Rupees (₹).</span><span>System-generated expense summary.</span></footer>
+      <script>window.onload=()=>{setTimeout(()=>window.print(),150)}</script>
+    </main></body></html>`);
+    w.document.close();
+  }
   function exportAnalysisPDF(){
     if(!analysisRows.length)return alert("No analysis rows to export.");
     const w=window.open("","_blank","width=1300,height=900");if(!w)return alert("Please allow pop-ups to export PDF.");
@@ -1155,10 +1250,13 @@ export default function Expenses(){
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:".75rem"}}>
         <div style={card}>
-          <button type="button" onClick={()=>setShowCategoryDrill(v=>!v)} style={{width:"100%",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:0,cursor:"pointer",textAlign:"left"}}>
-            <span style={{fontWeight:800}}>{showCategoryDrill?"▼":"▶"} By Category · {analysisCategoryTotals.length}</span>
-            <span style={{fontSize:".7rem",color:"var(--muted)"}}>{showCategoryDrill?"Hide":"Expand"}</span>
-          </button>
+          <div style={{display:"flex",justifyContent:"space-between",gap:".65rem",alignItems:"center",flexWrap:"wrap"}}>
+            <button type="button" onClick={()=>setShowCategoryDrill(v=>!v)} style={{flex:"1 1 220px",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",background:"transparent",border:0,color:"inherit",padding:0,cursor:"pointer",textAlign:"left"}}>
+              <span style={{fontWeight:800}}>{showCategoryDrill?"▼":"▶"} By Category · {analysisCategoryTotals.length}</span>
+              <span style={{fontSize:".7rem",color:"var(--muted)"}}>{showCategoryDrill?"Hide":"Expand"}</span>
+            </button>
+            <button type="button" style={btn(false)} onClick={exportCategorySummaryPDF}>Export Category PDF</button>
+          </div>
           {showCategoryDrill&&<div style={{marginTop:".55rem"}}>
             {analysisCategoryTotals.map(([k,v])=>{
               const open=!!categoryDrill[k],g=categoryDrillData[k]||{};
