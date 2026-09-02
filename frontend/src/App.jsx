@@ -4,7 +4,6 @@ import Dashboard from "./pages/Dashboard";
 import PaymentTracker from "./pages/PaymentTracker";
 import Vendors from "./pages/Vendors";
 import Expenses from "./pages/Expenses";
-import Reimbursements from "./pages/Reimbursements";
 import BankAccounts from "./pages/BankAccounts";
 import CashBook from "./pages/CashBook";
 import Reconciliation from "./pages/Reconciliation";
@@ -36,7 +35,6 @@ const NAV_ALL = [
   { key:"clients",        to:"/clients",          icon:"👥", label:"Clients",                   group:"Revenue",  baselineRoles:["admin","managing_partner","partner"] },
   { key:"neoinvoices",    to:"/neoinvoices",      icon:"🧾", label:"Neo Invoices",              group:"Accounts", baselineRoles:["admin","managing_partner","partner"] },
   { key:"neorevenue",     to:"/neorevenue",       icon:"📊", label:"Neo Revenue",               group:"Revenue",  baselineRoles:["admin","managing_partner","partner"] },
-  { key:"reimbursements", to:"/reimbursements",   icon:"💸", label:"Reimbursements",            group:"Accounts", baselineRoles:["admin","managing_partner","partner"] },
   { key:"partnerstaffstatement", to:"/partner-staff-statement", icon:"📊", label:"Partner / Staff Statement", group:"Reports", baselineRoles:["admin","managing_partner"] },
   { key:"reconciliation", to:"/reconciliation",   icon:"⚖️", label:"Reconciliation",            group:"Reports",  baselineRoles:["admin","managing_partner"] },
   { key:"vendorledger",   to:"/vendor-ledger",    icon:"📒", label:"Vendor Ledger",             group:"Reports",  baselineRoles:["admin","managing_partner"] },
@@ -208,7 +206,7 @@ function AppLayout({ user, role, fullName, employeeRef, designation, allowedModu
             <Route path="/clients" element={can("clients") ? <Clients role={role} employeeRef={employeeRef} /> : <Navigate to={defaultPath} replace />} />
             <Route path="/neoinvoices" element={can("neoinvoices") ? <NeoInvoices role={role} employeeRef={employeeRef} /> : <Navigate to={defaultPath} replace />} />
             <Route path="/neorevenue" element={can("neorevenue") ? <NeoRevenue role={role} employeeRef={employeeRef} fullName={fullName} user={user} /> : <Navigate to={defaultPath} replace />} />
-            <Route path="/reimbursements" element={can("reimbursements") ? <Reimbursements role={role} employeeRef={employeeRef} /> : <Navigate to={defaultPath} replace />} />
+            <Route path="/reimbursements" element={<Navigate to="/partner-staff-statement" replace />} />
             <Route path="/bankaccounts" element={can("bankaccounts") ? <BankAccounts /> : <Navigate to={defaultPath} replace />} />
             <Route path="/cashbook" element={can("cashbook") ? <CashBook /> : <Navigate to={defaultPath} replace />} />
             <Route path="/imports" element={can("imports") ? <Imports /> : <Navigate to={defaultPath} replace />} />
