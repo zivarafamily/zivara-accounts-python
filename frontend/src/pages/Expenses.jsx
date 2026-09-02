@@ -990,11 +990,101 @@ export default function Expenses(){
 
   function exportAnalysisExcel(){
     if(!analysisRows.length)return alert("No analysis rows to export.");
-    const summary=`<table><tr><th colspan="2">Expense Analysis Summary</th></tr><tr><td>Total Expense</td><td>${analysisTotal.toFixed(2)}</td></tr><tr><td>Records</td><td>${analysisRows.length}</td></tr></table>`;
-    const rows=analysisRows.map(r=>`<tr>${[exportDate(r.date),r.category,r.subCategory,r.person,r.scope,r.funding,r.amount.toFixed(2),r.source,r.description].map(v=>`<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join("");
-    const html=`<html><head><meta charset="utf-8"></head><body>${summary}<br><table><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th>Amount</th><th>Source</th><th>Description</th></tr>${rows}</table></body></html>`;
-    const blob=new Blob([html],{type:"application/vnd.ms-excel;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");
-    a.href=url;a.download=`expense-analysis-${fromDate||"all"}-to-${toDate||"latest"}.xls`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+
+    const xml=value=>escapeHtml(value);
+    const numberCell=value=>`<Cell ss:StyleID="Money"><Data ss:Type="Number">${Number(value||0).toFixed(2)}</Data></Cell>`;
+    const textCell=(value,style="Text")=>`<Cell ss:StyleID="${style}"><Data ss:Type="String">${xml(value)}</Data></Cell>`;
+
+    const filterSummary=[
+      fromDate?`From ${exportDate(fromDate)}`:"",
+      toDate?`To ${exportDate(toDate)}`:"",
+      analysisCategory?`Category: ${analysisCategory}`:"",
+      analysisSubCategory===UNCLASSIFIED_SUBCATEGORY?"Subcategory: Unclassified":analysisSubCategory?`Subcategory: ${analysisSubCategory}`:"",
+      analysisPerson?`Person / Traveller: ${analysisPerson}`:"",
+      analysisFunding?`Funding: ${analysisFunding}`:"",
+      analysisScope?`Scope: ${analysisScope}`:"",
+      search?`Search: ${search}`:""
+    ].filter(Boolean).join(" · ")||"All Expense Analysis records";
+
+    const detailRows=analysisRows.map(r=>`<Row>
+      ${textCell(exportDate(r.date))}
+      ${textCell(r.category)}
+      ${textCell(r.subCategory||"Unclassified")}
+      ${textCell(r.person||"")}
+      ${textCell(r.scope||"")}
+      ${textCell(r.funding||"")}
+      ${numberCell(r.amount)}
+      ${textCell(r.source||"")}
+      ${textCell(r.description||"")}
+    </Row>`).join("");
+
+    const categoryRows=analysisCategoryTotals.map(([category,total])=>{
+      const group=categoryDrillData[category]||{subs:{}};
+      const subs=sortedPairs(group.subs);
+      const categoryRow=`<Row>
+        ${textCell(category,"Category")}
+        ${textCell("Category Total","CategoryLabel")}
+        <Cell ss:StyleID="CategoryMoney"><Data ss:Type="Number">${Number(total||0).toFixed(2)}</Data></Cell>
+      </Row>`;
+      const subRows=(subs.length?subs:[["Unclassified",total]]).map(([sub,amount])=>`<Row>
+        ${textCell(category,"SubCategoryParent")}
+        ${textCell(sub||"Unclassified","SubCategory")}
+        ${numberCell(amount)}
+      </Row>`).join("");
+      return categoryRow+subRows;
+    }).join("");
+
+    const workbook=`<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Top"/><Font ss:FontName="Calibri" ss:Size="10"/></Style>
+  <Style ss:ID="Title"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="16" ss:Bold="1" ss:Color="#102D5D"/></Style>
+  <Style ss:ID="SubTitle"><Font ss:FontName="Calibri" ss:Size="9" ss:Color="#66748D"/></Style>
+  <Style ss:ID="Header"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Font ss:FontName="Calibri" ss:Size="9" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#102D5D" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="Text"><Alignment ss:Vertical="Top" ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E3E7EE"/></Borders></Style>
+  <Style ss:ID="Money"><Alignment ss:Horizontal="Right" ss:Vertical="Top"/><NumberFormat ss:Format="₹#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E3E7EE"/></Borders></Style>
+  <Style ss:ID="SummaryLabel"><Font ss:Bold="1" ss:Color="#526178"/></Style>
+  <Style ss:ID="SummaryMoney"><Alignment ss:Horizontal="Right"/><Font ss:Bold="1" ss:Size="12" ss:Color="#102D5D"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="Category"><Font ss:Bold="1" ss:Color="#102D5D"/><Interior ss:Color="#EDF3F9" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="CategoryLabel"><Font ss:Bold="1" ss:Color="#617089"/><Interior ss:Color="#EDF3F9" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="CategoryMoney"><Alignment ss:Horizontal="Right"/><Font ss:Bold="1" ss:Color="#102D5D"/><Interior ss:Color="#EDF3F9" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="SubCategoryParent"><Font ss:Color="#9AA4B3"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E8ED"/></Borders></Style>
+  <Style ss:ID="SubCategory"><Alignment ss:Indent="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E8ED"/></Borders></Style>
+ </Styles>
+ <Worksheet ss:Name="Expense Detail">
+  <Table>
+   <Column ss:Width="78"/><Column ss:Width="105"/><Column ss:Width="125"/><Column ss:Width="115"/><Column ss:Width="85"/><Column ss:Width="105"/><Column ss:Width="85"/><Column ss:Width="120"/><Column ss:Width="260"/>
+   <Row ss:Height="24"><Cell ss:MergeAcross="8" ss:StyleID="Title"><Data ss:Type="String">Expense Analysis - Detail</Data></Cell></Row>
+   <Row><Cell ss:MergeAcross="8" ss:StyleID="SubTitle"><Data ss:Type="String">${xml(filterSummary)}</Data></Cell></Row>
+   <Row><Cell ss:StyleID="SummaryLabel"><Data ss:Type="String">Total Expense</Data></Cell><Cell ss:StyleID="SummaryMoney"><Data ss:Type="Number">${Number(analysisTotal||0).toFixed(2)}</Data></Cell><Cell ss:StyleID="SummaryLabel"><Data ss:Type="String">Records</Data></Cell><Cell><Data ss:Type="Number">${analysisRows.length}</Data></Cell></Row>
+   <Row ss:Height="21">${["Date","Category","Subcategory","Expense For","Scope","Funding Source","Amount","Source","Description"].map(h=>textCell(h,"Header")).join("")}</Row>
+   ${detailRows}
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>4</SplitHorizontal><TopRowBottomPane>4</TopRowBottomPane></WorksheetOptions>
+ </Worksheet>
+ <Worksheet ss:Name="Category Summary">
+  <Table>
+   <Column ss:Width="150"/><Column ss:Width="210"/><Column ss:Width="105"/>
+   <Row ss:Height="26"><Cell ss:MergeAcross="2" ss:StyleID="Title"><Data ss:Type="String">Category-wise Expense Summary</Data></Cell></Row>
+   <Row><Cell ss:MergeAcross="2" ss:StyleID="SubTitle"><Data ss:Type="String">${xml(filterSummary)}</Data></Cell></Row>
+   <Row><Cell ss:StyleID="SummaryLabel"><Data ss:Type="String">Grand Total</Data></Cell><Cell/><Cell ss:StyleID="SummaryMoney"><Data ss:Type="Number">${Number(analysisTotal||0).toFixed(2)}</Data></Cell></Row>
+   <Row><Cell ss:StyleID="SummaryLabel"><Data ss:Type="String">Categories</Data></Cell><Cell/><Cell><Data ss:Type="Number">${analysisCategoryTotals.length}</Data></Cell></Row>
+   <Row ss:Height="21">${textCell("Category","Header")}${textCell("Subcategory","Header")}${textCell("Amount","Header")}</Row>
+   ${categoryRows}
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>5</SplitHorizontal><TopRowBottomPane>5</TopRowBottomPane></WorksheetOptions>
+ </Worksheet>
+</Workbook>`;
+
+    const blob=new Blob(["\ufeff",workbook],{type:"application/vnd.ms-excel;charset=utf-8"});
+    const url=URL.createObjectURL(blob),a=document.createElement("a");
+    a.href=url;a.download=`expense-analysis-${fromDate||"all"}-to-${toDate||"latest"}.xls`;
+    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
   }
 
   function exportCategorySummaryPDF(){
