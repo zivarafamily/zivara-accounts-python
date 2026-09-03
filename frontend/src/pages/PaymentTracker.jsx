@@ -101,6 +101,34 @@ function sameVendorTransaction(tx,vendorName){
   return ledgerMatch||narrationMatch;
 }
 
+const BATCH_META_PREFIX="[[BATCH_SETTLEMENT_V2:";
+const TDS_PAYMENT_META_PREFIX="[[TDS_PAYMENT_V1:";
+const META_SUFFIX="]]";
+function readMeta(notes,prefix){
+  const text=String(notes||"");
+  const start=text.indexOf(prefix);
+  if(start<0)return null;
+  const end=text.indexOf(META_SUFFIX,start+prefix.length);
+  if(end<0)return null;
+  try{return JSON.parse(text.slice(start+prefix.length,end))}catch{return null}
+}
+function removeMeta(notes,prefix){
+  const text=String(notes||"");
+  const start=text.indexOf(prefix);
+  if(start<0)return text.trim();
+  const end=text.indexOf(META_SUFFIX,start+prefix.length);
+  if(end<0)return text.trim();
+  return (text.slice(0,start)+text.slice(end+META_SUFFIX.length)).replace(/\n{3,}/g,"\n\n").trim();
+}
+function upsertMeta(notes,prefix,value){
+  const clean=removeMeta(notes,prefix);
+  const marker=`${prefix}${JSON.stringify(value)}${META_SUFFIX}`;
+  return `${clean}${clean?"\n":""}${marker}`.trim();
+}
+function roundOffOf(r){
+  return num(r.RoundOffAmount ?? (Array.isArray(r.LineItems)?r.LineItems[0]?.RoundOffAmount:0));
+}
+
 export default function PaymentTracker(){
   const {currentLLP}=useLLP();
 
@@ -128,6 +156,10 @@ export default function PaymentTracker(){
   const[batchAmount,setBatchAmount]=useState("");
   const[batchTDSByBill,setBatchTDSByBill]=useState({});
   const[batchTDSTotalInput,setBatchTDSTotalInput]=useState("");
+  const[batchTreatment,setBatchTreatment]=useState("gross_tds_separate");
+  const[tdsPaymentTransactionId,setTdsPaymentTransactionId]=useState("");
+  const[tdsPaidTotalInput,setTdsPaidTotalInput]=useState("");
+  const[tdsMarking,setTdsMarking]=useState(false);
   const[batchSaving,setBatchSaving]=useState(false);
   const[batchError,setBatchError]=useState("");
   const[batchHistoryOpen,setBatchHistoryOpen]=useState(false);
@@ -188,23 +220,26 @@ export default function PaymentTracker(){
   const batchHistory=useMemo(()=>{
     const groups={};
     for(const r of rows){
-      if(norm(r.PaymentMode)!=="existing bank transaction"||num(r.PaidAmount)<=0)continue;
-      const date=String(r.PaymentDate||"").slice(0,10);
-      const ref=String(r.ReferenceNo||"").trim();
-      const bank=String(r.BankAccount||"").trim();
-      const vendor=String(r.VendorName||"").trim();
-      const key=[norm(vendor),date,norm(bank),norm(ref)].join("|");
+      const meta=readMeta(r.Notes,BATCH_META_PREFIX);
+      const legacy=norm(r.PaymentMode)==="existing bank transaction"&&num(r.PaidAmount)>0;
+      if(!meta&&!legacy)continue;
+      const date=String(meta?.paymentDate||r.PaymentDate||"").slice(0,10);
+      const ref=String(meta?.reference||r.ReferenceNo||"").trim();
+      const bank=String(meta?.bankAccount||r.BankAccount||"").trim();
+      const vendor=String(r.VendorName||meta?.vendor||"").trim();
+      const transactionId=String(meta?.transactionId||"").trim();
+      const key=transactionId||[norm(vendor),date,norm(bank),norm(ref)].join("|");
       if(!groups[key]){
         groups[key]={
-          key,vendor,date,reference:ref,bank,
+          key,vendor,date,reference:ref,bank,transactionId,treatment:meta?.treatment||"legacy",
           bills:[],gross:0,net:0,paid:0,tds:0,tdsDeducted:0
         };
       }
       const g=groups[key];
       g.bills.push(r);
-      g.gross+=num(r.GrossAmount);
+      g.gross+=num(r.GrossAmount)+roundOffOf(r);
       g.net+=num(r.NetPayable);
-      g.paid+=num(r.PaidAmount);
+      g.paid+=meta?num(meta.bankAllocated):num(r.PaidAmount);
       g.tds+=num(r.TDSAmount);
       g.tdsDeducted+=num(r.TDSDeductedAmount);
     }
@@ -244,6 +279,15 @@ export default function PaymentTracker(){
   const alreadyAllocatedByBankTx=useMemo(()=>{
     const out={};
     for(const r of rows){
+      const meta=readMeta(r.Notes,BATCH_META_PREFIX);
+      if(meta){
+        const reference=norm(meta.reference||r.ReferenceNo);
+        const bank=meta.bankAccount||r.BankAccount||"";
+        if(!reference)continue;
+        const key=`${bank}|${reference}`;
+        out[key]=(out[key]||0)+num(meta.bankAllocated);
+        continue;
+      }
       if(norm(r.PaymentMode)!=="existing bank transaction")continue;
       const reference=norm(r.ReferenceNo);
       if(!reference)continue;
@@ -266,6 +310,11 @@ export default function PaymentTracker(){
       .filter(tx=>tx._available>0.005)
       .sort((x,y)=>String(y.Date||"").localeCompare(String(x.Date||"")));
   },[bankTransactions,batchVendor,alreadyAllocatedByBankTx]);
+
+  const tdsPaymentTransactions=useMemo(()=>bankTransactions
+    .filter(tx=>num(tx.AmountOut)>0)
+    .sort((a,b)=>String(b.Date||"").localeCompare(String(a.Date||""))),[bankTransactions]);
+  const tdsPaymentTransaction=tdsPaymentTransactions.find(x=>x.EntryID===tdsPaymentTransactionId);
 
   const batchTransaction=candidateBankTransactions.find(x=>x.EntryID===batchTransactionId);
   const selectedBatchBills=batchBills.filter(r=>batchSelected.includes(r.PayableID));
@@ -291,27 +340,40 @@ export default function PaymentTracker(){
   },[batchSelected,batchBills]);
 
   const selectedBatchPreview=useMemo(()=>selectedBatchBills.map(r=>{
-    const filedTDS=num(r.TDSDeductedAmount);
-    const requestedTDS=batchTDSByBill[r.PayableID]===undefined?num(r.TDSAmount):num(batchTDSByBill[r.PayableID]);
-    const exactTDS=Math.max(requestedTDS,filedTDS);
-    const roundOff=num(r.RoundOffAmount ?? (Array.isArray(r.LineItems)?r.LineItems[0]?.RoundOffAmount:0));
-    const adjustedNet=Math.max(num(r.GrossAmount)-exactTDS+roundOff,0);
-    const adjustedBalance=Math.max(adjustedNet-num(r.PaidAmount),0);
-    return {...r,_filedTDS:filedTDS,_exactTDS:exactTDS,_roundOff:roundOff,_adjustedNet:adjustedNet,_adjustedBalance:adjustedBalance};
-  }),[selectedBatchBills,batchTDSByBill]);
+    const paidFiled=Math.min(num(r.TDSDeductedAmount),Math.max(num(r.TDSAmount),num(batchTDSByBill[r.PayableID]??r.TDSAmount)));
+    const exactTDS=batchTDSByBill[r.PayableID]===undefined?num(r.TDSAmount):Math.max(num(batchTDSByBill[r.PayableID]),0);
+    const roundOff=roundOffOf(r);
+    const grossWithRound=Math.max(num(r.GrossAmount)+roundOff,0);
+    const adjustedNet=Math.max(grossWithRound-exactTDS,0);
+    const vendorTarget=batchTreatment==="gross_tds_separate"?grossWithRound:adjustedNet;
+    const currentMeta=readMeta(r.Notes,BATCH_META_PREFIX);
+    const alreadyBankAllocated=currentMeta?num(currentMeta.bankAllocated):0;
+    const vendorBalance=Math.max(vendorTarget-alreadyBankAllocated,0);
+    return {...r,_paidFiled:paidFiled,_exactTDS:exactTDS,_roundOff:roundOff,_grossWithRound:grossWithRound,_adjustedNet:adjustedNet,_vendorTarget:vendorTarget,_vendorBalance:vendorBalance};
+  }),[selectedBatchBills,batchTDSByBill,batchTreatment]);
 
   const batchInvoiceCount=selectedBatchPreview.length;
-  const batchGrossTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r.GrossAmount),0);
+  const batchGrossTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r._grossWithRound),0);
   const batchTaxableTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r.TaxableAmount),0);
   const batchGSTTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r.GSTAmount),0);
   const batchCurrentTDSTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r.TDSAmount),0);
-  const batchFiledTDSTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r._filedTDS),0);
   const batchExactTDSTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r._exactTDS),0);
-  const batchAdditionalTDSTotal=Math.max(batchExactTDSTotal-batchFiledTDSTotal,0);
+  const batchTDSMarkedPaidTotal=selectedBatchPreview.reduce((sum,r)=>sum+Math.min(num(r.TDSDeductedAmount),num(r._exactTDS)),0);
+  const batchTDSPendingTotal=Math.max(batchExactTDSTotal-batchTDSMarkedPaidTotal,0);
   const batchAdjustedNetTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r._adjustedNet),0);
-  const selectedBatchBalance=selectedBatchPreview.reduce((sum,r)=>sum+num(r._adjustedBalance),0);
+  const selectedBatchBalance=selectedBatchPreview.reduce((sum,r)=>sum+num(r._vendorBalance),0);
   const batchAllocationAmount=num(batchAmount);
   const batchDifference=selectedBatchBalance-batchAllocationAmount;
+
+  const vendorBillsForTDS=useMemo(()=>rows.filter(r=>
+    batchVendor&&norm(r.VendorName)===norm(batchVendor)&&String(r.Status||"").toLowerCase()!=="cancelled"
+  ),[rows,batchVendor]);
+  const vendorTDSPayableAfterEdits=vendorBillsForTDS.reduce((sum,r)=>{
+    const edited=batchTDSByBill[r.PayableID];
+    return sum+(edited===undefined?num(r.TDSAmount):Math.max(num(edited),0));
+  },0);
+  const vendorTDSPaidFiled=vendorBillsForTDS.reduce((sum,r)=>sum+num(r.TDSDeductedAmount),0);
+  const vendorTDSPending=Math.max(vendorTDSPayableAfterEdits-vendorTDSPaidFiled,0);
 
   useEffect(()=>{
     setBatchTDSTotalInput(batchSelected.length?batchExactTDSTotal.toFixed(2):"");
@@ -325,7 +387,7 @@ export default function PaymentTracker(){
         return bill||String(x.BillDate||"").localeCompare(String(y.BillDate||""));
       })
       .map(r=>{
-        const balance=num(r._adjustedBalance);
+        const balance=num(r._vendorBalance);
         const applied=Math.min(balance,Math.max(remaining,0));
         remaining-=applied;
         return {...r,_allocation:applied};
@@ -351,44 +413,30 @@ export default function PaymentTracker(){
   }
 
   function setBatchBillTDS(payableId,value){
-    const row=selectedBatchBills.find(r=>r.PayableID===payableId);
-    const floor=num(row?.TDSDeductedAmount);
-    const exact=Math.max(num(value),floor);
-    if(num(value)+0.004<floor){
-      setBatchError(`TDS for ${row?.BillNo||payableId} cannot be below ${fmt(floor)} because that amount is already deducted / filed.`);
-    }
+    const exact=Math.max(num(value),0);
     setBatchTDSByBill(prev=>({...prev,[payableId]:exact.toFixed(2)}));
   }
 
   function setBatchExactTDSTotal(value){
     if(!selectedBatchBills.length)return;
-    const floorTotal=selectedBatchBills.reduce((s,r)=>s+num(r.TDSDeductedAmount),0);
-    const requested=Math.max(num(value),0);
-    const target=Math.max(requested,floorTotal);
-    if(requested+0.004<floorTotal){
-      setBatchError(`Exact TDS total cannot be below ${fmt(floorTotal)} because that amount is already deducted / filed.`);
-    }
-
-    const floors=selectedBatchBills.map(r=>Math.max(num(r.TDSDeductedAmount),0));
-    const remainingTarget=Math.max(target-floorTotal,0);
-    const currentWeights=selectedBatchBills.map((r,i)=>Math.max(num(r.TDSAmount)-floors[i],0));
+    const target=Math.max(num(value),0);
+    const currentWeights=selectedBatchBills.map(r=>Math.max(num(r.TDSAmount),0));
     const currentWeightTotal=currentWeights.reduce((a,b)=>a+b,0);
     const taxableWeights=selectedBatchBills.map(r=>Math.max(num(r.TaxableAmount),0));
     const taxableWeightTotal=taxableWeights.reduce((a,b)=>a+b,0);
     const weights=currentWeightTotal>0?currentWeights:taxableWeightTotal>0?taxableWeights:selectedBatchBills.map(()=>1);
     const weightTotal=weights.reduce((a,b)=>a+b,0)||selectedBatchBills.length;
-
-    let extraAssigned=0;
+    let assigned=0;
     const next={};
     selectedBatchBills.forEach((r,i)=>{
-      let extra;
+      let amount;
       if(i===selectedBatchBills.length-1){
-        extra=Math.max(remainingTarget-extraAssigned,0);
+        amount=Math.max(target-assigned,0);
       }else{
-        extra=Math.round((remainingTarget*(weights[i]/weightTotal))*100)/100;
-        extraAssigned+=extra;
+        amount=Math.round((target*(weights[i]/weightTotal))*100)/100;
+        assigned+=amount;
       }
-      next[r.PayableID]=(floors[i]+extra).toFixed(2);
+      next[r.PayableID]=amount.toFixed(2);
     });
     setBatchTDSByBill(next);
     setBatchTDSTotalInput(target.toFixed(2));
@@ -400,10 +448,52 @@ export default function PaymentTracker(){
     setBatchTDSByBill(next);
   }
 
+  async function markTDSPaidFiled(){
+    setBatchError("");
+    if(!selectedBatchBills.length)return setBatchError("Select the invoices whose TDS is being marked paid / filed.");
+    if(!tdsPaymentTransaction)return setBatchError("Select the bank transaction used for the TDS payment / filing evidence.");
+    const cumulative=Math.max(num(tdsPaidTotalInput),0);
+    if(cumulative>batchExactTDSTotal+0.01)return setBatchError(`TDS paid / filed cannot exceed TDS payable of ${fmt(batchExactTDSTotal)}.`);
+    if(cumulative>num(tdsPaymentTransaction.AmountOut)+0.01)return setBatchError(`Marked TDS cannot exceed the selected transaction debit of ${fmt(tdsPaymentTransaction.AmountOut)}.`);
+
+    setTdsMarking(true);
+    try{
+      let remaining=cumulative;
+      const ordered=[...selectedBatchPreview].sort((a,b)=>String(a.BillDate||"").localeCompare(String(b.BillDate||""))||String(a.BillNo||"").localeCompare(String(b.BillNo||"")));
+      for(const r of ordered){
+        const payable=Math.max(num(r._exactTDS),0);
+        const allocated=Math.min(payable,remaining);
+        remaining=Math.max(remaining-allocated,0);
+        const meta={
+          transactionId:tdsPaymentTransaction.EntryID||"",
+          reference:tdsPaymentTransaction.ReferenceID||tdsPaymentTransaction.EntryID||"",
+          date:String(tdsPaymentTransaction.Date||"").slice(0,10),
+          transactionAmount:num(tdsPaymentTransaction.AmountOut),
+          batchCumulative:cumulative,
+          billPaidFiled:allocated
+        };
+        await apiPost("updateLLPPayable",{
+          PayableID:r.PayableID,
+          TDSAmount:payable,
+          TDSDeductedAmount:allocated,
+          TDSRate:r.TDSRate,
+          TDSSection:r.TDSSection,
+          Notes:upsertMeta(r.Notes,TDS_PAYMENT_META_PREFIX,meta)
+        });
+      }
+      await load();
+      setTdsPaidTotalInput(cumulative.toFixed(2));
+    }catch(e){
+      setBatchError(e.message||"Unable to mark TDS paid / filed.");
+    }finally{
+      setTdsMarking(false);
+    }
+  }
+
   async function deleteBatchSettlement(group){
     const billList=group.bills.map(r=>r.BillNo||r.PayableID).join(", ");
     const ok=confirm(
-      `Delete this batch settlement allocation?\n\nVendor: ${group.vendor}\nUTR / Reference: ${group.reference||"—"}\nInvoices: ${group.bills.length}\nAllocated: ${fmt(group.paid)}\nTDS already deducted / filed: ${fmt(group.tdsDeducted)}\n\nThis will reset the batch Paid Amount and payment-link fields on these invoices. It will NOT delete the bank transaction and it will NOT reduce TDS already deducted / filed.\n\nBills: ${billList}`
+      `Delete this batch settlement allocation?\n\nVendor: ${group.vendor}\nUTR / Reference: ${group.reference||"—"}\nInvoices: ${group.bills.length}\nAllocated bank amount: ${fmt(group.paid)}\n\nThis reverses only the invoice batch-payment link. It does NOT delete the bank transaction and it does NOT change TDS payable / paid-filed tracking.\n\nBills: ${billList}`
     );
     if(!ok)return;
 
@@ -411,21 +501,24 @@ export default function PaymentTracker(){
     setError("");
     try{
       for(const r of group.bills){
+        const meta=readMeta(r.Notes,BATCH_META_PREFIX);
+        const prev=meta?.previous||{};
         await apiPost("updateLLPPayable",{
           PayableID:r.PayableID,
-          PaidAmount:0,
-          PaymentDate:"",
-          PaymentMode:"Bank",
-          BankAccount:"",
-          ReferenceNo:"",
-          PaidByType:"Company",
-          PaidByName:"",
-          ReimburseTo:"",
-          ReimbursementStatus:"Not Required",
+          PaidAmount:meta?num(prev.PaidAmount):0,
+          PaymentDate:meta?(prev.PaymentDate||""):"",
+          PaymentMode:meta?(prev.PaymentMode||"Bank"):"Bank",
+          BankAccount:meta?(prev.BankAccount||""):"",
+          ReferenceNo:meta?(prev.ReferenceNo||""):"",
+          PaidByType:meta?(prev.PaidByType||"Company"):"Company",
+          PaidByName:meta?(prev.PaidByName||""):"",
+          ReimburseTo:meta?(prev.ReimburseTo||""):"",
+          ReimbursementStatus:meta?(prev.ReimbursementStatus||"Not Required"):"Not Required",
           TDSAmount:r.TDSAmount,
           TDSDeductedAmount:r.TDSDeductedAmount,
           TDSRate:r.TDSRate,
-          TDSSection:r.TDSSection
+          TDSSection:r.TDSSection,
+          Notes:removeMeta(r.Notes,BATCH_META_PREFIX)
         });
       }
       await load();
@@ -635,6 +728,9 @@ export default function PaymentTracker(){
     setBatchAmount("");
     setBatchTDSByBill({});
     setBatchTDSTotalInput("");
+    setBatchTreatment("gross_tds_separate");
+    setTdsPaymentTransactionId("");
+    setTdsPaidTotalInput("");
     setBatchError("");
     setBatchOpen(true);
   }
@@ -646,6 +742,9 @@ export default function PaymentTracker(){
     setBatchAmount("");
     setBatchTDSByBill({});
     setBatchTDSTotalInput("");
+    setBatchTreatment("gross_tds_separate");
+    setTdsPaymentTransactionId("");
+    setTdsPaidTotalInput("");
     setBatchError("");
   }
 
@@ -673,73 +772,76 @@ export default function PaymentTracker(){
     if(!tx)return setBatchError("Select the existing bank debit.");
     if(!batchSelected.length)return setBatchError("Select at least one Vendor Bill.");
     if(amount<=0)return setBatchError("Enter an amount to allocate.");
-    if(batchExactTDSTotal>batchGrossTotal+0.01){
-      return setBatchError("Exact TDS cannot exceed the selected invoice gross total.");
-    }
-    const belowFiledBill=selectedBatchPreview.find(r=>num(r._exactTDS)+0.004<num(r.TDSDeductedAmount));
-    if(belowFiledBill){
-      return setBatchError(`Exact TDS for ${belowFiledBill.BillNo||belowFiledBill.PayableID} cannot be below ${fmt(belowFiledBill.TDSDeductedAmount)} already deducted / filed.`);
-    }
-    const invalidTDSBill=selectedBatchPreview.find(r=>num(r._exactTDS)>num(r.GrossAmount)+0.01);
-    if(invalidTDSBill){
-      return setBatchError(`Exact TDS cannot exceed invoice gross for ${invalidTDSBill.BillNo||invalidTDSBill.PayableID}.`);
-    }
-    if(amount>tx._available+0.01){
-      return setBatchError(`Amount cannot exceed unused bank debit of ${fmt(tx._available)}.`);
-    }
-    if(amount>selectedBatchBalance+0.01){
-      return setBatchError(`Amount cannot exceed adjusted selected balance of ${fmt(selectedBatchBalance)}.`);
+    if(batchExactTDSTotal>batchGrossTotal+0.01)return setBatchError("Exact TDS cannot exceed the selected invoice gross total.");
+    const invalidTDSBill=selectedBatchPreview.find(r=>num(r._exactTDS)>num(r._grossWithRound)+0.01);
+    if(invalidTDSBill)return setBatchError(`Exact TDS cannot exceed invoice total for ${invalidTDSBill.BillNo||invalidTDSBill.PayableID}.`);
+    if(amount>tx._available+0.01)return setBatchError(`Amount cannot exceed unused bank debit of ${fmt(tx._available)}.`);
+    if(amount>selectedBatchBalance+0.01)return setBatchError(`Amount cannot exceed selected vendor-payment target of ${fmt(selectedBatchBalance)}.`);
+
+    const unselectedOutstanding=batchBills.filter(r=>!batchSelected.includes(r.PayableID));
+    const settlesSelected=Math.abs(selectedBatchBalance-amount)<=0.01;
+    if(!unselectedOutstanding.length&&settlesSelected&&vendorTDSPending>0.01){
+      return setBatchError(`This is the last outstanding vendor settlement, but TDS pending is ${fmt(vendorTDSPending)}. Mark the remaining TDS paid / filed against a transaction before paying the last invoice.`);
     }
 
     setBatchSaving(true);
-    const changed=[];
     try{
-      for(const r of selectedBatchPreview){
+      for(const preview of allocationPreview){
+        const r=preview;
+        const bankApplied=Math.round(num(r._allocation)*100)/100;
+        if(bankApplied<=0)continue;
         const exactTDS=Math.round(num(r._exactTDS)*100)/100;
-        const currentTDS=Math.round(num(r.TDSAmount)*100)/100;
-        const currentDeducted=Math.round(num(r.TDSDeductedAmount)*100)/100;
-        if(Math.abs(exactTDS-currentTDS)>0.004){
-          changed.push({
-            PayableID:r.PayableID,
-            TDSAmount:currentTDS,
-            TDSDeductedAmount:currentDeducted,
-            TDSRate:r.TDSRate,
-            TDSSection:r.TDSSection
-          });
-          await apiPost("updateLLPPayable",{
-            PayableID:r.PayableID,
-            TDSAmount:exactTDS,
-            TDSDeductedAmount:currentDeducted,
-            TDSRate:r.TDSRate,
-            TDSSection:r.TDSSection
-          });
-        }
+        const fullTarget=num(r._vendorTarget);
+        const fullSettlement=bankApplied+0.01>=num(r._vendorBalance);
+        const adjustedNet=Math.max(num(r._adjustedNet),0);
+        const priorPaid=num(r.PaidAmount);
+        const accountingPaid=fullSettlement?adjustedNet:Math.min(adjustedNet,priorPaid+bankApplied);
+        const existingMeta=readMeta(r.Notes,BATCH_META_PREFIX);
+        const previous=existingMeta?.previous||{
+          PaidAmount:r.PaidAmount,
+          PaymentDate:String(r.PaymentDate||"").slice(0,10),
+          PaymentMode:r.PaymentMode||"",
+          BankAccount:r.BankAccount||"",
+          ReferenceNo:r.ReferenceNo||"",
+          PaidByType:r.PaidByType||"Company",
+          PaidByName:r.PaidByName||"",
+          ReimburseTo:r.ReimburseTo||"",
+          ReimbursementStatus:r.ReimbursementStatus||"Not Required"
+        };
+        const meta={
+          version:2,
+          vendor:batchVendor,
+          transactionId:tx.EntryID||"",
+          paymentDate:String(tx.Date||"").slice(0,10),
+          bankAccount:tx.BankAccountID||"",
+          reference:tx.ReferenceID||tx.EntryID||"",
+          bankAllocated:bankApplied,
+          treatment:batchTreatment,
+          vendorTarget:fullTarget,
+          exactTDS,
+          previous
+        };
+        await apiPost("updateLLPPayable",{
+          PayableID:r.PayableID,
+          TDSAmount:exactTDS,
+          TDSDeductedAmount:r.TDSDeductedAmount,
+          TDSRate:r.TDSRate,
+          TDSSection:r.TDSSection,
+          PaidAmount:accountingPaid,
+          PaymentDate:String(tx.Date||"").slice(0,10),
+          PaymentMode:"Existing Bank Transaction",
+          BankAccount:tx.BankAccountID||"",
+          ReferenceNo:tx.ReferenceID||tx.EntryID,
+          PaidByType:"Company",
+          PaidByName:"Company",
+          ReimburseTo:"",
+          ReimbursementStatus:"Not Required",
+          Notes:upsertMeta(r.Notes,BATCH_META_PREFIX,meta)
+        });
       }
-
-      await apiPost("batchPayLLPPayables",{
-        PayableIDs:batchSelected,
-        PaidAmount:amount,
-        PaymentDate:String(tx.Date||"").slice(0,10),
-        PaymentMode:"Existing Bank Transaction",
-        BankAccount:tx.BankAccountID||"",
-        ReferenceNo:tx.ReferenceID||tx.EntryID,
-        PaidByType:"Company",
-        PaidByName:"Company"
-      });
       setBatchOpen(false);
       await load();
     }catch(e){
-      for(const old of changed){
-        try{
-          await apiPost("updateLLPPayable",{
-            PayableID:old.PayableID,
-            TDSAmount:old.TDSAmount,
-            TDSDeductedAmount:old.TDSDeductedAmount,
-            TDSRate:old.TDSRate,
-            TDSSection:old.TDSSection
-          });
-        }catch{}
-      }
       setBatchError(e.message||"Unable to settle selected bills.");
     }finally{
       setBatchSaving(false);
@@ -926,13 +1028,24 @@ export default function PaymentTracker(){
               Bank debit {fmt(batchTransaction.AmountOut)} · previously allocated {fmt(batchTransaction._used)} · available {fmt(batchTransaction._available)}
             </small>}
           </div>
+
+          <div>
+            <label style={label}>Vendor Payment Treatment *</label>
+            <select style={input} value={batchTreatment} onChange={e=>setBatchTreatment(e.target.value)}>
+              <option value="gross_tds_separate">Gross invoice payment · TDS tracked separately</option>
+              <option value="net_of_tds">Net of TDS · TDS withheld from vendor payment</option>
+            </select>
+            <small style={{color:"var(--muted)"}}>
+              Use Gross when the bank paid the invoice amount without reducing TDS. TDS payable/paid/pending is tracked separately below.
+            </small>
+          </div>
         </div>
 
         {batchVendor&&<div style={{marginTop:"1rem",border:"1px solid var(--border)",borderRadius:"7px",overflow:"hidden"}}>
           <div style={{padding:".7rem .8rem",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",borderBottom:"1px solid var(--border)",flexWrap:"wrap"}}>
             <strong>Outstanding bills · {batchBills.length}</strong>
             <div style={{display:"flex",gap:".5rem",alignItems:"center",flexWrap:"wrap"}}>
-              <span style={{fontSize:".73rem",color:"var(--muted)"}}>Selected invoices {batchInvoiceCount} · Adjusted balance {fmt(selectedBatchBalance)}</span>
+              <span style={{fontSize:".73rem",color:"var(--muted)"}}>Selected invoices {batchInvoiceCount} · Vendor payment target {fmt(selectedBatchBalance)}</span>
               <button type="button" style={btn("ghost")} onClick={selectAllBatchBills}>Select all</button>
               <button type="button" style={btn("ghost")} onClick={()=>{setBatchSelected([]);setBatchTDSByBill({});setBatchTDSTotalInput("")}}>Clear</button>
             </div>
@@ -944,11 +1057,11 @@ export default function PaymentTracker(){
               <div style={card}><div style={label}>Invoice Gross</div><strong>{fmt(batchGrossTotal)}</strong></div>
               <div style={card}><div style={label}>Taxable</div><strong>{fmt(batchTaxableTotal)}</strong></div>
               <div style={card}><div style={label}>GST</div><strong>{fmt(batchGSTTotal)}</strong></div>
-              <div style={card}><div style={label}>Current TDS</div><strong>{fmt(batchCurrentTDSTotal)}</strong></div>
-              <div style={{...card,borderColor:batchFiledTDSTotal>0?"#22c55e66":"var(--border)"}}><div style={label}>TDS Already Deducted / Filed</div><strong style={{color:batchFiledTDSTotal>0?"var(--success)":"inherit"}}>{fmt(batchFiledTDSTotal)}</strong></div>
-              <div style={card}><div style={label}>Additional TDS Now</div><strong>{fmt(batchAdditionalTDSTotal)}</strong></div>
-              <div style={card}><div style={label}>Adjusted Net</div><strong>{fmt(batchAdjustedNetTotal)}</strong></div>
-              <div style={card}><div style={label}>Outstanding After TDS</div><strong>{fmt(selectedBatchBalance)}</strong></div>
+              <div style={card}><div style={label}>TDS Payable</div><strong>{fmt(batchExactTDSTotal)}</strong></div>
+              <div style={{...card,borderColor:batchTDSMarkedPaidTotal>0?"#22c55e66":"var(--border)"}}><div style={label}>TDS Paid / Filed</div><strong style={{color:batchTDSMarkedPaidTotal>0?"var(--success)":"inherit"}}>{fmt(batchTDSMarkedPaidTotal)}</strong></div>
+              <div style={{...card,borderColor:batchTDSPendingTotal>0?"#f59e0b66":"#22c55e66"}}><div style={label}>TDS Pending</div><strong style={{color:batchTDSPendingTotal>0?"var(--warning)":"var(--success)"}}>{fmt(batchTDSPendingTotal)}</strong></div>
+              <div style={card}><div style={label}>Net Liability</div><strong>{fmt(batchAdjustedNetTotal)}</strong></div>
+              <div style={card}><div style={label}>Vendor Payment Target</div><strong>{fmt(selectedBatchBalance)}</strong></div>
               <div style={card}><div style={label}>Bank Allocation</div><strong>{fmt(batchAllocationAmount)}</strong></div>
             </div>
 
@@ -958,7 +1071,7 @@ export default function PaymentTracker(){
                 <input
                   style={input}
                   type="number"
-                  min={batchFiledTDSTotal}
+                  min="0"
                   step=".01"
                   value={batchTDSTotalInput}
                   onChange={e=>setBatchTDSTotalInput(e.target.value)}
@@ -966,13 +1079,39 @@ export default function PaymentTracker(){
                   onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();e.currentTarget.blur()}}}
                 />
                 <small style={{color:"var(--muted)"}}>
-                  Type the exact batch TDS and press Enter or Tab. It cannot be lower than TDS already deducted / filed ({fmt(batchFiledTDSTotal)}). Any amount above that is shown as additional TDS.
+                  This is TDS payable on the selected invoices. It is separate from TDS already paid/filed and separate from the vendor bank payment.
                 </small>
               </div>
               <button type="button" style={btn("ghost")} onClick={resetBatchTDS}>Reset to current TDS</button>
               <div style={{...card,padding:".65rem .75rem",borderColor:Math.abs(batchDifference)<=0.01?"#22c55e66":"#f59e0b66"}}>
-                <div style={label}>{batchDifference>0.01?"Still to allocate":batchDifference<-0.01?"Bank exceeds invoices":"Difference"}</div>
+                <div style={label}>{batchDifference>0.01?"Still to allocate":batchDifference<-0.01?"Bank exceeds payment target":"Difference"}</div>
                 <strong style={{color:Math.abs(batchDifference)<=0.01?"var(--success)":"var(--warning)"}}>{fmt(Math.abs(batchDifference))}</strong>
+              </div>
+            </div>
+
+            <div style={{...card,marginTop:".8rem",padding:".8rem",borderColor:batchTDSPendingTotal>0?"#f59e0b66":"#22c55e66"}}>
+              <div style={{fontWeight:750,marginBottom:".5rem"}}>Mark TDS Paid / Filed</div>
+              <div style={{display:"grid",gridTemplateColumns:"minmax(220px,1.5fr) minmax(160px,.7fr) auto",gap:".6rem",alignItems:"end"}}>
+                <div>
+                  <label style={label}>Any Existing Bank Transaction *</label>
+                  <select style={input} value={tdsPaymentTransactionId} onChange={e=>setTdsPaymentTransactionId(e.target.value)}>
+                    <option value="">— Select TDS payment / filing transaction —</option>
+                    {tdsPaymentTransactions.map(tx=><option key={tx.EntryID} value={tx.EntryID}>
+                      {formatDate(tx.Date)} · {fmt(tx.AmountOut)} · {tx.ReferenceID||tx.EntryID} · {tx.LedgerName||""} · {tx.Description||""}
+                    </option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={label}>Cumulative TDS Paid / Filed *</label>
+                  <input style={input} type="number" min="0" step=".01" placeholder={batchTDSMarkedPaidTotal.toFixed(2)} value={tdsPaidTotalInput} onChange={e=>setTdsPaidTotalInput(e.target.value)}/>
+                  <small style={{color:"var(--muted)"}}>Enter the cumulative amount, e.g. ₹236.00. This can correct an earlier wrong auto-marking.</small>
+                </div>
+                <button type="button" style={btn()} disabled={tdsMarking||!tdsPaymentTransactionId||tdsPaidTotalInput===""} onClick={markTDSPaidFiled}>
+                  {tdsMarking?"Marking...":"Mark TDS Paid / Filed"}
+                </button>
+              </div>
+              <div style={{fontSize:".72rem",color:"var(--muted)",marginTop:".5rem"}}>
+                Vendor-level TDS: Payable {fmt(vendorTDSPayableAfterEdits)} · Paid / Filed {fmt(vendorTDSPaidFiled)} · Pending {fmt(vendorTDSPending)}. The last outstanding vendor settlement is blocked until vendor TDS pending becomes zero.
               </div>
             </div>
           </div>}
@@ -980,7 +1119,7 @@ export default function PaymentTracker(){
           <div style={{overflowX:"auto",maxHeight:"46vh",overflowY:"auto"}}>
             <table>
               <thead>
-                <tr><th></th><th>Bill</th><th>Date</th><th>Gross</th><th>Current TDS</th><th>Deducted / Filed</th><th>Exact TDS</th><th>Adjusted Net</th><th>Paid</th><th>Adjusted Balance</th><th>Allocation Preview</th></tr>
+                <tr><th></th><th>Bill</th><th>Date</th><th>Gross</th><th>Current TDS</th><th>TDS Paid / Filed</th><th>Exact TDS</th><th>Net Liability</th><th>Paid</th><th>Vendor Payment Target</th><th>Allocation Preview</th></tr>
               </thead>
               <tbody>
                 {batchBills.map(r=>{
@@ -1000,12 +1139,12 @@ export default function PaymentTracker(){
                     <td><strong>{fmt(r.TDSDeductedAmount)}</strong></td>
                     <td>
                       {batchSelected.includes(r.PayableID)
-                        ?<input style={{...input,minWidth:95}} type="number" min={num(r.TDSDeductedAmount)} step=".01" value={batchTDSByBill[r.PayableID]??String(Math.max(num(r.TDSAmount),num(r.TDSDeductedAmount)))} onChange={e=>setBatchBillTDS(r.PayableID,e.target.value)}/>
+                        ?<input style={{...input,minWidth:95}} type="number" min="0" step=".01" value={batchTDSByBill[r.PayableID]??String(num(r.TDSAmount))} onChange={e=>setBatchBillTDS(r.PayableID,e.target.value)}/>
                         :"—"}
                     </td>
                     <td>{preview?fmt(preview._adjustedNet):fmt(r.NetPayable)}</td>
                     <td>{fmt(r.PaidAmount)}</td>
-                    <td>{preview?fmt(preview._adjustedBalance):fmt(r.BalanceAmount)}</td>
+                    <td>{preview?fmt(preview._vendorBalance):fmt(r.BalanceAmount)}</td>
                     <td>{preview&&preview._allocation>0?<strong>{fmt(preview._allocation)}</strong>:"—"}</td>
                   </tr>;
                 })}
@@ -1016,9 +1155,7 @@ export default function PaymentTracker(){
         </div>}
 
         <div style={{...card,marginTop:"1rem",fontSize:".76rem",lineHeight:1.5}}>
-          <strong>Accounting treatment:</strong> exact TDS changes are saved to the selected Vendor Bills first, but TDS already
-          deducted / filed is never reduced. The existing bank debit is then allocated against adjusted outstanding balances.
-          The existing transaction should already be posted to the vendor ledger. The app does not create another bank debit.
+          <strong>Accounting treatment:</strong> Vendor payment and TDS are tracked separately. In Gross mode, the existing bank debit can settle the full invoice amount while TDS remains payable until it is marked paid/filed against a transaction. In Net-of-TDS mode, the vendor-payment target is reduced by TDS. The app never creates another bank debit.
         </div>
 
         <div style={{display:"flex",justifyContent:"flex-end",gap:".6rem",marginTop:"1rem"}}>
