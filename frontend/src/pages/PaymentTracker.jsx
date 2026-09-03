@@ -31,7 +31,10 @@ const btn=(kind="primary")=>({
   color:kind==="primary"?"#fff":"var(--muted)"
 });
 
-const emptyLine=()=>({Particulars:"",LedgerID:"",LedgerName:"",TaxableAmount:"",GSTType:"IGST",GSTRate:"18",CGSTAmount:"",SGSTAmount:"",IGSTAmount:""});
+const emptyLine=()=>({
+  Particulars:"",LedgerID:"",LedgerName:"",TaxableAmount:"",GSTType:"IGST",GSTRate:"18",
+  CGSTAmount:"",SGSTAmount:"",IGSTAmount:"",TDSApplicable:false,TDSConfigured:false
+});
 const initial=()=>({
   VendorID:"",VendorName:"",VendorCategory:"Other",VendorGSTIN:"",VendorPAN:"",
   BillNo:"",BillDate:new Date().toISOString().slice(0,10),DueDate:"",
@@ -58,15 +61,20 @@ function lineCalc(x){
 }
 
 function totals(f){
-  const s=(f.LineItems||[]).reduce((a,x)=>{
+  const items=f.LineItems||[];
+  const lineTDSConfigured=items.some(x=>x.TDSConfigured===true);
+  const s=items.reduce((a,x)=>{
     const c=lineCalc(x);
     a.taxable+=c.taxable;a.cgst+=c.cgst;a.sgst+=c.sgst;a.igst+=c.igst;
+    if(!lineTDSConfigured||x.TDSApplicable===true)a.tdsBase+=c.taxable;
     return a;
-  },{taxable:0,cgst:0,sgst:0,igst:0});
+  },{taxable:0,cgst:0,sgst:0,igst:0,tdsBase:0});
+  s.lineTDSConfigured=lineTDSConfigured;
   s.gst=s.cgst+s.sgst+s.igst;
   s.tcs=num(f.TCSAmount);
   s.gross=s.taxable+s.gst+s.tcs;
-  s.tds=f.TDSAmount!==""?num(f.TDSAmount):Math.round(s.taxable*num(f.TDSRate))/100;
+  s.autoTDS=Math.round(s.tdsBase*num(f.TDSRate))/100;
+  s.tds=f.TDSAmount!==""?num(f.TDSAmount):s.autoTDS;
   s.round=num(f.RoundOffAmount);
   s.net=Math.max(s.gross-s.tds+s.round,0);
   s.paid=num(f.PaidAmount);
@@ -118,6 +126,8 @@ export default function PaymentTracker(){
   const[batchTransactionId,setBatchTransactionId]=useState("");
   const[batchSelected,setBatchSelected]=useState([]);
   const[batchAmount,setBatchAmount]=useState("");
+  const[batchTDSByBill,setBatchTDSByBill]=useState({});
+  const[batchTDSTotalInput,setBatchTDSTotalInput]=useState("");
   const[batchSaving,setBatchSaving]=useState(false);
   const[batchError,setBatchError]=useState("");
 
@@ -223,24 +233,116 @@ export default function PaymentTracker(){
 
   const batchTransaction=candidateBankTransactions.find(x=>x.EntryID===batchTransactionId);
   const selectedBatchBills=batchBills.filter(r=>batchSelected.includes(r.PayableID));
-  const selectedBatchBalance=selectedBatchBills.reduce((sum,r)=>sum+num(r.BalanceAmount),0);
+
+  useEffect(()=>{
+    setBatchTDSByBill(prev=>{
+      const next={...prev};
+      let changed=false;
+      for(const r of selectedBatchBills){
+        if(next[r.PayableID]===undefined){
+          next[r.PayableID]=String(num(r.TDSAmount));
+          changed=true;
+        }
+      }
+      for(const id of Object.keys(next)){
+        if(!batchSelected.includes(id)){
+          delete next[id];
+          changed=true;
+        }
+      }
+      return changed?next:prev;
+    });
+  },[batchSelected,batchBills]);
+
+  const selectedBatchPreview=useMemo(()=>selectedBatchBills.map(r=>{
+    const exactTDS=batchTDSByBill[r.PayableID]===undefined?num(r.TDSAmount):num(batchTDSByBill[r.PayableID]);
+    const roundOff=num(r.RoundOffAmount ?? (Array.isArray(r.LineItems)?r.LineItems[0]?.RoundOffAmount:0));
+    const adjustedNet=Math.max(num(r.GrossAmount)-exactTDS+roundOff,0);
+    const adjustedBalance=Math.max(adjustedNet-num(r.PaidAmount),0);
+    return {...r,_exactTDS:exactTDS,_roundOff:roundOff,_adjustedNet:adjustedNet,_adjustedBalance:adjustedBalance};
+  }),[selectedBatchBills,batchTDSByBill]);
+
+  const batchInvoiceCount=selectedBatchPreview.length;
+  const batchGrossTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r.GrossAmount),0);
+  const batchTaxableTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r.TaxableAmount),0);
+  const batchGSTTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r.GSTAmount),0);
+  const batchCurrentTDSTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r.TDSAmount),0);
+  const batchExactTDSTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r._exactTDS),0);
+  const batchAdjustedNetTotal=selectedBatchPreview.reduce((sum,r)=>sum+num(r._adjustedNet),0);
+  const selectedBatchBalance=selectedBatchPreview.reduce((sum,r)=>sum+num(r._adjustedBalance),0);
+  const batchAllocationAmount=num(batchAmount);
+  const batchDifference=selectedBatchBalance-batchAllocationAmount;
+
+  useEffect(()=>{
+    setBatchTDSTotalInput(batchSelected.length?batchExactTDSTotal.toFixed(2):"");
+  },[batchExactTDSTotal,batchSelected.length]);
 
   const allocationPreview=useMemo(()=>{
     let remaining=num(batchAmount);
-    return [...selectedBatchBills]
+    return [...selectedBatchPreview]
       .sort((x,y)=>{
         const bill=String(x.BillNo||"").localeCompare(String(y.BillNo||""));
         return bill||String(x.BillDate||"").localeCompare(String(y.BillDate||""));
       })
       .map(r=>{
-        const balance=num(r.BalanceAmount);
+        const balance=num(r._adjustedBalance);
         const applied=Math.min(balance,Math.max(remaining,0));
         remaining-=applied;
         return {...r,_allocation:applied};
       });
-  },[selectedBatchBills,batchAmount]);
+  },[selectedBatchPreview,batchAmount]);
 
   function set(k,v){setForm(p=>({...p,[k]:v}));}
+
+  function setLineTDS(i,checked){
+    setForm(p=>{
+      const items=[...p.LineItems];
+      items[i]={...items[i],TDSApplicable:checked,TDSConfigured:true};
+      return {...p,LineItems:items,TDSAmount:""};
+    });
+  }
+
+  function resetLineTDS(){
+    setForm(p=>({
+      ...p,
+      LineItems:(p.LineItems||[]).map(x=>({...x,TDSApplicable:false,TDSConfigured:false})),
+      TDSAmount:""
+    }));
+  }
+
+  function setBatchBillTDS(payableId,value){
+    setBatchTDSByBill(prev=>({...prev,[payableId]:value}));
+  }
+
+  function setBatchExactTDSTotal(value){
+    const target=Math.max(num(value),0);
+    if(!selectedBatchBills.length)return;
+    const currentWeights=selectedBatchBills.map(r=>Math.max(num(r.TDSAmount),0));
+    const currentWeightTotal=currentWeights.reduce((a,b)=>a+b,0);
+    const taxableWeights=selectedBatchBills.map(r=>Math.max(num(r.TaxableAmount),0));
+    const taxableWeightTotal=taxableWeights.reduce((a,b)=>a+b,0);
+    const weights=currentWeightTotal>0?currentWeights:taxableWeightTotal>0?taxableWeights:selectedBatchBills.map(()=>1);
+    const weightTotal=weights.reduce((a,b)=>a+b,0)||selectedBatchBills.length;
+    let assigned=0;
+    const next={};
+    selectedBatchBills.forEach((r,i)=>{
+      let amount;
+      if(i===selectedBatchBills.length-1){
+        amount=Math.max(target-assigned,0);
+      }else{
+        amount=Math.round((target*(weights[i]/weightTotal))*100)/100;
+        assigned+=amount;
+      }
+      next[r.PayableID]=amount.toFixed(2);
+    });
+    setBatchTDSByBill(next);
+  }
+
+  function resetBatchTDS(){
+    const next={};
+    for(const r of selectedBatchBills)next[r.PayableID]=String(num(r.TDSAmount));
+    setBatchTDSByBill(next);
+  }
 
   function chooseVendor(id){
     setVendorChoice(id);
@@ -439,6 +541,8 @@ export default function PaymentTracker(){
     setBatchTransactionId("");
     setBatchSelected([]);
     setBatchAmount("");
+    setBatchTDSByBill({});
+    setBatchTDSTotalInput("");
     setBatchError("");
     setBatchOpen(true);
   }
@@ -448,6 +552,8 @@ export default function PaymentTracker(){
     setBatchTransactionId("");
     setBatchSelected([]);
     setBatchAmount("");
+    setBatchTDSByBill({});
+    setBatchTDSTotalInput("");
     setBatchError("");
   }
 
@@ -475,15 +581,45 @@ export default function PaymentTracker(){
     if(!tx)return setBatchError("Select the existing bank debit.");
     if(!batchSelected.length)return setBatchError("Select at least one Vendor Bill.");
     if(amount<=0)return setBatchError("Enter an amount to allocate.");
+    if(batchExactTDSTotal>batchGrossTotal+0.01){
+      return setBatchError("Exact TDS cannot exceed the selected invoice gross total.");
+    }
+    const invalidTDSBill=selectedBatchPreview.find(r=>num(r._exactTDS)>num(r.GrossAmount)+0.01);
+    if(invalidTDSBill){
+      return setBatchError(`Exact TDS cannot exceed invoice gross for ${invalidTDSBill.BillNo||invalidTDSBill.PayableID}.`);
+    }
     if(amount>tx._available+0.01){
       return setBatchError(`Amount cannot exceed unused bank debit of ${fmt(tx._available)}.`);
     }
     if(amount>selectedBatchBalance+0.01){
-      return setBatchError(`Amount cannot exceed selected bill balance of ${fmt(selectedBatchBalance)}.`);
+      return setBatchError(`Amount cannot exceed adjusted selected balance of ${fmt(selectedBatchBalance)}.`);
     }
 
     setBatchSaving(true);
+    const changed=[];
     try{
+      for(const r of selectedBatchPreview){
+        const exactTDS=Math.round(num(r._exactTDS)*100)/100;
+        const currentTDS=Math.round(num(r.TDSAmount)*100)/100;
+        const currentDeducted=Math.round(num(r.TDSDeductedAmount)*100)/100;
+        if(Math.abs(exactTDS-currentTDS)>0.004){
+          changed.push({
+            PayableID:r.PayableID,
+            TDSAmount:currentTDS,
+            TDSDeductedAmount:currentDeducted,
+            TDSRate:r.TDSRate,
+            TDSSection:r.TDSSection
+          });
+          await apiPost("updateLLPPayable",{
+            PayableID:r.PayableID,
+            TDSAmount:exactTDS,
+            TDSDeductedAmount:Math.min(currentDeducted,exactTDS),
+            TDSRate:r.TDSRate,
+            TDSSection:r.TDSSection
+          });
+        }
+      }
+
       await apiPost("batchPayLLPPayables",{
         PayableIDs:batchSelected,
         PaidAmount:amount,
@@ -497,6 +633,17 @@ export default function PaymentTracker(){
       setBatchOpen(false);
       await load();
     }catch(e){
+      for(const old of changed){
+        try{
+          await apiPost("updateLLPPayable",{
+            PayableID:old.PayableID,
+            TDSAmount:old.TDSAmount,
+            TDSDeductedAmount:old.TDSDeductedAmount,
+            TDSRate:old.TDSRate,
+            TDSSection:old.TDSSection
+          });
+        }catch{}
+      }
       setBatchError(e.message||"Unable to settle selected bills.");
     }finally{
       setBatchSaving(false);
@@ -565,7 +712,7 @@ export default function PaymentTracker(){
       onMouseDown={e=>{if(e.target===e.currentTarget)setBatchOpen(false)}}
       style={{position:"fixed",inset:0,background:"rgba(0,0,0,.68)",zIndex:95,padding:"1rem",overflowY:"auto"}}
     >
-      <div style={{...card,maxWidth:1050,margin:"3vh auto 0"}}>
+      <div style={{...card,maxWidth:1180,margin:"3vh auto 0"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"1rem",marginBottom:"1rem"}}>
           <div>
             <h3 style={{margin:0}}>Batch Vendor Settlement</h3>
@@ -627,15 +774,53 @@ export default function PaymentTracker(){
           <div style={{padding:".7rem .8rem",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",borderBottom:"1px solid var(--border)",flexWrap:"wrap"}}>
             <strong>Outstanding bills · {batchBills.length}</strong>
             <div style={{display:"flex",gap:".5rem",alignItems:"center",flexWrap:"wrap"}}>
-              <span style={{fontSize:".73rem",color:"var(--muted)"}}>Selected balance {fmt(selectedBatchBalance)}</span>
+              <span style={{fontSize:".73rem",color:"var(--muted)"}}>Selected invoices {batchInvoiceCount} · Adjusted balance {fmt(selectedBatchBalance)}</span>
               <button type="button" style={btn("ghost")} onClick={selectAllBatchBills}>Select all</button>
-              <button type="button" style={btn("ghost")} onClick={()=>setBatchSelected([])}>Clear</button>
+              <button type="button" style={btn("ghost")} onClick={()=>{setBatchSelected([]);setBatchTDSByBill({});setBatchTDSTotalInput("")}}>Clear</button>
             </div>
           </div>
+
+          {batchSelected.length>0&&<div style={{padding:".8rem",borderBottom:"1px solid var(--border)",background:"rgba(255,255,255,.02)"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:".55rem"}}>
+              <div style={card}><div style={label}>Invoices</div><strong>{batchInvoiceCount}</strong></div>
+              <div style={card}><div style={label}>Invoice Gross</div><strong>{fmt(batchGrossTotal)}</strong></div>
+              <div style={card}><div style={label}>Taxable</div><strong>{fmt(batchTaxableTotal)}</strong></div>
+              <div style={card}><div style={label}>GST</div><strong>{fmt(batchGSTTotal)}</strong></div>
+              <div style={card}><div style={label}>Current TDS</div><strong>{fmt(batchCurrentTDSTotal)}</strong></div>
+              <div style={card}><div style={label}>Adjusted Net</div><strong>{fmt(batchAdjustedNetTotal)}</strong></div>
+              <div style={card}><div style={label}>Outstanding After TDS</div><strong>{fmt(selectedBatchBalance)}</strong></div>
+              <div style={card}><div style={label}>Bank Allocation</div><strong>{fmt(batchAllocationAmount)}</strong></div>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"minmax(220px,1fr) auto minmax(180px,auto)",gap:".6rem",alignItems:"end",marginTop:".75rem"}}>
+              <div>
+                <label style={label}>Exact TDS Total — editable</label>
+                <input
+                  style={input}
+                  type="number"
+                  min="0"
+                  step=".01"
+                  value={batchTDSTotalInput}
+                  onChange={e=>setBatchTDSTotalInput(e.target.value)}
+                  onBlur={()=>setBatchExactTDSTotal(batchTDSTotalInput)}
+                  onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();e.currentTarget.blur()}}}
+                />
+                <small style={{color:"var(--muted)"}}>
+                  Type the exact batch TDS and press Enter or Tab. It is distributed proportionately across selected invoices; each invoice can then be fine-tuned below.
+                </small>
+              </div>
+              <button type="button" style={btn("ghost")} onClick={resetBatchTDS}>Reset to current TDS</button>
+              <div style={{...card,padding:".65rem .75rem",borderColor:Math.abs(batchDifference)<=0.01?"#22c55e66":"#f59e0b66"}}>
+                <div style={label}>{batchDifference>0.01?"Still to allocate":batchDifference<-0.01?"Bank exceeds invoices":"Difference"}</div>
+                <strong style={{color:Math.abs(batchDifference)<=0.01?"var(--success)":"var(--warning)"}}>{fmt(Math.abs(batchDifference))}</strong>
+              </div>
+            </div>
+          </div>}
+
           <div style={{overflowX:"auto",maxHeight:"46vh",overflowY:"auto"}}>
             <table>
               <thead>
-                <tr><th></th><th>Bill</th><th>Date</th><th>Net</th><th>Paid</th><th>Balance</th><th>Allocation Preview</th></tr>
+                <tr><th></th><th>Bill</th><th>Date</th><th>Gross</th><th>Current TDS</th><th>Exact TDS</th><th>Adjusted Net</th><th>Paid</th><th>Adjusted Balance</th><th>Allocation Preview</th></tr>
               </thead>
               <tbody>
                 {batchBills.map(r=>{
@@ -650,22 +835,29 @@ export default function PaymentTracker(){
                     </td>
                     <td><strong>{r.BillNo||"—"}</strong><div style={{fontSize:".7rem",color:"var(--muted)"}}>{r.Description||""}</div></td>
                     <td>{formatDate(r.BillDate)}</td>
-                    <td>{fmt(r.NetPayable)}</td>
+                    <td>{fmt(r.GrossAmount)}</td>
+                    <td>{fmt(r.TDSAmount)}</td>
+                    <td>
+                      {batchSelected.includes(r.PayableID)
+                        ?<input style={{...input,minWidth:95}} type="number" min="0" step=".01" value={batchTDSByBill[r.PayableID]??String(num(r.TDSAmount))} onChange={e=>setBatchBillTDS(r.PayableID,e.target.value)}/>
+                        :"—"}
+                    </td>
+                    <td>{preview?fmt(preview._adjustedNet):fmt(r.NetPayable)}</td>
                     <td>{fmt(r.PaidAmount)}</td>
-                    <td>{fmt(r.BalanceAmount)}</td>
+                    <td>{preview?fmt(preview._adjustedBalance):fmt(r.BalanceAmount)}</td>
                     <td>{preview&&preview._allocation>0?<strong>{fmt(preview._allocation)}</strong>:"—"}</td>
                   </tr>;
                 })}
-                {!batchBills.length&&<tr><td colSpan="7" style={{padding:"1.5rem",textAlign:"center"}}>No outstanding bills for this vendor.</td></tr>}
+                {!batchBills.length&&<tr><td colSpan="10" style={{padding:"1.5rem",textAlign:"center"}}>No outstanding bills for this vendor.</td></tr>}
               </tbody>
             </table>
           </div>
         </div>}
 
         <div style={{...card,marginTop:"1rem",fontSize:".76rem",lineHeight:1.5}}>
-          <strong>Accounting treatment:</strong> this only marks the selected Vendor Bills as paid/part-paid against the
-          bank debit that already exists in Transactions. The existing transaction should be posted to the vendor ledger.
-          The app will not create another bank debit for these bills.
+          <strong>Accounting treatment:</strong> exact TDS changes are saved to the selected Vendor Bills first, then the
+          existing bank debit is allocated against their adjusted outstanding balances. The existing transaction should already
+          be posted to the vendor ledger. The app does not create another bank debit for these bills.
         </div>
 
         <div style={{display:"flex",justifyContent:"flex-end",gap:".6rem",marginTop:"1rem"}}>
@@ -738,7 +930,7 @@ export default function PaymentTracker(){
 
               {(form.LineItems||[]).map((x,i)=><div
                 key={i}
-                style={{display:"grid",gridTemplateColumns:"1.4fr 2fr 1fr 1fr .8fr 1fr auto",gap:".45rem",alignItems:"end",marginBottom:".5rem"}}
+                style={{display:"grid",gridTemplateColumns:"1.35fr 1.9fr .9fr .95fr .72fr .62fr .95fr auto",gap:".45rem",alignItems:"end",marginBottom:".5rem"}}
               >
                 <div>
                   <label style={label}>Particulars</label>
@@ -775,6 +967,13 @@ export default function PaymentTracker(){
                   <input style={input} type="number" step=".01" value={x.GSTRate||""} onChange={e=>updateLine(i,"GSTRate",e.target.value)}/>
                 </div>
                 <div>
+                  <label style={label}>TDS?</label>
+                  <label style={{...input,minHeight:36,display:"flex",alignItems:"center",justifyContent:"center",gap:".35rem",border:"1px solid var(--border)",borderRadius:"6px",cursor:"pointer"}}>
+                    <input type="checkbox" checked={x.TDSApplicable===true} onChange={e=>setLineTDS(i,e.target.checked)}/>
+                    <span style={{fontSize:".7rem"}}>{x.TDSApplicable===true?"Yes":"No"}</span>
+                  </label>
+                </div>
+                <div>
                   <label style={label}>Line Total</label>
                   <input style={input} readOnly value={fmt(lineCalc(x).total)}/>
                 </div>
@@ -783,10 +982,21 @@ export default function PaymentTracker(){
                   style={{...btn("ghost"),color:"var(--danger)"}}
                   onClick={()=>setForm(p=>({
                     ...p,
-                    LineItems:p.LineItems.length>1?p.LineItems.filter((_,j)=>j!==i):[emptyLine()]
+                    LineItems:p.LineItems.length>1?p.LineItems.filter((_,j)=>j!==i):[emptyLine()],
+                    TDSAmount:""
                   }))}
                 >Remove</button>
               </div>)}
+            </div>
+
+            <div style={{gridColumn:"1/-1",...card,padding:".7rem .85rem",fontSize:".74rem",display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"center",flexWrap:"wrap"}}>
+              <div>
+                <strong>TDS Base: {fmt(a.tdsBase)}</strong>
+                <span style={{color:"var(--muted)",marginLeft:".5rem"}}>
+                  {a.lineTDSConfigured?"Calculated only on bill lines marked TDS = Yes.":"No line-specific TDS selection yet; TDS uses all taxable lines (legacy mode)."}
+                </span>
+              </div>
+              {a.lineTDSConfigured&&<button type="button" style={btn("ghost")} onClick={resetLineTDS}>Use all taxable lines</button>}
             </div>
 
             <div>
@@ -821,12 +1031,19 @@ export default function PaymentTracker(){
 
             <div>
               <label style={label}>TDS Rate (%)</label>
-              <input style={input} type="number" step=".01" value={form.TDSRate} onChange={e=>set("TDSRate",e.target.value)}/>
+              <input
+                style={input}
+                type="number"
+                step=".01"
+                value={form.TDSRate}
+                onChange={e=>setForm(p=>({...p,TDSRate:e.target.value,TDSAmount:""}))}
+              />
             </div>
 
             <div>
               <label style={label}>TDS Amount</label>
-              <input style={input} type="number" step=".01" placeholder={String(a.tds)} value={form.TDSAmount} onChange={e=>set("TDSAmount",e.target.value)}/>
+              <input style={input} type="number" min="0" step=".01" placeholder={String(a.autoTDS)} value={form.TDSAmount} onChange={e=>set("TDSAmount",e.target.value)}/>
+              <small style={{color:"var(--muted)"}}>Auto {fmt(a.autoTDS)} on TDS base {fmt(a.tdsBase)} · editable for exact TDS.</small>
             </div>
 
             <div>
@@ -840,6 +1057,7 @@ export default function PaymentTracker(){
               <div>GST Input<br/><strong>{fmt(a.gst)}</strong></div>
               <div>TCS<br/><strong>{fmt(a.tcs)}</strong></div>
               <div>Gross Bill<br/><strong>{fmt(a.gross)}</strong></div>
+              <div>TDS Base<br/><strong>{fmt(a.tdsBase)}</strong></div>
               <div>Less TDS<br/><strong>{fmt(a.tds)}</strong></div>
               <div>Round Off<br/><strong>{fmt(a.round)}</strong></div>
               <div>Net Payable<br/><strong style={{color:"var(--success)"}}>{fmt(a.net)}</strong></div>
