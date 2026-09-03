@@ -374,10 +374,17 @@ export default function PaymentTracker(){
   },0);
   const vendorTDSPaidFiled=vendorBillsForTDS.reduce((sum,r)=>sum+num(r.TDSDeductedAmount),0);
   const vendorTDSPending=Math.max(vendorTDSPayableAfterEdits-vendorTDSPaidFiled,0);
+  const priorOtherTDSPending=Math.max(vendorTDSPending-batchTDSPendingTotal,0);
+  const vendorPaymentShortfall=Math.max(selectedBatchBalance-batchAllocationAmount,0);
+  const totalCashStillRequired=vendorPaymentShortfall+vendorTDSPending;
 
   useEffect(()=>{
     setBatchTDSTotalInput(batchSelected.length?batchExactTDSTotal.toFixed(2):"");
   },[batchExactTDSTotal,batchSelected.length]);
+
+  useEffect(()=>{
+    if(batchVendor)setTdsPaidTotalInput(vendorTDSPaidFiled.toFixed(2));
+  },[batchVendor,vendorTDSPaidFiled]);
 
   const allocationPreview=useMemo(()=>{
     let remaining=num(batchAmount);
@@ -450,28 +457,40 @@ export default function PaymentTracker(){
 
   async function markTDSPaidFiled(){
     setBatchError("");
-    if(!selectedBatchBills.length)return setBatchError("Select the invoices whose TDS is being marked paid / filed.");
-    if(!tdsPaymentTransaction)return setBatchError("Select the bank transaction used for the TDS payment / filing evidence.");
+    if(!batchVendor)return setBatchError("Select the vendor first.");
+    if(!vendorBillsForTDS.length)return setBatchError("No Vendor Bills found for this vendor.");
+    if(!tdsPaymentTransaction)return setBatchError("Select the bank transaction used as TDS payment / filing evidence.");
+
     const cumulative=Math.max(num(tdsPaidTotalInput),0);
-    if(cumulative>batchExactTDSTotal+0.01)return setBatchError(`TDS paid / filed cannot exceed TDS payable of ${fmt(batchExactTDSTotal)}.`);
-    if(cumulative>num(tdsPaymentTransaction.AmountOut)+0.01)return setBatchError(`Marked TDS cannot exceed the selected transaction debit of ${fmt(tdsPaymentTransaction.AmountOut)}.`);
+    if(cumulative>vendorTDSPayableAfterEdits+0.01){
+      return setBatchError(`Cumulative TDS paid / filed cannot exceed vendor TDS payable of ${fmt(vendorTDSPayableAfterEdits)}.`);
+    }
 
     setTdsMarking(true);
     try{
       let remaining=cumulative;
-      const ordered=[...selectedBatchPreview].sort((a,b)=>String(a.BillDate||"").localeCompare(String(b.BillDate||""))||String(a.BillNo||"").localeCompare(String(b.BillNo||"")));
+      const ordered=[...vendorBillsForTDS].sort((a,b)=>
+        String(a.BillDate||"").localeCompare(String(b.BillDate||""))||
+        String(a.BillNo||"").localeCompare(String(b.BillNo||""))
+      );
+
       for(const r of ordered){
-        const payable=Math.max(num(r._exactTDS),0);
+        const edited=batchTDSByBill[r.PayableID];
+        const payable=Math.max(edited===undefined?num(r.TDSAmount):num(edited),0);
         const allocated=Math.min(payable,remaining);
         remaining=Math.max(remaining-allocated,0);
+
         const meta={
           transactionId:tdsPaymentTransaction.EntryID||"",
           reference:tdsPaymentTransaction.ReferenceID||tdsPaymentTransaction.EntryID||"",
           date:String(tdsPaymentTransaction.Date||"").slice(0,10),
           transactionAmount:num(tdsPaymentTransaction.AmountOut),
-          batchCumulative:cumulative,
+          vendor:batchVendor,
+          vendorCumulative:cumulative,
+          vendorTDSPayable:vendorTDSPayableAfterEdits,
           billPaidFiled:allocated
         };
+
         await apiPost("updateLLPPayable",{
           PayableID:r.PayableID,
           TDSAmount:payable,
@@ -481,6 +500,7 @@ export default function PaymentTracker(){
           Notes:upsertMeta(r.Notes,TDS_PAYMENT_META_PREFIX,meta)
         });
       }
+
       await load();
       setTdsPaidTotalInput(cumulative.toFixed(2));
     }catch(e){
@@ -1057,12 +1077,16 @@ export default function PaymentTracker(){
               <div style={card}><div style={label}>Invoice Gross</div><strong>{fmt(batchGrossTotal)}</strong></div>
               <div style={card}><div style={label}>Taxable</div><strong>{fmt(batchTaxableTotal)}</strong></div>
               <div style={card}><div style={label}>GST</div><strong>{fmt(batchGSTTotal)}</strong></div>
-              <div style={card}><div style={label}>TDS Payable</div><strong>{fmt(batchExactTDSTotal)}</strong></div>
-              <div style={{...card,borderColor:batchTDSMarkedPaidTotal>0?"#22c55e66":"var(--border)"}}><div style={label}>TDS Paid / Filed</div><strong style={{color:batchTDSMarkedPaidTotal>0?"var(--success)":"inherit"}}>{fmt(batchTDSMarkedPaidTotal)}</strong></div>
-              <div style={{...card,borderColor:batchTDSPendingTotal>0?"#f59e0b66":"#22c55e66"}}><div style={label}>TDS Pending</div><strong style={{color:batchTDSPendingTotal>0?"var(--warning)":"var(--success)"}}>{fmt(batchTDSPendingTotal)}</strong></div>
+              <div style={card}><div style={label}>Selected Batch TDS Payable</div><strong>{fmt(batchExactTDSTotal)}</strong></div>
+              <div style={{...card,borderColor:batchTDSPendingTotal>0?"#f59e0b66":"#22c55e66"}}><div style={label}>Selected Batch TDS Pending</div><strong style={{color:batchTDSPendingTotal>0?"var(--warning)":"var(--success)"}}>{fmt(batchTDSPendingTotal)}</strong></div>
+              <div style={{...card,borderColor:priorOtherTDSPending>0?"#f59e0b66":"#22c55e66"}}><div style={label}>Earlier / Other TDS Pending</div><strong style={{color:priorOtherTDSPending>0?"var(--warning)":"var(--success)"}}>{fmt(priorOtherTDSPending)}</strong></div>
+              <div style={{...card,borderColor:"#38bdf866"}}><div style={label}>Vendor TDS Payable · Cumulative</div><strong>{fmt(vendorTDSPayableAfterEdits)}</strong></div>
+              <div style={{...card,borderColor:vendorTDSPaidFiled>0?"#22c55e66":"var(--border)"}}><div style={label}>Vendor TDS Paid / Filed</div><strong style={{color:vendorTDSPaidFiled>0?"var(--success)":"inherit"}}>{fmt(vendorTDSPaidFiled)}</strong></div>
+              <div style={{...card,borderColor:vendorTDSPending>0?"#f59e0b66":"#22c55e66"}}><div style={label}>Vendor TDS Pending · Cumulative</div><strong style={{color:vendorTDSPending>0?"var(--warning)":"var(--success)"}}>{fmt(vendorTDSPending)}</strong></div>
               <div style={card}><div style={label}>Net Liability</div><strong>{fmt(batchAdjustedNetTotal)}</strong></div>
               <div style={card}><div style={label}>Vendor Payment Target</div><strong>{fmt(selectedBatchBalance)}</strong></div>
               <div style={card}><div style={label}>Bank Allocation</div><strong>{fmt(batchAllocationAmount)}</strong></div>
+              <div style={{...card,borderColor:totalCashStillRequired>0.01?"#f59e0b66":"#22c55e66"}}><div style={label}>Total Still to Pay · Vendor + TDS</div><strong style={{color:totalCashStillRequired>0.01?"var(--warning)":"var(--success)"}}>{fmt(totalCashStillRequired)}</strong><div style={{fontSize:".65rem",color:"var(--muted)",marginTop:".2rem"}}>Vendor shortfall {fmt(vendorPaymentShortfall)} + cumulative TDS pending {fmt(vendorTDSPending)}</div></div>
             </div>
 
             <div style={{display:"grid",gridTemplateColumns:"minmax(220px,1fr) auto minmax(180px,auto)",gap:".6rem",alignItems:"end",marginTop:".75rem"}}>
@@ -1079,18 +1103,21 @@ export default function PaymentTracker(){
                   onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();e.currentTarget.blur()}}}
                 />
                 <small style={{color:"var(--muted)"}}>
-                  This is TDS payable on the selected invoices. It is separate from TDS already paid/filed and separate from the vendor bank payment.
+                  This edits TDS payable only for the selected invoices. Earlier settled invoices remain included in the cumulative Vendor TDS cards above.
                 </small>
               </div>
               <button type="button" style={btn("ghost")} onClick={resetBatchTDS}>Reset to current TDS</button>
               <div style={{...card,padding:".65rem .75rem",borderColor:Math.abs(batchDifference)<=0.01?"#22c55e66":"#f59e0b66"}}>
-                <div style={label}>{batchDifference>0.01?"Still to allocate":batchDifference<-0.01?"Bank exceeds payment target":"Difference"}</div>
+                <div style={label}>{batchDifference>0.01?"Vendor payment still to allocate":batchDifference<-0.01?"Bank exceeds vendor payment target":"Vendor payment difference"}</div>
                 <strong style={{color:Math.abs(batchDifference)<=0.01?"var(--success)":"var(--warning)"}}>{fmt(Math.abs(batchDifference))}</strong>
               </div>
             </div>
 
-            <div style={{...card,marginTop:".8rem",padding:".8rem",borderColor:batchTDSPendingTotal>0?"#f59e0b66":"#22c55e66"}}>
-              <div style={{fontWeight:750,marginBottom:".5rem"}}>Mark TDS Paid / Filed</div>
+            <div style={{...card,marginTop:".8rem",padding:".8rem",borderColor:vendorTDSPending>0?"#f59e0b66":"#22c55e66"}}>
+              <div style={{fontWeight:750,marginBottom:".15rem"}}>Mark Vendor TDS Paid / Filed</div>
+              <div style={{fontSize:".72rem",color:"var(--muted)",marginBottom:".55rem"}}>
+                This is cumulative across all {batchVendor} Vendor Bills, including invoices already settled in earlier bank batches. Use this to carry earlier TDS pending forward to the final settlement.
+              </div>
               <div style={{display:"grid",gridTemplateColumns:"minmax(220px,1.5fr) minmax(160px,.7fr) auto",gap:".6rem",alignItems:"end"}}>
                 <div>
                   <label style={label}>Any Existing Bank Transaction *</label>
@@ -1102,16 +1129,16 @@ export default function PaymentTracker(){
                   </select>
                 </div>
                 <div>
-                  <label style={label}>Cumulative TDS Paid / Filed *</label>
-                  <input style={input} type="number" min="0" step=".01" placeholder={batchTDSMarkedPaidTotal.toFixed(2)} value={tdsPaidTotalInput} onChange={e=>setTdsPaidTotalInput(e.target.value)}/>
-                  <small style={{color:"var(--muted)"}}>Enter the cumulative amount, e.g. ₹236.00. This can correct an earlier wrong auto-marking.</small>
+                  <label style={label}>Vendor Cumulative TDS Paid / Filed *</label>
+                  <input style={input} type="number" min="0" step=".01" placeholder={vendorTDSPaidFiled.toFixed(2)} value={tdsPaidTotalInput} onChange={e=>setTdsPaidTotalInput(e.target.value)}/>
+                  <small style={{color:"var(--muted)"}}>Enter cumulative paid/filed for this vendor, e.g. ₹236.00. Later enter ₹372.84 when the remaining ₹136.84 is paid/filed.</small>
                 </div>
                 <button type="button" style={btn()} disabled={tdsMarking||!tdsPaymentTransactionId||tdsPaidTotalInput===""} onClick={markTDSPaidFiled}>
                   {tdsMarking?"Marking...":"Mark TDS Paid / Filed"}
                 </button>
               </div>
               <div style={{fontSize:".72rem",color:"var(--muted)",marginTop:".5rem"}}>
-                Vendor-level TDS: Payable {fmt(vendorTDSPayableAfterEdits)} · Paid / Filed {fmt(vendorTDSPaidFiled)} · Pending {fmt(vendorTDSPending)}. The last outstanding vendor settlement is blocked until vendor TDS pending becomes zero.
+                Cumulative vendor TDS: Payable {fmt(vendorTDSPayableAfterEdits)} · Paid / Filed {fmt(vendorTDSPaidFiled)} · Earlier / Other Pending {fmt(priorOtherTDSPending)} · Total Pending {fmt(vendorTDSPending)}. The final outstanding vendor settlement is blocked until Total Pending becomes zero.
               </div>
             </div>
           </div>}
