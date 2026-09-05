@@ -148,6 +148,10 @@ export default function PaymentTracker(){
   const[billFile,setBillFile]=useState(null);
   const[showMore,setShowMore]=useState(false);
   const[search,setSearch]=useState("");
+  const[filterVendor,setFilterVendor]=useState("");
+  const[filterStatus,setFilterStatus]=useState("");
+  const[fromDate,setFromDate]=useState("");
+  const[toDate,setToDate]=useState("");
 
   const[batchOpen,setBatchOpen]=useState(false);
   const[batchVendor,setBatchVendor]=useState("");
@@ -213,9 +217,46 @@ export default function PaymentTracker(){
     [rows,form.BillNo,form.VendorID,form.VendorName,editId]
   );
 
-  const filtered=rows.filter(r=>
-    !search||[r.VendorName,r.BillNo,r.Description].some(v=>norm(v).includes(norm(search)))
-  );
+  const vendorNames=useMemo(()=>[...new Set(
+    rows.map(r=>String(r.VendorName||"").trim()).filter(Boolean)
+  )].sort((a,b)=>a.localeCompare(b)),[rows]);
+
+  const statusNames=useMemo(()=>[...new Set(
+    rows.map(r=>String(r.Status||"").trim()).filter(Boolean)
+  )].sort((a,b)=>a.localeCompare(b)),[rows]);
+
+  const filtered=useMemo(()=>rows.filter(r=>{
+    if(filterVendor&&norm(r.VendorName)!==norm(filterVendor))return false;
+    if(filterStatus&&norm(r.Status)!==norm(filterStatus))return false;
+    const billDate=String(r.BillDate||"").slice(0,10);
+    if(fromDate&&billDate&&billDate<fromDate)return false;
+    if(toDate&&billDate&&billDate>toDate)return false;
+    if(search&&![r.VendorName,r.BillNo,r.Description,r.ReferenceNo].some(v=>norm(v).includes(norm(search))))return false;
+    return true;
+  }),[rows,filterVendor,filterStatus,fromDate,toDate,search]);
+
+  const snapshot=useMemo(()=>{
+    const today=new Date().toISOString().slice(0,10);
+    const live=filtered.filter(r=>norm(r.Status)!=="cancelled");
+    const s=live.reduce((a,r)=>{
+      a.bills+=1;
+      a.gross+=num(r.GrossAmount)+roundOffOf(r);
+      a.net+=num(r.NetPayable);
+      a.paid+=num(r.PaidAmount);
+      a.balance+=num(r.BalanceAmount);
+      a.tds+=num(r.TDSAmount);
+      a.tdsPaid+=num(r.TDSDeductedAmount);
+      const due=String(r.DueDate||"").slice(0,10);
+      if(num(r.BalanceAmount)>0.005&&due&&due<today){
+        a.overdue+=num(r.BalanceAmount);
+        a.overdueBills+=1;
+      }
+      return a;
+    },{bills:0,gross:0,net:0,paid:0,balance:0,tds:0,tdsPaid:0,overdue:0,overdueBills:0});
+    s.tdsPending=Math.max(s.tds-s.tdsPaid,0);
+    s.cancelled=filtered.filter(r=>norm(r.Status)==="cancelled").length;
+    return s;
+  },[filtered]);
 
   const batchHistory=useMemo(()=>{
     const groups={};
@@ -885,45 +926,105 @@ export default function PaymentTracker(){
 
     {error&&<div style={{...card,color:"var(--danger)"}}>{error}</div>}
 
-    <div style={card}>
-      <input
-        style={input}
-        placeholder="Search vendor, bill no or description"
-        value={search}
-        onChange={e=>setSearch(e.target.value)}
-      />
+    <div style={{...card,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:".7rem",alignItems:"end"}}>
+      <div>
+        <label style={label}>Vendor</label>
+        <select style={input} value={filterVendor} onChange={e=>setFilterVendor(e.target.value)}>
+          <option value="">All vendors</option>
+          {vendorNames.map(x=><option key={x} value={x}>{x}</option>)}
+        </select>
+      </div>
+      <div>
+        <label style={label}>Status</label>
+        <select style={input} value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+          <option value="">All statuses</option>
+          {statusNames.map(x=><option key={x} value={x}>{x}</option>)}
+          {!statusNames.includes("Pending")&&<option>Pending</option>}
+          {!statusNames.includes("Part Paid")&&<option>Part Paid</option>}
+          {!statusNames.includes("Paid")&&<option>Paid</option>}
+          {!statusNames.includes("Cancelled")&&<option>Cancelled</option>}
+        </select>
+      </div>
+      <div>
+        <label style={label}>From bill date</label>
+        <input style={input} type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)}/>
+      </div>
+      <div>
+        <label style={label}>To bill date</label>
+        <input style={input} type="date" min={fromDate||undefined} value={toDate} onChange={e=>setToDate(e.target.value)}/>
+      </div>
+      <div style={{gridColumn:"span 2"}}>
+        <label style={label}>Search</label>
+        <input
+          style={input}
+          placeholder="Bill no, description, UTR..."
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+        />
+      </div>
+      <div>
+        <button style={btn("ghost")} onClick={()=>{setFilterVendor("");setFilterStatus("");setFromDate("");setToDate("");setSearch("")}}>Reset</button>
+      </div>
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".7rem"}}>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>{filterVendor?"VENDOR":"FILTERED"} BILLS</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{snapshot.bills}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TOTAL BILLED</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.gross)}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>NET PAYABLE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.net)}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>PAID</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.paid)}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>PENDING</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.balance)}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>OVERDUE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.overdue)}<div style={{fontSize:".7rem",fontWeight:600,color:"var(--muted)"}}>{snapshot.overdueBills} bill(s)</div></div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TDS PENDING</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.tdsPending)}</div></div>
     </div>
 
     <div style={{...card,padding:0,overflowX:"auto"}}>
       <table>
         <thead>
           <tr>
-            <th>Vendor</th><th>Bill</th><th>Date</th><th>Gross</th><th>TCS</th><th>TDS</th>
+            <th>Vendor</th><th>Bill</th><th>Date</th><th>Due</th><th>Gross</th><th>TCS</th><th>TDS</th>
             <th>Round Off</th><th>Net</th><th>Paid</th><th>Balance</th><th>Status</th><th></th>
           </tr>
         </thead>
         <tbody>
-          {filtered.map(r=><tr key={r.PayableID}>
+          {filtered.map(r=>{
+            const today=new Date().toISOString().slice(0,10);
+            const due=String(r.DueDate||"").slice(0,10);
+            const overdue=num(r.BalanceAmount)>0.005&&due&&due<today;
+            return <tr key={r.PayableID}>
             <td><strong>{r.VendorName}</strong></td>
             <td>{r.BillNo||"—"}</td>
             <td>{formatDate(r.BillDate)}</td>
+            <td style={overdue?{color:"var(--danger)",fontWeight:700}:undefined}>{due?formatDate(r.DueDate):"—"}</td>
             <td>{fmt(r.GrossAmount)}</td>
             <td>{fmt(r.TCSAmount)}</td>
             <td>{fmt(r.TDSAmount)}</td>
             <td>{fmt(r.RoundOffAmount||0)}</td>
             <td><strong>{fmt(r.NetPayable)}</strong></td>
             <td>{fmt(r.PaidAmount)}</td>
-            <td>{fmt(r.BalanceAmount)}</td>
+            <td><strong>{fmt(r.BalanceAmount)}</strong></td>
             <td><Badge value={r.Status}/></td>
             <td>
               <button style={btn("ghost")} onClick={()=>edit(r)}>Edit</button>{" "}
               <button style={{...btn("ghost"),color:"var(--danger)"}} onClick={()=>remove(r)}>Delete</button>
             </td>
-          </tr>)}
+          </tr>})}
           {!filtered.length&&<tr>
-            <td colSpan="12" style={{padding:"2rem",textAlign:"center"}}>No bills</td>
+            <td colSpan="13" style={{padding:"2rem",textAlign:"center"}}>No bills</td>
           </tr>}
         </tbody>
+        {filtered.length>0&&<tfoot>
+          <tr>
+            <td colSpan="4"><strong>Filtered total{filterVendor?` · ${filterVendor}`:""}</strong></td>
+            <td><strong>{fmt(snapshot.gross)}</strong></td>
+            <td></td>
+            <td><strong>{fmt(snapshot.tds)}</strong></td>
+            <td></td>
+            <td><strong>{fmt(snapshot.net)}</strong></td>
+            <td><strong>{fmt(snapshot.paid)}</strong></td>
+            <td><strong>{fmt(snapshot.balance)}</strong></td>
+            <td colSpan="2"></td>
+          </tr>
+        </tfoot>}
       </table>
     </div>
 
