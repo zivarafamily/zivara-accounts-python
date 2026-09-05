@@ -103,6 +103,7 @@ function sameVendorTransaction(tx,vendorName){
 
 const BATCH_META_PREFIX="[[BATCH_SETTLEMENT_V2:";
 const TDS_PAYMENT_META_PREFIX="[[TDS_PAYMENT_V1:";
+const TDS_QUARTER_META_PREFIX="[[TDS_QUARTERLY_V2:";
 const META_SUFFIX="]]";
 function readMeta(notes,prefix){
   const text=String(notes||"");
@@ -135,6 +136,39 @@ function vendorLiabilityOf(r){
 function batchMetaPaidOf(r){
   const meta=readMeta(r.Notes,BATCH_META_PREFIX);
   return meta?num(meta.bankAllocated):null;
+}
+
+function fyStartOf(value){
+  const s=String(value||"").slice(0,10);
+  const m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m)return null;
+  const y=Number(m[1]),month=Number(m[2]);
+  return month>=4?y:y-1;
+}
+function fyLabel(start){
+  return start?`${start}-${String(start+1).slice(-2)}`:"—";
+}
+function quarterOf(value){
+  const s=String(value||"").slice(0,10);
+  const m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m)return "";
+  const month=Number(m[2]);
+  if(month>=4&&month<=6)return "Q1";
+  if(month>=7&&month<=9)return "Q2";
+  if(month>=10&&month<=12)return "Q3";
+  return "Q4";
+}
+function tdsSectionLabel(section){
+  const hit=TDS_SECTIONS.find(x=>x.section===section);
+  return hit?.label||section||"No section";
+}
+function escXml(v){
+  return String(v??"")
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&apos;");
 }
 
 export default function PaymentTracker(){
@@ -176,6 +210,21 @@ export default function PaymentTracker(){
   const[batchError,setBatchError]=useState("");
   const[batchHistoryOpen,setBatchHistoryOpen]=useState(false);
   const[batchHistoryDeleting,setBatchHistoryDeleting]=useState("");
+
+  const currentFYStart=fyStartOf(new Date().toISOString().slice(0,10))||new Date().getFullYear();
+  const currentQuarter=quarterOf(new Date().toISOString().slice(0,10))||"Q1";
+  const[tdsRegisterOpen,setTdsRegisterOpen]=useState(false);
+  const[tdsFY,setTdsFY]=useState(currentFYStart);
+  const[tdsQuarter,setTdsQuarter]=useState(currentQuarter);
+  const[tdsVendorFilter,setTdsVendorFilter]=useState("");
+  const[tdsSectionFilter,setTdsSectionFilter]=useState("");
+  const[tdsStatusFilter,setTdsStatusFilter]=useState("");
+  const[tdsRegisterTransactionId,setTdsRegisterTransactionId]=useState("");
+  const[tdsChallanNo,setTdsChallanNo]=useState("");
+  const[tdsChallanDate,setTdsChallanDate]=useState("");
+  const[tdsAllocations,setTdsAllocations]=useState({});
+  const[tdsRegisterSaving,setTdsRegisterSaving]=useState(false);
+  const[tdsRegisterError,setTdsRegisterError]=useState("");
 
   async function load(){
     setError("");
@@ -297,6 +346,149 @@ export default function PaymentTracker(){
     s.cancelled=filtered.filter(r=>norm(r.Status)==="cancelled").length;
     return s;
   },[filtered,bankTransactions]);
+
+
+  const tdsFYOptions=useMemo(()=>{
+    const values=[...new Set(rows
+      .filter(r=>norm(r.Status)!=="cancelled"&&num(r.TDSAmount)>0)
+      .map(r=>fyStartOf(r.BillDate))
+      .filter(Boolean)
+    )].sort((a,b)=>b-a);
+    return values.length?values:[currentFYStart];
+  },[rows,currentFYStart]);
+
+  const tdsQuarterBaseRows=useMemo(()=>rows.filter(r=>
+    norm(r.Status)!=="cancelled"&&
+    num(r.TDSAmount)>0&&
+    fyStartOf(r.BillDate)===Number(tdsFY)&&
+    quarterOf(r.BillDate)===tdsQuarter
+  ),[rows,tdsFY,tdsQuarter]);
+
+  const tdsRegisterVendors=useMemo(()=>[...new Set(
+    tdsQuarterBaseRows.map(r=>String(r.VendorName||"").trim()).filter(Boolean)
+  )].sort((a,b)=>a.localeCompare(b)),[tdsQuarterBaseRows]);
+
+  const tdsRegisterSections=useMemo(()=>[...new Set(
+    tdsQuarterBaseRows.map(r=>String(r.TDSSection||"").trim()).filter(Boolean)
+  )].sort(),[tdsQuarterBaseRows]);
+
+  const tdsQuarterRows=useMemo(()=>tdsQuarterBaseRows.filter(r=>{
+    if(tdsVendorFilter&&norm(r.VendorName)!==norm(tdsVendorFilter))return false;
+    if(tdsSectionFilter&&String(r.TDSSection||"")!==tdsSectionFilter)return false;
+    const payable=num(r.TDSAmount);
+    const paid=Math.min(num(r.TDSDeductedAmount),payable);
+    const pending=Math.max(payable-paid,0);
+    if(tdsStatusFilter==="pending"&&pending<=0.005)return false;
+    if(tdsStatusFilter==="cleared"&&pending>0.005)return false;
+    return true;
+  }),[tdsQuarterBaseRows,tdsVendorFilter,tdsSectionFilter,tdsStatusFilter]);
+
+  const tdsVendorSummary=useMemo(()=>{
+    const groups={};
+    for(const r of tdsQuarterRows){
+      const vendor=String(r.VendorName||"Unknown Vendor").trim()||"Unknown Vendor";
+      const key=norm(vendor);
+      if(!groups[key]){
+        groups[key]={
+          key,vendor,pan:r.VendorPAN||"",bills:0,payable:0,paid:0,pending:0,sections:new Set()
+        };
+      }
+      const g=groups[key];
+      const payable=num(r.TDSAmount);
+      const paid=Math.min(num(r.TDSDeductedAmount),payable);
+      g.bills+=1;
+      g.payable+=payable;
+      g.paid+=paid;
+      g.pending+=Math.max(payable-paid,0);
+      if(r.TDSSection)g.sections.add(r.TDSSection);
+      if(!g.pan&&r.VendorPAN)g.pan=r.VendorPAN;
+    }
+    return Object.values(groups)
+      .map(g=>({...g,sections:[...g.sections]}))
+      .sort((a,b)=>b.pending-a.pending||a.vendor.localeCompare(b.vendor));
+  },[tdsQuarterRows]);
+
+  const tdsQuarterTotals=useMemo(()=>tdsVendorSummary.reduce((a,g)=>{
+    a.vendors+=1;a.bills+=g.bills;a.payable+=g.payable;a.paid+=g.paid;a.pending+=g.pending;
+    return a;
+  },{vendors:0,bills:0,payable:0,paid:0,pending:0}),[tdsVendorSummary]);
+
+  const tdsTransactionUsage=useMemo(()=>{
+    const usage={};
+    for(const r of rows){
+      const quarterly=readMeta(r.Notes,TDS_QUARTER_META_PREFIX);
+      for(const p of (Array.isArray(quarterly?.payments)?quarterly.payments:[])){
+        const id=String(p.transactionId||"").trim();
+        if(id)usage[id]=(usage[id]||0)+num(p.amount);
+      }
+      const legacy=readMeta(r.Notes,TDS_PAYMENT_META_PREFIX);
+      const legacyId=String(legacy?.transactionId||"").trim();
+      if(legacyId)usage[legacyId]=(usage[legacyId]||0)+num(legacy.billPaidFiled);
+    }
+    return usage;
+  },[rows]);
+
+  const tdsRegisterTransactions=useMemo(()=>bankTransactions
+    .filter(tx=>num(tx.AmountOut)>0)
+    .map(tx=>({...tx,_tdsUsed:tdsTransactionUsage[tx.EntryID]||0,_tdsAvailable:Math.max(num(tx.AmountOut)-(tdsTransactionUsage[tx.EntryID]||0),0)}))
+    .sort((a,b)=>String(b.Date||"").localeCompare(String(a.Date||""))),[bankTransactions,tdsTransactionUsage]);
+
+  const tdsRegisterTransaction=tdsRegisterTransactions.find(x=>x.EntryID===tdsRegisterTransactionId);
+  const tdsRegisterAllocationTotal=Object.values(tdsAllocations).reduce((s,v)=>s+num(v),0);
+
+  const tdsPaymentHistory=useMemo(()=>{
+    const groups={};
+    for(const r of rows){
+      const q=readMeta(r.Notes,TDS_QUARTER_META_PREFIX);
+      for(const p of (Array.isArray(q?.payments)?q.payments:[])){
+        if(Number(p.fyStart)!==Number(tdsFY)||String(p.quarter||"")!==tdsQuarter)continue;
+        const key=[
+          p.transactionId||"",p.challanNo||p.reference||"",p.challanDate||p.date||""
+        ].join("|");
+        if(!groups[key]){
+          groups[key]={
+            key,date:p.challanDate||p.date||"",challan:p.challanNo||p.reference||"",
+            transactionId:p.transactionId||"",amount:0,vendors:new Set(),bills:0,legacy:false
+          };
+        }
+        groups[key].amount+=num(p.amount);
+        groups[key].vendors.add(p.vendor||r.VendorName||"");
+        groups[key].bills+=1;
+      }
+      const legacy=readMeta(r.Notes,TDS_PAYMENT_META_PREFIX);
+      if(
+        legacy&&
+        fyStartOf(r.BillDate)===Number(tdsFY)&&
+        quarterOf(r.BillDate)===tdsQuarter&&
+        num(legacy.billPaidFiled)>0
+      ){
+        const key=`legacy|${legacy.transactionId||legacy.reference||""}|${legacy.date||""}`;
+        if(!groups[key]){
+          groups[key]={
+            key,date:legacy.date||"",challan:legacy.reference||"Legacy TDS mark",
+            transactionId:legacy.transactionId||"",amount:0,vendors:new Set(),bills:0,legacy:true
+          };
+        }
+        groups[key].amount+=num(legacy.billPaidFiled);
+        groups[key].vendors.add(r.VendorName||"");
+        groups[key].bills+=1;
+      }
+    }
+    return Object.values(groups)
+      .map(g=>({...g,vendors:[...g.vendors].filter(Boolean)}))
+      .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
+  },[rows,tdsFY,tdsQuarter]);
+
+  useEffect(()=>{
+    if(tdsRegisterOpen&&!tdsFYOptions.includes(Number(tdsFY))){
+      setTdsFY(tdsFYOptions[0]||currentFYStart);
+    }
+  },[tdsRegisterOpen,tdsFYOptions,tdsFY,currentFYStart]);
+
+  useEffect(()=>{
+    setTdsAllocations({});
+    setTdsRegisterError("");
+  },[tdsFY,tdsQuarter,tdsVendorFilter,tdsSectionFilter,tdsStatusFilter]);
 
   const batchHistory=useMemo(()=>{
     const groups={};
@@ -534,6 +726,207 @@ export default function PaymentTracker(){
     const next={};
     for(const r of selectedBatchBills)next[r.PayableID]=String(num(r.TDSAmount));
     setBatchTDSByBill(next);
+  }
+
+
+  function chooseTDSRegisterTransaction(entryId){
+    setTdsRegisterTransactionId(entryId);
+    const tx=tdsRegisterTransactions.find(x=>x.EntryID===entryId);
+    if(tx){
+      if(!tdsChallanDate)setTdsChallanDate(String(tx.Date||"").slice(0,10));
+      if(!tdsChallanNo)setTdsChallanNo(tx.ReferenceID||tx.EntryID||"");
+    }
+    setTdsRegisterError("");
+  }
+
+  function fillTDSVendorPending(key){
+    const g=tdsVendorSummary.find(x=>x.key===key);
+    if(!g)return;
+    setTdsAllocations(prev=>({...prev,[key]:g.pending.toFixed(2)}));
+  }
+
+  function fillAllTDSPending(){
+    const next={};
+    let available=tdsRegisterTransaction?num(tdsRegisterTransaction._tdsAvailable):Infinity;
+    for(const g of tdsVendorSummary){
+      if(available<=0.005)break;
+      const amount=Math.min(g.pending,available);
+      if(amount>0.005){
+        next[g.key]=amount.toFixed(2);
+        available-=amount;
+      }
+    }
+    setTdsAllocations(next);
+  }
+
+  function exportQuarterlyTDSExcel(){
+    const vendorRows=tdsVendorSummary;
+    const invoiceRows=[...tdsQuarterRows].sort((a,b)=>
+      String(a.VendorName||"").localeCompare(String(b.VendorName||""))||
+      String(a.BillDate||"").localeCompare(String(b.BillDate||""))||
+      String(a.BillNo||"").localeCompare(String(b.BillNo||""))
+    );
+
+    const cell=(value,type="String",style="")=>`<Cell${style?` ss:StyleID="${style}"`:""}><Data ss:Type="${type}">${type==="String"?escXml(value):value}</Data></Cell>`;
+    const row=cells=>`<Row>${cells.join("")}</Row>`;
+    const title=`Zivara TDS Register · FY ${fyLabel(Number(tdsFY))} · ${tdsQuarter}`;
+    const filterText=[
+      tdsVendorFilter?`Vendor: ${tdsVendorFilter}`:"All vendors",
+      tdsSectionFilter?`Section: ${tdsSectionLabel(tdsSectionFilter)}`:"All sections",
+      tdsStatusFilter?`Status: ${tdsStatusFilter}`:"All statuses"
+    ].join(" · ");
+
+    const vendorSheet=[
+      row([cell(title,"String","Title")]),
+      row([cell(filterText)]),
+      row([cell("TDS Payable","String","Hdr"),cell(tdsQuarterTotals.payable,"Number","Money"),cell("TDS Paid / Filed","String","Hdr"),cell(tdsQuarterTotals.paid,"Number","Money"),cell("TDS Pending","String","Hdr"),cell(tdsQuarterTotals.pending,"Number","Money")]),
+      row([cell("Vendor","String","Hdr"),cell("PAN","String","Hdr"),cell("TDS Section(s)","String","Hdr"),cell("Bills","String","Hdr"),cell("TDS Payable","String","Hdr"),cell("TDS Paid / Filed","String","Hdr"),cell("TDS Pending","String","Hdr")]),
+      ...vendorRows.map(g=>row([
+        cell(g.vendor),cell(g.pan),cell(g.sections.map(tdsSectionLabel).join(" | ")),
+        cell(g.bills,"Number"),cell(g.payable,"Number","Money"),cell(g.paid,"Number","Money"),cell(g.pending,"Number","Money")
+      ]))
+    ].join("");
+
+    const invoiceSheet=[
+      row([cell(title,"String","Title")]),
+      row([cell(filterText)]),
+      row([cell("Vendor","String","Hdr"),cell("PAN","String","Hdr"),cell("Bill No","String","Hdr"),cell("Bill Date","String","Hdr"),cell("TDS Section","String","Hdr"),cell("TDS Rate %","String","Hdr"),cell("Taxable","String","Hdr"),cell("Invoice Total","String","Hdr"),cell("TDS Payable","String","Hdr"),cell("TDS Paid / Filed","String","Hdr"),cell("TDS Pending","String","Hdr"),cell("Challan No","String","Hdr"),cell("Challan Date","String","Hdr")]),
+      ...invoiceRows.map(r=>{
+        const payable=num(r.TDSAmount),paid=Math.min(num(r.TDSDeductedAmount),payable);
+        return row([
+          cell(r.VendorName),cell(r.VendorPAN),cell(r.BillNo),cell(String(r.BillDate||"").slice(0,10)),
+          cell(tdsSectionLabel(r.TDSSection)),cell(num(r.TDSRate),"Number"),cell(num(r.TaxableAmount),"Number","Money"),
+          cell(num(r.GrossAmount)+roundOffOf(r),"Number","Money"),cell(payable,"Number","Money"),
+          cell(paid,"Number","Money"),cell(Math.max(payable-paid,0),"Number","Money"),
+          cell(r.ChallanNo||""),cell(String(r.ChallanDate||"").slice(0,10))
+        ]);
+      })
+    ].join("");
+
+    const historySheet=[
+      row([cell(title,"String","Title")]),
+      row([cell("Payment / challan history for selected quarter")]),
+      row([cell("Date","String","Hdr"),cell("Challan / Reference","String","Hdr"),cell("Transaction ID","String","Hdr"),cell("Vendors","String","Hdr"),cell("Bills","String","Hdr"),cell("TDS Paid / Filed","String","Hdr"),cell("Type","String","Hdr")]),
+      ...tdsPaymentHistory.map(h=>row([
+        cell(h.date),cell(h.challan),cell(h.transactionId),cell(h.vendors.join(", ")),
+        cell(h.bills,"Number"),cell(h.amount,"Number","Money"),cell(h.legacy?"Legacy mark":"Quarterly challan")
+      ]))
+    ].join("");
+
+    const xml=`<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10"/></Style>
+  <Style ss:ID="Title"><Font ss:FontName="Calibri" ss:Size="14" ss:Bold="1"/></Style>
+  <Style ss:ID="Hdr"><Font ss:Bold="1"/><Interior ss:Pattern="Solid" ss:Color="#DCE6F1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>
+  <Style ss:ID="Money"><NumberFormat ss:Format="#,##0.00"/></Style>
+ </Styles>
+ <Worksheet ss:Name="Vendor Summary"><Table>${vendorSheet}</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>4</SplitHorizontal><TopRowBottomPane>4</TopRowBottomPane></WorksheetOptions></Worksheet>
+ <Worksheet ss:Name="Invoice Detail"><Table>${invoiceSheet}</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>3</SplitHorizontal><TopRowBottomPane>3</TopRowBottomPane></WorksheetOptions></Worksheet>
+ <Worksheet ss:Name="Payment History"><Table>${historySheet}</Table></Worksheet>
+</Workbook>`;
+    const blob=new Blob([xml],{type:"application/vnd.ms-excel"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=`TDS_Register_${fyLabel(Number(tdsFY)).replace("-","_")}_${tdsQuarter}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function saveQuarterlyTDSPayment(){
+    setTdsRegisterError("");
+    const tx=tdsRegisterTransaction;
+    if(!tx)return setTdsRegisterError("Select the bank transaction used to pay TDS to Government.");
+    if(!tdsChallanDate)return setTdsRegisterError("Enter Challan / Payment Date.");
+    if(tdsRegisterAllocationTotal<=0)return setTdsRegisterError("Allocate the TDS payment to at least one vendor.");
+    if(tdsRegisterAllocationTotal>num(tx._tdsAvailable)+0.01){
+      return setTdsRegisterError(`Allocation ${fmt(tdsRegisterAllocationTotal)} exceeds unused transaction amount ${fmt(tx._tdsAvailable)}.`);
+    }
+
+    for(const g of tdsVendorSummary){
+      const amount=num(tdsAllocations[g.key]);
+      if(amount>g.pending+0.01){
+        return setTdsRegisterError(`${g.vendor}: allocation ${fmt(amount)} exceeds TDS pending ${fmt(g.pending)}.`);
+      }
+    }
+
+    setTdsRegisterSaving(true);
+    try{
+      for(const g of tdsVendorSummary){
+        let remaining=num(tdsAllocations[g.key]);
+        if(remaining<=0.005)continue;
+
+        const bills=tdsQuarterRows
+          .filter(r=>norm(r.VendorName)===g.key)
+          .sort((a,b)=>
+            String(a.BillDate||"").localeCompare(String(b.BillDate||""))||
+            String(a.BillNo||"").localeCompare(String(b.BillNo||""))
+          );
+
+        for(const r of bills){
+          if(remaining<=0.005)break;
+          const payable=num(r.TDSAmount);
+          const already=Math.min(num(r.TDSDeductedAmount),payable);
+          const pending=Math.max(payable-already,0);
+          if(pending<=0.005)continue;
+
+          const applied=Math.min(pending,remaining);
+          remaining-=applied;
+          const existing=readMeta(r.Notes,TDS_QUARTER_META_PREFIX);
+          const payments=Array.isArray(existing?.payments)?[...existing.payments]:[];
+          payments.push({
+            version:2,
+            fyStart:Number(tdsFY),
+            financialYear:fyLabel(Number(tdsFY)),
+            quarter:tdsQuarter,
+            vendor:r.VendorName||"",
+            pan:r.VendorPAN||"",
+            section:r.TDSSection||"",
+            billNo:r.BillNo||"",
+            transactionId:tx.EntryID||"",
+            bankAccount:tx.BankAccountID||"",
+            reference:tx.ReferenceID||tx.EntryID||"",
+            transactionAmount:num(tx.AmountOut),
+            challanNo:tdsChallanNo||tx.ReferenceID||tx.EntryID||"",
+            challanDate:tdsChallanDate,
+            date:String(tx.Date||tdsChallanDate).slice(0,10),
+            amount:Math.round(applied*100)/100
+          });
+
+          await apiPost("updateLLPPayable",{
+            PayableID:r.PayableID,
+            TDSAmount:payable,
+            TDSDeductedAmount:Math.round((already+applied)*100)/100,
+            TDSRate:r.TDSRate,
+            TDSSection:r.TDSSection,
+            ChallanNo:tdsChallanNo||r.ChallanNo||"",
+            ChallanDate:tdsChallanDate||r.ChallanDate||"",
+            Notes:upsertMeta(r.Notes,TDS_QUARTER_META_PREFIX,{payments})
+          });
+        }
+
+        if(remaining>0.01){
+          throw new Error(`${g.vendor}: ${fmt(remaining)} could not be allocated to invoice TDS.`);
+        }
+      }
+
+      await load();
+      setTdsAllocations({});
+      setTdsRegisterTransactionId("");
+      setTdsChallanNo("");
+      setTdsChallanDate("");
+    }catch(e){
+      setTdsRegisterError(e.message||"Unable to save TDS challan allocation.");
+    }finally{
+      setTdsRegisterSaving(false);
+    }
   }
 
   async function markTDSPaidFiled(){
@@ -958,6 +1351,7 @@ export default function PaymentTracker(){
         </p>
       </div>
       <div style={{display:"flex",gap:".5rem",flexWrap:"wrap"}}>
+        <button style={btn("ghost")} onClick={()=>setTdsRegisterOpen(true)}>TDS Quarterly Register</button>
         <button style={btn("ghost")} onClick={()=>setBatchHistoryOpen(true)}>Batch History · {batchHistory.length}</button>
         <button style={btn("ghost")} onClick={openBatchSettlement}>Batch Settlement</button>
         <button style={btn()} onClick={add}>+ Add Bill</button>
@@ -1014,7 +1408,9 @@ export default function PaymentTracker(){
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>ACTUAL PAID / ALLOCATED</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.paid)}</div></div>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>VENDOR BALANCE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.balance)}</div></div>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>OVERDUE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.overdue)}<div style={{fontSize:".7rem",fontWeight:600,color:"var(--muted)"}}>{snapshot.overdueBills} bill(s)</div></div></div>
-      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TDS PENDING</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.tdsPending)}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TDS PAYABLE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.tds)}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TDS PAID / FILED</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.tdsPaid)}</div></div>
+      <div style={{...card,borderColor:snapshot.tdsPending>0.005?"#f59e0b66":"#22c55e66"}}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TDS PENDING</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem",color:snapshot.tdsPending>0.005?"var(--warning)":"var(--success)"}}>{fmt(snapshot.tdsPending)}</div></div>
     </div>
 
     <div style={{...card,padding:0,overflowX:"auto"}}>
@@ -1069,6 +1465,218 @@ export default function PaymentTracker(){
         </tfoot>}
       </table>
     </div>
+
+    {tdsRegisterOpen&&<div
+      onMouseDown={e=>{if(e.target===e.currentTarget)setTdsRegisterOpen(false)}}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,.72)",zIndex:98,padding:"1rem",overflowY:"auto"}}
+    >
+      <div style={{...card,maxWidth:1280,margin:"2vh auto 0"}}>
+        <div style={{display:"flex",justifyContent:"space-between",gap:"1rem",alignItems:"flex-start",flexWrap:"wrap"}}>
+          <div>
+            <h3 style={{margin:0}}>Quarterly TDS Register</h3>
+            <div style={{fontSize:".75rem",color:"var(--muted)",marginTop:".25rem",maxWidth:760,lineHeight:1.5}}>
+              Reconcile invoice TDS vendor-wise for quarterly filing. TDS Payable comes from Vendor Bills; Paid / Filed changes only when you allocate an actual Government TDS payment / challan below.
+            </div>
+          </div>
+          <div style={{display:"flex",gap:".5rem",flexWrap:"wrap"}}>
+            <button type="button" style={btn("ghost")} onClick={exportQuarterlyTDSExcel}>Export Excel</button>
+            <button type="button" style={btn("ghost")} onClick={()=>setTdsRegisterOpen(false)}>Close</button>
+          </div>
+        </div>
+
+        {tdsRegisterError&&<div style={{...card,color:"var(--danger)",marginTop:".8rem"}}>{tdsRegisterError}</div>}
+
+        <div style={{...card,marginTop:".8rem",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:".65rem",alignItems:"end"}}>
+          <div>
+            <label style={label}>Financial Year</label>
+            <select style={input} value={tdsFY} onChange={e=>setTdsFY(Number(e.target.value))}>
+              {tdsFYOptions.map(y=><option key={y} value={y}>FY {fyLabel(y)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={label}>Quarter</label>
+            <select style={input} value={tdsQuarter} onChange={e=>setTdsQuarter(e.target.value)}>
+              <option value="Q1">Q1 · Apr–Jun</option>
+              <option value="Q2">Q2 · Jul–Sep</option>
+              <option value="Q3">Q3 · Oct–Dec</option>
+              <option value="Q4">Q4 · Jan–Mar</option>
+            </select>
+          </div>
+          <div>
+            <label style={label}>Vendor</label>
+            <select style={input} value={tdsVendorFilter} onChange={e=>setTdsVendorFilter(e.target.value)}>
+              <option value="">All vendors</option>
+              {tdsRegisterVendors.map(v=><option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={label}>TDS Section</label>
+            <select style={input} value={tdsSectionFilter} onChange={e=>setTdsSectionFilter(e.target.value)}>
+              <option value="">All sections</option>
+              {tdsRegisterSections.map(s=><option key={s} value={s}>{tdsSectionLabel(s)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={label}>TDS Status</label>
+            <select style={input} value={tdsStatusFilter} onChange={e=>setTdsStatusFilter(e.target.value)}>
+              <option value="">All</option>
+              <option value="pending">Pending</option>
+              <option value="cleared">Fully Paid / Filed</option>
+            </select>
+          </div>
+          <div>
+            <button type="button" style={btn("ghost")} onClick={()=>{setTdsVendorFilter("");setTdsSectionFilter("");setTdsStatusFilter("")}}>Reset TDS Filters</button>
+          </div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".65rem",marginTop:".8rem"}}>
+          <div style={card}><div style={label}>Vendors</div><strong style={{fontSize:"1.15rem"}}>{tdsQuarterTotals.vendors}</strong></div>
+          <div style={card}><div style={label}>Bills With TDS</div><strong style={{fontSize:"1.15rem"}}>{tdsQuarterTotals.bills}</strong></div>
+          <div style={card}><div style={label}>TDS Payable</div><strong style={{fontSize:"1.15rem"}}>{fmt(tdsQuarterTotals.payable)}</strong></div>
+          <div style={card}><div style={label}>TDS Paid / Filed</div><strong style={{fontSize:"1.15rem",color:"var(--success)"}}>{fmt(tdsQuarterTotals.paid)}</strong></div>
+          <div style={{...card,borderColor:tdsQuarterTotals.pending>0.005?"#f59e0b66":"#22c55e66"}}><div style={label}>TDS Pending</div><strong style={{fontSize:"1.15rem",color:tdsQuarterTotals.pending>0.005?"var(--warning)":"var(--success)"}}>{fmt(tdsQuarterTotals.pending)}</strong></div>
+          <div style={card}><div style={label}>Check</div><strong style={{fontSize:"1.05rem"}}>{fmt(tdsQuarterTotals.payable-tdsQuarterTotals.paid)}</strong><div style={{fontSize:".65rem",color:"var(--muted)"}}>Payable − Paid = Pending</div></div>
+        </div>
+
+        <div style={{...card,marginTop:".8rem",padding:0,overflowX:"auto"}}>
+          <div style={{padding:".75rem .85rem",display:"flex",justifyContent:"space-between",alignItems:"center",gap:"1rem",flexWrap:"wrap",borderBottom:"1px solid var(--border)"}}>
+            <div>
+              <strong>Vendor-wise TDS Reconciliation</strong>
+              <div style={{fontSize:".7rem",color:"var(--muted)",marginTop:".2rem"}}>Allocate a Government TDS payment vendor-wise. Partial allocations are allowed.</div>
+            </div>
+            <button type="button" style={btn("ghost")} disabled={!tdsRegisterTransaction} onClick={fillAllTDSPending}>Fill Pending From Available Transaction</button>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Vendor</th><th>PAN</th><th>TDS Section(s)</th><th>Bills</th><th>TDS Payable</th><th>Paid / Filed</th><th>Pending</th><th>This Challan Allocation</th><th></th></tr>
+            </thead>
+            <tbody>
+              {tdsVendorSummary.map(g=><tr key={g.key}>
+                <td><strong>{g.vendor}</strong></td>
+                <td>{g.pan||"—"}</td>
+                <td style={{maxWidth:260,whiteSpace:"normal"}}>{g.sections.length?g.sections.map(tdsSectionLabel).join(" · "):"—"}</td>
+                <td>{g.bills}</td>
+                <td>{fmt(g.payable)}</td>
+                <td><strong style={{color:g.paid>0?"var(--success)":"inherit"}}>{fmt(g.paid)}</strong></td>
+                <td><strong style={{color:g.pending>0.005?"var(--warning)":"var(--success)"}}>{fmt(g.pending)}</strong></td>
+                <td>
+                  <input
+                    style={{...input,minWidth:115}}
+                    type="number"
+                    min="0"
+                    max={g.pending}
+                    step=".01"
+                    disabled={g.pending<=0.005}
+                    value={tdsAllocations[g.key]??""}
+                    onChange={e=>setTdsAllocations(prev=>({...prev,[g.key]:e.target.value}))}
+                    placeholder="0.00"
+                  />
+                </td>
+                <td><button type="button" style={btn("ghost")} disabled={g.pending<=0.005} onClick={()=>fillTDSVendorPending(g.key)}>Fill Pending</button></td>
+              </tr>)}
+              {!tdsVendorSummary.length&&<tr><td colSpan="9" style={{padding:"1.5rem",textAlign:"center"}}>No TDS Vendor Bills for this quarter / filter.</td></tr>}
+            </tbody>
+            {tdsVendorSummary.length>0&&<tfoot><tr>
+              <td colSpan="4"><strong>Quarter Total</strong></td>
+              <td><strong>{fmt(tdsQuarterTotals.payable)}</strong></td>
+              <td><strong>{fmt(tdsQuarterTotals.paid)}</strong></td>
+              <td><strong>{fmt(tdsQuarterTotals.pending)}</strong></td>
+              <td><strong>{fmt(tdsRegisterAllocationTotal)}</strong></td>
+              <td></td>
+            </tr></tfoot>}
+          </table>
+        </div>
+
+        <div style={{...card,marginTop:".8rem",borderColor:tdsQuarterTotals.pending>0.005?"#f59e0b55":"#22c55e55"}}>
+          <div style={{fontWeight:800,marginBottom:".2rem"}}>Mark Government TDS Payment / Challan</div>
+          <div style={{fontSize:".72rem",color:"var(--muted)",marginBottom:".65rem"}}>
+            Select the actual bank debit used for TDS remittance, enter challan details, then allocate the payment across vendors above. This does not change the vendor bank payment.
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"minmax(260px,2fr) minmax(160px,1fr) minmax(160px,1fr)",gap:".65rem",alignItems:"end"}}>
+            <div>
+              <label style={label}>Existing Bank Transaction *</label>
+              <select style={input} value={tdsRegisterTransactionId} onChange={e=>chooseTDSRegisterTransaction(e.target.value)}>
+                <option value="">— Select Government TDS payment bank debit —</option>
+                {tdsRegisterTransactions.map(tx=><option key={tx.EntryID} value={tx.EntryID}>
+                  {formatDate(tx.Date)} · {fmt(tx._tdsAvailable)} available of {fmt(tx.AmountOut)} · {tx.ReferenceID||tx.EntryID} · {tx.LedgerName||""} · {tx.Description||""}
+                </option>)}
+              </select>
+              {tdsRegisterTransaction&&<small style={{color:"var(--muted)"}}>
+                Previously allocated to TDS {fmt(tdsRegisterTransaction._tdsUsed)} · Available {fmt(tdsRegisterTransaction._tdsAvailable)}
+              </small>}
+            </div>
+            <div>
+              <label style={label}>Challan / Reference No</label>
+              <input style={input} value={tdsChallanNo} onChange={e=>setTdsChallanNo(e.target.value)} placeholder="CIN / challan / bank ref"/>
+            </div>
+            <div>
+              <label style={label}>Challan / Payment Date *</label>
+              <input style={input} type="date" value={tdsChallanDate} onChange={e=>setTdsChallanDate(e.target.value)}/>
+            </div>
+          </div>
+
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"1rem",marginTop:".75rem",flexWrap:"wrap"}}>
+            <div style={{fontSize:".76rem"}}>
+              Allocation <strong>{fmt(tdsRegisterAllocationTotal)}</strong>
+              {tdsRegisterTransaction&&<> · Transaction available <strong>{fmt(tdsRegisterTransaction._tdsAvailable)}</strong></>}
+              · Quarter pending <strong>{fmt(tdsQuarterTotals.pending)}</strong>
+            </div>
+            <button
+              type="button"
+              style={btn()}
+              disabled={tdsRegisterSaving||!tdsRegisterTransaction||tdsRegisterAllocationTotal<=0}
+              onClick={saveQuarterlyTDSPayment}
+            >
+              {tdsRegisterSaving?"Saving TDS...":"Mark TDS Paid / Filed"}
+            </button>
+          </div>
+        </div>
+
+        <div style={{...card,marginTop:".8rem",padding:0,overflowX:"auto"}}>
+          <div style={{padding:".75rem .85rem",borderBottom:"1px solid var(--border)"}}>
+            <strong>TDS Payment / Challan History · FY {fyLabel(Number(tdsFY))} · {tdsQuarter}</strong>
+          </div>
+          <table>
+            <thead><tr><th>Date</th><th>Challan / Reference</th><th>Transaction</th><th>Vendors</th><th>Bills</th><th>TDS Paid / Filed</th><th>Type</th></tr></thead>
+            <tbody>
+              {tdsPaymentHistory.map(h=><tr key={h.key}>
+                <td>{h.date?formatDate(h.date):"—"}</td>
+                <td>{h.challan||"—"}</td>
+                <td style={{maxWidth:220,whiteSpace:"normal",overflowWrap:"anywhere"}}>{h.transactionId||"—"}</td>
+                <td style={{maxWidth:300,whiteSpace:"normal"}}>{h.vendors.join(", ")||"—"}</td>
+                <td>{h.bills}</td>
+                <td><strong>{fmt(h.amount)}</strong></td>
+                <td>{h.legacy?"Legacy mark":"Quarterly challan"}</td>
+              </tr>)}
+              {!tdsPaymentHistory.length&&<tr><td colSpan="7" style={{padding:"1.4rem",textAlign:"center"}}>No TDS payments / challans recorded for this quarter.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{...card,marginTop:".8rem",padding:0,overflowX:"auto"}}>
+          <div style={{padding:".75rem .85rem",borderBottom:"1px solid var(--border)"}}>
+            <strong>Invoice Detail</strong>
+          </div>
+          <table>
+            <thead><tr><th>Vendor</th><th>PAN</th><th>Bill</th><th>Date</th><th>Section</th><th>Rate</th><th>Taxable</th><th>Invoice Total</th><th>TDS Payable</th><th>Paid / Filed</th><th>Pending</th><th>Challan</th></tr></thead>
+            <tbody>
+              {tdsQuarterRows.map(r=>{
+                const payable=num(r.TDSAmount),paid=Math.min(num(r.TDSDeductedAmount),payable),pending=Math.max(payable-paid,0);
+                return <tr key={r.PayableID}>
+                  <td><strong>{r.VendorName}</strong></td><td>{r.VendorPAN||"—"}</td><td>{r.BillNo||"—"}</td><td>{formatDate(r.BillDate)}</td>
+                  <td>{tdsSectionLabel(r.TDSSection)}</td><td>{num(r.TDSRate).toFixed(2)}%</td><td>{fmt(r.TaxableAmount)}</td>
+                  <td>{fmt(num(r.GrossAmount)+roundOffOf(r))}</td><td>{fmt(payable)}</td><td>{fmt(paid)}</td>
+                  <td><strong style={{color:pending>0.005?"var(--warning)":"var(--success)"}}>{fmt(pending)}</strong></td>
+                  <td>{r.ChallanNo||"—"}</td>
+                </tr>;
+              })}
+              {!tdsQuarterRows.length&&<tr><td colSpan="12" style={{padding:"1.4rem",textAlign:"center"}}>No invoice TDS detail for the selected quarter.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>}
 
     {batchHistoryOpen&&<div
       onMouseDown={e=>{if(e.target===e.currentTarget)setBatchHistoryOpen(false)}}
@@ -1281,7 +1889,7 @@ export default function PaymentTracker(){
                 </button>
               </div>
               <div style={{fontSize:".72rem",color:"var(--muted)",marginTop:".5rem"}}>
-                Cumulative vendor TDS: Payable {fmt(vendorTDSPayableAfterEdits)} · Paid / Filed {fmt(vendorTDSPaidFiled)} · Earlier / Other Pending {fmt(priorOtherTDSPending)} · Total Pending {fmt(vendorTDSPending)}. The final outstanding vendor settlement is blocked until Total Pending becomes zero.
+                Cumulative vendor TDS: Payable {fmt(vendorTDSPayableAfterEdits)} · Paid / Filed {fmt(vendorTDSPaidFiled)} · Earlier / Other Pending {fmt(priorOtherTDSPending)} · Total Pending {fmt(vendorTDSPending)}. For quarterly challan allocation and CA reconciliation, use <button type="button" onClick={()=>{setBatchOpen(false);setTdsRegisterOpen(true)}} style={{border:0,background:"transparent",padding:0,color:"var(--accent)",cursor:"pointer",fontWeight:700}}>TDS Quarterly Register</button>.
               </div>
             </div>
           </div>}
