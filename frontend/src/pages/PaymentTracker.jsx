@@ -1009,7 +1009,7 @@ export default function PaymentTracker(){
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".7rem"}}>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>{filterVendor?"VENDOR":"FILTERED"} BILLS</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{snapshot.bills}</div></div>
-      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TOTAL BILLED</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.gross)}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TOTAL INVOICE AMOUNT</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.gross)}</div></div>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>NET PAYABLE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.net)}</div></div>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>ACTUAL PAID / ALLOCATED</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.paid)}</div></div>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>VENDOR BALANCE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.balance)}</div></div>
@@ -1021,8 +1021,8 @@ export default function PaymentTracker(){
       <table>
         <thead>
           <tr>
-            <th>Vendor</th><th>Bill</th><th>Date</th><th>Due</th><th>Gross</th><th>TCS</th><th>TDS</th>
-            <th>Round Off</th><th>Net</th><th>Paid</th><th>Balance</th><th>Status</th><th></th>
+            <th>Vendor</th><th>Bill</th><th>Date</th><th>Due</th><th>Gross Bill</th><th>TCS</th><th>TDS</th>
+            <th>Round Off</th><th>Invoice Total</th><th>Net Payable</th><th>Paid</th><th>Balance</th><th>Status</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -1038,7 +1038,8 @@ export default function PaymentTracker(){
             <td>{fmt(r.GrossAmount)}</td>
             <td>{fmt(r.TCSAmount)}</td>
             <td>{fmt(r.TDSAmount)}</td>
-            <td>{fmt(r.RoundOffAmount||0)}</td>
+            <td>{fmt(roundOffOf(r))}</td>
+            <td><strong>{fmt(num(r.GrossAmount)+roundOffOf(r))}</strong></td>
             <td><strong>{fmt(r.NetPayable)}</strong></td>
             <td>{fmt(r.PaidAmount)}</td>
             <td><strong>{fmt(r.BalanceAmount)}</strong></td>
@@ -1049,16 +1050,17 @@ export default function PaymentTracker(){
             </td>
           </tr>})}
           {!filtered.length&&<tr>
-            <td colSpan="13" style={{padding:"2rem",textAlign:"center"}}>No bills</td>
+            <td colSpan="14" style={{padding:"2rem",textAlign:"center"}}>No bills</td>
           </tr>}
         </tbody>
         {filtered.length>0&&<tfoot>
           <tr>
             <td colSpan="4"><strong>Filtered total{filterVendor?` · ${filterVendor}`:""}</strong></td>
-            <td><strong>{fmt(snapshot.gross)}</strong></td>
+            <td><strong>{fmt(filtered.filter(r=>norm(r.Status)!=="cancelled").reduce((s,r)=>s+num(r.GrossAmount),0))}</strong></td>
             <td></td>
             <td><strong>{fmt(snapshot.tds)}</strong></td>
             <td></td>
+            <td><strong>{fmt(snapshot.gross)}</strong></td>
             <td><strong>{fmt(snapshot.net)}</strong></td>
             <td><strong>{fmt(snapshot.paid)}</strong></td>
             <td><strong>{fmt(snapshot.balance)}</strong></td>
@@ -1215,7 +1217,7 @@ export default function PaymentTracker(){
           {batchSelected.length>0&&<div style={{padding:".8rem",borderBottom:"1px solid var(--border)",background:"rgba(255,255,255,.02)"}}>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:".55rem"}}>
               <div style={card}><div style={label}>Invoices</div><strong>{batchInvoiceCount}</strong></div>
-              <div style={card}><div style={label}>Invoice Gross</div><strong>{fmt(batchGrossTotal)}</strong></div>
+              <div style={card}><div style={label}>Invoice Total</div><strong>{fmt(batchGrossTotal)}</strong></div>
               <div style={card}><div style={label}>Taxable</div><strong>{fmt(batchTaxableTotal)}</strong></div>
               <div style={card}><div style={label}>GST</div><strong>{fmt(batchGSTTotal)}</strong></div>
               <div style={card}><div style={label}>Selected Batch TDS Payable</div><strong>{fmt(batchExactTDSTotal)}</strong></div>
@@ -1523,9 +1525,10 @@ export default function PaymentTracker(){
               <div>GST Input<br/><strong>{fmt(a.gst)}</strong></div>
               <div>TCS<br/><strong>{fmt(a.tcs)}</strong></div>
               <div>Gross Bill<br/><strong>{fmt(a.gross)}</strong></div>
+              <div>Round Off<br/><strong>{fmt(a.round)}</strong></div>
+              <div>Invoice Total<br/><strong>{fmt(a.gross+a.round)}</strong></div>
               <div>TDS Base<br/><strong>{fmt(a.tdsBase)}</strong></div>
               <div>Less TDS<br/><strong>{fmt(a.tds)}</strong></div>
-              <div>Round Off<br/><strong>{fmt(a.round)}</strong></div>
               <div>Net Payable<br/><strong style={{color:"var(--success)"}}>{fmt(a.net)}</strong></div>
             </div>
 
