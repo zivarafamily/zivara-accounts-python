@@ -5,6 +5,27 @@ import { billingMonthOptions, formatDate } from "../utils/format";
 const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const today=()=>new Date().toISOString().slice(0,10);
 const fyStart="2026-04-01";
+function fyMonthKeys(fromDate,toDate,rows){
+  const fyYearOf=iso=>{
+    const y=Number(String(iso||"").slice(0,4));
+    const m=Number(String(iso||"").slice(5,7));
+    if(!y||!m)return null;
+    return m>=4?y:y-1;
+  };
+  const firstRow=(rows||[]).map(r=>String(r.date||"").slice(0,10)).filter(Boolean).sort()[0]||"";
+  const fyYear=fyYearOf(fromDate)||fyYearOf(fyStart)||fyYearOf(firstRow)||2026;
+  const lastIso=[toDate,...(rows||[]).map(r=>String(r.date||"").slice(0,10))].filter(Boolean).sort().at(-1)||"";
+  const lastFY=fyYearOf(lastIso);
+  const fyCount=Math.max(1,(lastFY&&lastFY>fyYear?lastFY-fyYear+1:1));
+  const keys=[];
+  for(let f=0;f<fyCount;f++){
+    for(let i=0;i<12;i++){
+      const d=new Date(fyYear+f,3+i,1);
+      keys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+    }
+  }
+  return keys;
+}
 const billingMonthFromDate=value=>{
   if(!value)return "";
   const d=new Date(`${value}T00:00:00`);
@@ -1173,6 +1194,57 @@ export default function Expenses(){
 
     const share=value=>analysisTotal>0?((Number(value||0)/analysisTotal)).toFixed(6):"0";
 
+    const fyKeys=fyMonthKeys(fromDate,toDate,analysisRows);
+    const fyCount=Math.max(1,Math.round(fyKeys.length/12));
+    const fyHead=k=>{
+      const lab=MONTHS[Number(k.slice(5,7))-1]||k;
+      return fyCount>1?`${lab}-${k.slice(2,4)}`:lab;
+    };
+    const subMonthMap={};
+    const catMonthMap={};
+    const grandMonthMap={};
+    for(const r of analysisRows){
+      const mk=monthKey(r.date);
+      if(!/^\d{4}-\d{2}$/.test(mk))continue;
+      const cat=r.category||"Unclassified";
+      const sub=r.subCategory||"Unclassified";
+      if(!subMonthMap[cat])subMonthMap[cat]={};
+      if(!subMonthMap[cat][sub])subMonthMap[cat][sub]={};
+      subMonthMap[cat][sub][mk]=(subMonthMap[cat][sub][mk]||0)+Number(r.amount||0);
+      if(!catMonthMap[cat])catMonthMap[cat]={};
+      catMonthMap[cat][mk]=(catMonthMap[cat][mk]||0)+Number(r.amount||0);
+      grandMonthMap[mk]=(grandMonthMap[mk]||0)+Number(r.amount||0);
+    }
+    const moneyOrBlank=(style,value)=>Number(value||0)?cell(style,"Number",value):empty(style);
+    const monthMoneyCells=(style,vals)=>fyKeys.map(k=>moneyOrBlank(style,vals[k]||0)).join("");
+    const catPdfHeader=`${cell("CatPdfHead","String","Category / Subcategory")}${fyKeys.map(k=>cell("CatPdfHeadNum","String",fyHead(k))).join("")}${cell("CatPdfHeadNum","String","Amount (₹)")}`;
+    const catPdfRows=analysisCategoryTotals.map(([category,total],index)=>{
+      const g=categoryDrillData[category]||{subs:{}};
+      const subs=sortedPairs(g.subs);
+      const catRow=`<Row ss:Height="20">
+        ${cell("CatPdfCat","String",`${index+1}  ${category}`)}
+        ${monthMoneyCells("CatPdfCatMoney",catMonthMap[category]||{})}
+        ${cell("CatPdfCatMoney","Number",total)}
+      </Row>`;
+      const subRows=subs.map(([sub,amount],j)=>{
+        const zebra=j%2?"CatPdfSubAlt":"CatPdfSub";
+        const zebraM=j%2?"CatPdfSubAltMoney":"CatPdfSubMoney";
+        return `<Row>
+          ${cell(zebra,"String",`    ${sub||"Unclassified"}`)}
+          ${monthMoneyCells(zebraM,subMonthMap[category]?.[sub]||{})}
+          ${cell(zebraM,"Number",amount)}
+        </Row>`;
+      }).join("");
+      return catRow+subRows;
+    }).join("");
+    const catPdfGrand=`<Row ss:Height="22">
+      ${cell("CatPdfGrand","String","Grand total")}
+      ${monthMoneyCells("CatPdfGrandMoney",grandMonthMap)}
+      ${cell("CatPdfGrandMoney","Number",analysisTotal)}
+    </Row>`;
+    const catPdfColumns=[`<Column ss:Width="200"/>`,...fyKeys.map(()=>`<Column ss:Width="76"/>`),`<Column ss:Width="102"/>`].join("");
+    const catPdfMerge=fyKeys.length+1;
+
     const summaryMonthRows=monthTotals.map(([key,g])=>`<Row>
       ${cell("Text","String",monthLabel(key))}
       ${cell("Money","Number",g.amount)}
@@ -1340,7 +1412,54 @@ export default function Expenses(){
   <Style ss:ID="SubTotalMoney"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#3D5A6C"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
   <Style ss:ID="Tot"><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#FDE4D4" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
   <Style ss:ID="TotMoney"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#FDE4D4" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="CatPdfTitle"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="16" ss:Bold="1" ss:Color="#102D5D"/></Style>
+  <Style ss:ID="CatPdfSubTitle"><Font ss:FontName="Calibri" ss:Size="9" ss:Color="#516078"/></Style>
+  <Style ss:ID="CatPdfHead"><Alignment ss:Horizontal="Left" ss:Vertical="Center" ss:WrapText="1"/><Font ss:FontName="Calibri" ss:Size="8" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#102D5D" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#102D5D"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#102D5D"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#102D5D"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#102D5D"/></Borders></Style>
+  <Style ss:ID="CatPdfHeadNum"><Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="1"/><Font ss:FontName="Calibri" ss:Size="8" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#102D5D" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#102D5D"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#102D5D"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#102D5D"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#102D5D"/></Borders></Style>
+  <Style ss:ID="CatPdfCat"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#102D5D"/><Interior ss:Color="#F0F4F9" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/></Borders></Style>
+  <Style ss:ID="CatPdfCatMoney"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#102D5D"/><Interior ss:Color="#F0F4F9" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/></Borders></Style>
+  <Style ss:ID="CatPdfSub"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="9" ss:Color="#39465A"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/></Borders></Style>
+  <Style ss:ID="CatPdfSubMoney"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="9" ss:Color="#202B3D"/><NumberFormat ss:Format="₹#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/></Borders></Style>
+  <Style ss:ID="CatPdfSubAlt"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="9" ss:Color="#39465A"/><Interior ss:Color="#F7F9FC" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/></Borders></Style>
+  <Style ss:ID="CatPdfSubAltMoney"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="9" ss:Color="#202B3D"/><Interior ss:Color="#F7F9FC" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8DEE8"/></Borders></Style>
+  <Style ss:ID="CatPdfGrand"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#102D5D" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="CatPdfGrandMoney"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#102D5D" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="CatPdfKpiL"><Font ss:FontName="Calibri" ss:Size="8" ss:Bold="1" ss:Color="#68758A"/><Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="CatPdfKpiV"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="14" ss:Bold="1" ss:Color="#102D5D"/><Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
  </Styles>
+ <Worksheet ss:Name="Category Summary">
+  <Table>
+   ${catPdfColumns}
+   <Row ss:Height="26">${merge(catPdfMerge,"CatPdfTitle","String","Zivara Family Office LLP")}</Row>
+   <Row>${merge(catPdfMerge,"CatPdfTitle","String","Partner / Staff Expenses  ·  Category and Subcategory Summary")}</Row>
+   <Row>${merge(catPdfMerge,"CatPdfSubTitle","String",`${filterSummary}  ·  ${analysisRows.length} records  ·  FY Apr–Mar`)}</Row>
+   <Row ss:Height="6"/>
+   <Row>
+    ${cell("CatPdfKpiL","String","GRAND TOTAL")}
+    ${cell("CatPdfKpiV","Number",analysisTotal)}
+    ${cell("CatPdfKpiL","String","RECORDS")}
+    <Cell ss:StyleID="CatPdfKpiV"><Data ss:Type="Number">${analysisRows.length}</Data></Cell>
+   </Row>
+   <Row ss:Height="8"/>
+   <Row ss:Height="22">${catPdfHeader}</Row>
+   ${catPdfRows}
+   ${catPdfGrand}
+   <Row ss:Height="8"/>
+   <Row>${merge(catPdfMerge,"CatPdfSubTitle","String","All amounts are in Indian Rupees (₹). Columns are FY Apr–Mar. Months with no spend are blank. Category rows equal the subcategories beneath them.")}</Row>
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+   <Selected/>
+   <FreezePanes/><FrozenNoSplit/><SplitHorizontal>7</SplitHorizontal><TopRowBottomPane>7</TopRowBottomPane>
+   <PageSetup>
+    <Layout x:Orientation="Landscape" x:CenterHorizontal="1"/>
+    <Header x:Margin="0.25"/>
+    <Footer x:Margin="0.25" x:Data="Zivara Family Office LLP  ·  Category Summary"/>
+    <PageMargins x:Bottom="0.4" x:Left="0.35" x:Right="0.35" x:Top="0.4"/>
+   </PageSetup>
+   <FitToPage/>
+   <Print><ValidPrinterInfo/><FitWidth>1</FitWidth><FitHeight>1</FitHeight><PaperSizeIndex>9</PaperSizeIndex></Print>
+  </WorksheetOptions>
+ </Worksheet>
  <Worksheet ss:Name="Summary">
   <Table>
    <Column ss:Width="22"/><Column ss:Width="150"/><Column ss:Width="110"/><Column ss:Width="70"/><Column ss:Width="70"/><Column ss:Width="22"/><Column ss:Width="160"/><Column ss:Width="110"/><Column ss:Width="70"/><Column ss:Width="70"/>
@@ -1443,7 +1562,7 @@ export default function Expenses(){
     ${cell("Tot","String",String(analysisRows.length))}
    </Row>
   </Table>
-  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><Selected/></WorksheetOptions>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"/>
  </Worksheet>
  <Worksheet ss:Name="By Category">
   <Table>
@@ -1505,24 +1624,8 @@ export default function Expenses(){
       search?`Search: ${search}`:""
     ].filter(Boolean);
 
-    const fyYearOf=iso=>{
-      const y=Number(String(iso||"").slice(0,4));
-      const m=Number(String(iso||"").slice(5,7));
-      if(!y||!m)return null;
-      return m>=4?y:y-1;
-    };
-    const fyYear=fyYearOf(fromDate)||fyYearOf(fyStart)||fyYearOf((analysisRows.map(r=>String(r.date||"").slice(0,10)).filter(Boolean).sort()[0]||""))||2026;
-    const lastIso=[toDate,...analysisRows.map(r=>String(r.date||"").slice(0,10))].filter(Boolean).sort().at(-1)||"";
-    const lastFY=fyYearOf(lastIso);
-    const fyCount=Math.max(1,(lastFY&&lastFY>fyYear?lastFY-fyYear+1:1));
-    const monthKeys=[];
-    for(let f=0;f<fyCount;f++){
-      const y=fyYear+f;
-      for(let i=0;i<12;i++){
-        const d=new Date(y,3+i,1);
-        monthKeys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
-      }
-    }
+    const monthKeys=fyMonthKeys(fromDate,toDate,analysisRows);
+    const fyCount=Math.max(1,Math.round(monthKeys.length/12));
     const monthHead=k=>{
       const lab=MONTHS[Number(k.slice(5,7))-1]||k;
       return fyCount>1?`${lab}-${k.slice(2,4)}`:lab;
