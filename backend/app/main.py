@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
-from app.routes import auth, core, imports, uploads, ledger, manual_journal
+from app.routes import auth, core, imports, uploads, ledger, manual_journal, payables_safe
 from app.services import accounting_sync
 
 try:
@@ -43,6 +43,9 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+# IMPORTANT: payable-safe routes must come before core.router so vendor payment
+# never auto-marks TDS paid/filed.
+app.include_router(payables_safe.router)
 app.include_router(core.router)
 app.include_router(imports.router)
 app.include_router(uploads.router)
@@ -64,14 +67,13 @@ def _sync_accounting_startup():
 def sync_accounting_masters():
     _sync_accounting_startup()
 
-    # Targeted historical repair only. This does not call the payable payment
-    # synchronizer, so the existing SelectCityFly bank transfers are untouched.
+    # Targeted source-truth repair only. This rebuilds SelectCityFly purchase
+    # journals and explicit TDS-paid/filed state. It never creates/deletes bank
+    # transactions and never calls the payable payment synchronizer directly.
     if repair_selectcityfly_missing_bill_journals:
         try:
             repair_selectcityfly_missing_bill_journals()
         except Exception:
-            # Never take the whole application offline for a maintenance repair.
-            # The full traceback remains visible in Render logs for diagnosis.
             logging.getLogger(__name__).exception(
                 "SelectCityFly Vendor Bill journal repair did not complete"
             )
