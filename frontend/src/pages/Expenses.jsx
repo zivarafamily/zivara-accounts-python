@@ -1,3 +1,146 @@
+Skip to main content
+
+    Ctrl+J
+
+can u give a better presentation for expenses and give me an excel
+
+Prepared a board-ready workbook from the Apr–Aug extract. All summary tabs are formula-linked to the detail sheet, so totals stay live if you edit a line.
+
+Period: 01 Apr 2026 – 31 Aug 2026
+
+Total: ₹1,31,43,881.85 · 282 lines · Avg ticket: ₹46,610
+
+What is inside:
+Sheet	Use
+Dashboard	KPIs, monthly trend, category mix, person / funding / domestic-vs-international, partner readout
+Monthly Analysis	Category × month grid, MoM change, charts
+Category Analysis	Category + subcategory with lines, amount, share, avg ticket
+Person Analysis	Expense-for × category and × month
+Funding Analysis	Who paid, booking channel, reimbursement queue (Manugopal + Dinu staff-paid)
+Exceptions	23 invoice/description gaps (~₹2.17 lakh) + 21 items ≥ ₹1 lakh + action list
+Top Transactions	Top 25 — they are 82% of period spend
+Expense Detail	Full 282-line register, filterable, with invoice flag
+
+Headline numbers worth putting in front of partners:
+
+    Travel 45.7% (₹60.13 lakh). Two Trip Stories invoices alone are ₹41.25 lakh.
+    July is the peak month at ₹47.34 lakh.
+    International scope is only 14 lines but ₹58.77 lakh (44.7%).
+    Vendor bills are 62% of spend (₹80.79 lakh).
+    Office build-out is heavy: furnishing ₹9.37 lakh, CBE deposit ₹7.50 lakh, Pricetime ₹7.08 lakh.
+
+Follow-ups already listed on the Exceptions tab: missing invoices, confirm the CBE deposit is not an expense, and treat Asset Vantage / Pricetime as prepaid if you are on accrual.
+
+If you want a one-pager PDF for Manugopal, a GST/TDS split, or a reimbursement-only extract for Dinu + Manugopal lines, say which and I will cut it next.
+
+can u make it simple and short
+
+Cutting it to a one-page summary plus the line list. Same numbers, less noise.
+
+use pastel colours, and no colour gradient on cells
+
+Updated. Two sheets only — Summary and Detail.
+
+Flat pastels: lilac headers, mint KPIs, peach totals, soft lilac row stripes. No data-bar gradients on cells.
+
+Same figures: ₹1,31,43,881.85 · 282 lines · Apr–Aug 2026.
+
+actually i want the category wise sorted in another sheet, for eg: domestic flights below this transactions on all domestic flights, and the total should  match the category summary amount too.
+
+do check if there is any duplicate invoices , duplicate expenses rcorded
+
+Done. Four sheets, pastel, no cell gradients.
+
+By Category — each heading, then every line under it, then a total. Example: Domestic Flight lists all 40 tickets and totals ₹5,66,822.72, which matches the category summary. Every category row says Matches summary. Grand total ₹1,31,43,881.85 matches Summary + Detail. Collapse a block with the outline buttons on the left.
+
+Duplicate Review
+
+No exact clone rows. No repeated vendor invoice numbers (all 50 SCF bills are unique).
+
+5 meals booked twice — same date, same amount, once as Partner/Staff and once as Zivara bank:
+Date	Vendor	Amount	Extra if both kept
+29 Aug	Maverick	₹893	₹893
+18 Jul	Maverick	₹1,113	₹1,113
+18 Jul	Maverick	₹767	₹767
+15 Jul	Kailash Parbat	₹4,303	₹4,303
+17 Jul	Balaji / missing	₹2,150	₹2,150
+		Food overstated by	₹9,226
+
+Not duplicates: ChatGPT monthly ₹1,999, two BLR–DFW tickets (Rema vs Bhaskaran T, different SCF nos.), three IRCTC VB fares on different dates, RK Ecran half-payment, Ibis split bill, Pricetime three separate payments.
+
+Worth a quick check with travel desk: Khushboo cab ₹3,300 twice on 19 Apr — two SCF numbers (0167 and 0168), so likely two trips, not a copy.
+
+Pink rows on Detail / By Category are the 10 meal lines to clean.
+
+i will upload the latest excel after deleting the duplicates
+
+Send the cleaned file when it is ready.
+
+I will rebuild Summary + By Category from that sheet, retotal every heading, and confirm Food is down by the five dropped meals (₹9,226) unless you removed different lines.
+
+Refer to the following content:
+
+Cleaned file is in. Five partner-side meals dropped (₹9,226). Books now 277 lines · ₹1,31,34,655.85.
+	Before	After
+Lines	282	277
+Total	₹1,31,43,881.85	₹1,31,34,655.85
+Food	₹2,81,202.17	₹2,71,976.17
+
+Every category total on By Category says Matches summary. Grand total matches Detail.
+
+Kept the bank line for each meal pair. Only leftover same-date pair: two Khushboo cabs on 19 Apr at ₹3,300 — different SCF numbers (0167 / 0168), so left as two trips.
+
+Same 3-sheet pastel file: Summary · By Category · Detail.
+
+can u verify the expenses.jsx file, and check the expenses export as pdf and excel,i want the excel export as the file attached or somewhat closer
+
+Checked both export paths in Expenses.jsx. Analysis Excel was the gap — it only wrote a flat list + category totals. That export now matches the attached pack.
+
+What was wrong
+
+    Entries → Export Excel: HTML .xls of partner/staff lines only. Fine for reimbursements, not the management view.
+    Analysis → Export Excel: SpreadsheetML with 2 sheets (Expense Detail, Category Summary). No month / person / funding summary, and no transactions under each subcategory.
+    PDFs: Work. Category PDF is a rollup. Full PDF is summary + vendor drill + line list. Print-to-PDF via popup.
+
+What I changed
+
+exportAnalysisExcel() (Analysis view → Export Excel) now writes 3 sheets, pastel, no cell gradients:
+
+    Summary — total, lines, avg, largest · by month · by category · by person · by who paid
+    By Category — category banner → subcategory → every line → subcategory total → category total → grand total
+    Detail — same columns as the attached file, including Month
+
+Filters on screen still apply. Filename unchanged: expense-analysis-{from}-to-{to}.xls.
+
+Drop this file over the app Expenses.jsx (keep the original path/name in the repo).
+
+Entries Excel/PDF I left as-is — those are the reimbursement register, not the analysis pack. Say if you want those restyled the same way.
+
+pls do what can be done. and give me the final final.
+
+Final pack is ready. All four exports now use the same pastel layout as the attached workbook.
+
+Drop-in app file
+
+Replace your current  with this.
+
+What each button now writes
+Screen	Button	Output
+Expense Entries	Export Excel	2-sheet .xls — Summary (by type / paid-by) + Detail
+Expense Entries	Export PDF	Print view with cards, subcategory, pastel rows, total footer
+Expense Analysis	Export Excel	3-sheet .xls — Summary · By Category ledger · Detail (same shape as the attached file)
+Expense Analysis	Export Full PDF	Summary grids + every transaction under its category/subcategory + flat detail
+Expense Analysis	Export Category PDF	Short category/subcategory rollup (unchanged, still useful)
+
+Sample workbook already built from the cleaned 277 lines
+
+277 lines · ₹1,31,34,655.85 · five meal duplicates already out.
+
+I cannot run the live app against your API from here, so after you paste the JSX, click Analysis → Export Excel once and confirm the download opens as three sheets. If a filter is on, the export follows that filter.
+
+
+Files
+
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "../api/client";
 import { billingMonthOptions, formatDate } from "../utils/format";
@@ -680,29 +823,144 @@ export default function Expenses(){
 
   function exportExcel(){
     if(!filtered.length){alert("No expenses to export.");return}
-    const rows=filtered.map(e=>[
-      exportDate(e.Date),
-      e.ExpenseType||"",
-      e.Category||"",
-      readExpenseMeta(e.Notes).meta.subCategory||"",
-      readExpenseMeta(e.Notes).meta.expenseFor||"",
-      readExpenseMeta(e.Notes).meta.travelScope||"",
-      Number(e.Amount||0).toFixed(2),
-      e.PaidBy||"",
-      e.ReimburseTo||e.SettlementTo||e.PaidBy||"",
-      e.PaymentMode||"",
-      e.Status||"",
-      e.VendorOrPerson||"",
-      e.Description||"",
-      Number(e.TaxableValue||0).toFixed(2),
-      Number(e.GSTAmount||0).toFixed(2)
-    ]);
-    const headers=["Date","Type","Category","Subcategory","Expense For","Scope","Amount","Paid By","Reimburse To","Mode","Status","Vendor / Person","Description","Taxable Value","GST"];
-    const table=`<table><thead><tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${
-      rows.map(r=>`<tr>${r.map(v=>`<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join("")
-    }</tbody></table>`;
-    const html=`<html><head><meta charset="utf-8"></head><body>${table}</body></html>`;
-    const blob=new Blob([html],{type:"application/vnd.ms-excel;charset=utf-8"});
+
+    const xml=value=>escapeHtml(value);
+    const num=value=>Number(value||0).toFixed(2);
+    const cell=(style,type,value)=>`<Cell ss:StyleID="${style}"><Data ss:Type="${type}">${type==="Number"?num(value):xml(value)}</Data></Cell>`;
+    const empty=(style="Text")=>`<Cell ss:StyleID="${style}"/>`;
+    const merge=(across,style,type,value)=>`<Cell ss:MergeAcross="${across}" ss:StyleID="${style}"><Data ss:Type="${type}">${type==="Number"?num(value):xml(value)}</Data></Cell>`;
+    const filterSummary=[
+      fromDate?`From ${exportDate(fromDate)}`:"",
+      toDate?`To ${exportDate(toDate)}`:"",
+      filterPerson?`Paid By: ${filterPerson}`:"",
+      filterStatus?`Status: ${filterStatus}`:"",
+      search?`Search: ${search}`:""
+    ].filter(Boolean).join(" · ")||"All partner / staff expenses";
+
+    const typeMap={};
+    const paidMap={};
+    for(const e of filtered){
+      const t=e.ExpenseType||"Other";
+      typeMap[t]=(typeMap[t]||0)+Number(e.Amount||0);
+      const p=e.PaidBy||"Unassigned";
+      paidMap[p]=(paidMap[p]||0)+Number(e.Amount||0);
+    }
+    const typeRows=Object.entries(typeMap).sort((a,b)=>b[1]-a[1]);
+    const paidRows=Object.entries(paidMap).sort((a,b)=>b[1]-a[1]);
+
+    const detail=filtered.map((e,i)=>{
+      const zebra=i%2===0?"Text":"Alt";
+      const zebraMoney=i%2===0?"Money":"AltMoney";
+      const meta=readExpenseMeta(e.Notes).meta||{};
+      return `<Row>
+        ${cell(zebra,"String",exportDate(e.Date))}
+        ${cell(zebra,"String",e.ExpenseType||"")}
+        ${cell(zebra,"String",e.Category||"")}
+        ${cell(zebra,"String",meta.subCategory||"")}
+        ${cell(zebra,"String",meta.expenseFor||"")}
+        ${cell(zebraMoney,"Number",e.Amount)}
+        ${cell(zebra,"String",e.PaidBy||"")}
+        ${cell(zebra,"String",e.ReimburseTo||e.SettlementTo||e.PaidBy||"")}
+        ${cell(zebra,"String",e.PaymentMode||"")}
+        ${cell(zebra,"String",e.Status||"")}
+        ${cell(zebra,"String",e.VendorOrPerson||"")}
+        ${cell(zebra,"String",e.Description||"")}
+        ${cell(zebraMoney,"Number",e.TaxableValue||0)}
+        ${cell(zebraMoney,"Number",e.GSTAmount||0)}
+      </Row>`;
+    }).join("");
+
+    const workbook=`<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#4A4458"/></Style>
+  <Style ss:ID="Title"><Font ss:FontName="Calibri" ss:Size="16" ss:Bold="1" ss:Color="#6B5B7A"/></Style>
+  <Style ss:ID="SubTitle"><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#8A8196"/></Style>
+  <Style ss:ID="Header"><Alignment ss:Horizontal="Center" ss:WrapText="1"/><Font ss:FontName="Calibri" ss:Size="9" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#E4D7F5" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="Text"><Alignment ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="Alt"><Alignment ss:WrapText="1"/><Interior ss:Color="#F3EEF8" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="Money"><Alignment ss:Horizontal="Right"/><Font ss:Bold="1" ss:Color="#6B5B7A"/><NumberFormat ss:Format="₹#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="AltMoney"><Alignment ss:Horizontal="Right"/><Font ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#F3EEF8" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="KpiLabel"><Font ss:Size="8" ss:Bold="1" ss:Color="#8A8196"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="KpiValue"><Font ss:Size="13" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="KpiCount"><Font ss:Size="13" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/><NumberFormat ss:Format="#,##0"/></Style>
+  <Style ss:ID="Tot"><Font ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#FDE4D4" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="TotMoney"><Alignment ss:Horizontal="Right"/><Font ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#FDE4D4" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="Section"><Font ss:Bold="1" ss:Color="#6B5B7A"/></Style>
+ </Styles>
+ <Worksheet ss:Name="Summary">
+  <Table>
+   <Column ss:Width="24"/><Column ss:Width="160"/><Column ss:Width="120"/><Column ss:Width="24"/><Column ss:Width="160"/><Column ss:Width="120"/>
+   <Row ss:Height="8"/>
+   <Row ss:Height="24"><Cell ss:Index="2" ss:MergeAcross="4" ss:StyleID="Title"><Data ss:Type="String">Zivara Family Office LLP  ·  Partner / Staff Expenses</Data></Cell></Row>
+   <Row><Cell ss:Index="2" ss:MergeAcross="4" ss:StyleID="SubTitle"><Data ss:Type="String">${xml(filterSummary)}</Data></Cell></Row>
+   <Row ss:Height="8"/>
+   <Row>
+    <Cell ss:Index="2" ss:StyleID="KpiLabel"><Data ss:Type="String">TOTAL</Data></Cell>
+    <Cell ss:StyleID="KpiLabel"><Data ss:Type="String">GST</Data></Cell>
+    <Cell ss:Index="5" ss:StyleID="KpiLabel"><Data ss:Type="String">LINES</Data></Cell>
+   </Row>
+   <Row ss:Height="22">
+    <Cell ss:Index="2" ss:StyleID="KpiValue"><Data ss:Type="Number">${num(totals.amount)}</Data></Cell>
+    <Cell ss:StyleID="KpiValue"><Data ss:Type="Number">${num(totals.gst)}</Data></Cell>
+    <Cell ss:Index="5" ss:StyleID="KpiCount"><Data ss:Type="Number">${filtered.length}</Data></Cell>
+   </Row>
+   <Row ss:Height="10"/>
+   <Row><Cell ss:Index="2" ss:StyleID="Section"><Data ss:Type="String">BY TYPE</Data></Cell><Cell ss:Index="5" ss:StyleID="Section"><Data ss:Type="String">BY PAID BY</Data></Cell></Row>
+   <Row>
+    <Cell ss:Index="2" ss:StyleID="Header"><Data ss:Type="String">Type</Data></Cell>
+    ${cell("Header","String","Amount")}
+    <Cell ss:Index="5" ss:StyleID="Header"><Data ss:Type="String">Paid By</Data></Cell>
+    ${cell("Header","String","Amount")}
+   </Row>
+   ${(()=>{
+     const n=Math.max(typeRows.length,paidRows.length);
+     const rows=[];
+     for(let i=0;i<n;i++){
+       const t=typeRows[i], p=paidRows[i];
+       rows.push(`<Row>
+        <Cell ss:Index="2" ss:StyleID="Text"><Data ss:Type="String">${t?xml(t[0]):""}</Data></Cell>
+        ${t?cell("Money","Number",t[1]):empty()}
+        <Cell ss:Index="5" ss:StyleID="Text"><Data ss:Type="String">${p?xml(p[0]):""}</Data></Cell>
+        ${p?cell("Money","Number",p[1]):empty()}
+       </Row>`);
+     }
+     return rows.join("");
+   })()}
+   <Row>
+    <Cell ss:Index="2" ss:StyleID="Tot"><Data ss:Type="String">Total</Data></Cell>
+    ${cell("TotMoney","Number",totals.amount)}
+    <Cell ss:Index="5" ss:StyleID="Tot"><Data ss:Type="String">Total</Data></Cell>
+    ${cell("TotMoney","Number",totals.amount)}
+   </Row>
+  </Table>
+ </Worksheet>
+ <Worksheet ss:Name="Detail">
+  <Table>
+   <Column ss:Width="80"/><Column ss:Width="80"/><Column ss:Width="120"/><Column ss:Width="120"/><Column ss:Width="110"/><Column ss:Width="90"/><Column ss:Width="120"/><Column ss:Width="120"/><Column ss:Width="70"/><Column ss:Width="80"/><Column ss:Width="140"/><Column ss:Width="240"/><Column ss:Width="90"/><Column ss:Width="80"/>
+   <Row ss:Height="24">${merge(13,"Title","String","Partner / Staff Expense Detail")}</Row>
+   <Row>${merge(13,"SubTitle","String",filterSummary)}</Row>
+   <Row ss:Height="20">${["Date","Type","Category","Subcategory","Expense For","Amount (₹)","Paid By","Reimburse To","Mode","Status","Vendor / Person","Description","Taxable Value","GST"].map(h=>cell("Header","String",h)).join("")}</Row>
+   ${detail}
+   <Row>
+    ${cell("Tot","String","TOTAL")}
+    ${empty("Tot")}${empty("Tot")}${empty("Tot")}${empty("Tot")}
+    ${cell("TotMoney","Number",totals.amount)}
+    ${empty("Tot")}${empty("Tot")}${empty("Tot")}${empty("Tot")}${empty("Tot")}${empty("Tot")}
+    ${cell("TotMoney","Number",totals.gst?totals.gst:0)}
+    ${cell("TotMoney","Number",totals.gst)}
+   </Row>
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>3</SplitHorizontal><TopRowBottomPane>3</TopRowBottomPane></WorksheetOptions>
+ </Worksheet>
+</Workbook>`;
+
+    const blob=new Blob(["\ufeff",workbook],{type:"application/vnd.ms-excel;charset=utf-8"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");
     a.href=url;
@@ -721,35 +979,50 @@ export default function Expenses(){
       filterStatus?`Status: ${filterStatus}`:"",
       search?`Search: ${search}`:""
     ].filter(Boolean).join(" · ")||"All records";
-    const bodyRows=filtered.map(e=>`<tr>
+    const bodyRows=filtered.map(e=>{
+      const meta=readExpenseMeta(e.Notes).meta||{};
+      return `<tr>
       <td>${escapeHtml(exportDate(e.Date))}</td>
       <td>${escapeHtml(e.ExpenseType||"")}</td>
       <td>${escapeHtml(e.Category||"")}</td>
-      <td class="num">${escapeHtml(Number(e.Amount||0).toFixed(2))}</td>
+      <td>${escapeHtml(meta.subCategory||"")}</td>
+      <td class="num">${escapeHtml(fmt(e.Amount))}</td>
       <td>${escapeHtml(e.PaidBy||"")}</td>
       <td>${escapeHtml(e.ReimburseTo||e.SettlementTo||e.PaidBy||"")}</td>
       <td>${escapeHtml(e.PaymentMode||"")}</td>
       <td>${escapeHtml(e.Status||"")}</td>
       <td>${escapeHtml(e.Description||"")}</td>
-    </tr>`).join("");
+    </tr>`;
+    }).join("");
     w.document.write(`<!doctype html><html><head><title>Partner / Staff Expenses</title>
       <style>
-        body{font-family:Arial,sans-serif;color:#111;padding:20px;font-size:11px}
-        h1{font-size:20px;margin:0 0 4px}.muted{color:#666;margin-bottom:12px}
-        .summary{display:flex;gap:24px;margin:10px 0 16px;font-size:12px}
-        table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;vertical-align:top}
-        th{background:#eee;text-align:left}.num{text-align:right;white-space:nowrap}
+        *{box-sizing:border-box}
+        body{font-family:Calibri,Arial,sans-serif;color:#4A4458;padding:16px;font-size:10.5px;background:#fff}
+        h1{font-size:20px;margin:0 0 4px;color:#6B5B7A}
+        .muted{color:#8A8196;margin-bottom:10px}
+        .cards{display:flex;gap:10px;margin:0 0 12px}
+        .card{background:#D8EFE4;border-radius:8px;padding:8px 12px;min-width:140px}
+        .card .k{font-size:8px;font-weight:700;color:#8A8196;letter-spacing:.06em}
+        .card .v{font-size:14px;font-weight:800;color:#6B5B7A;margin-top:2px}
+        table{width:100%;border-collapse:collapse}
+        th,td{border:1px solid #E2D9E8;padding:5px;vertical-align:top}
+        th{background:#E4D7F5;color:#6B5B7A;text-align:left}
+        tbody tr:nth-child(even){background:#F3EEF8}
+        .num{text-align:right;white-space:nowrap}
+        tfoot td{background:#FDE4D4;font-weight:700}
         @page{size:landscape;margin:10mm}
       </style></head><body>
       <h1>Zivara Family Office LLP — Partner / Staff Expenses</h1>
       <div class="muted">${escapeHtml(filterSummary)}</div>
-      <div class="summary">
-        <div><strong>Records:</strong> ${filtered.length}</div>
-        <div><strong>Total:</strong> ${escapeHtml(fmt(totals.amount))}</div>
-        <div><strong>GST:</strong> ${escapeHtml(fmt(totals.gst))}</div>
+      <div class="cards">
+        <div class="card"><div class="k">RECORDS</div><div class="v">${filtered.length}</div></div>
+        <div class="card"><div class="k">TOTAL</div><div class="v">${escapeHtml(fmt(totals.amount))}</div></div>
+        <div class="card"><div class="k">GST</div><div class="v">${escapeHtml(fmt(totals.gst))}</div></div>
       </div>
       <table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Subcategory</th><th>Amount</th><th>Paid By</th><th>Reimburse To</th><th>Mode</th><th>Status</th><th>Description</th></tr></thead>
-      <tbody>${bodyRows}</tbody></table>
+      <tbody>${bodyRows}</tbody>
+      <tfoot><tr><td colspan="4">TOTAL</td><td class="num">${escapeHtml(fmt(totals.amount))}</td><td colspan="5"></td></tr></tfoot>
+      </table>
       <script>window.onload=()=>{window.print();}<\/script>
       </body></html>`);
     w.document.close();
@@ -1466,64 +1739,113 @@ export default function Expenses(){
       search?`Search: ${search}`:""
     ].filter(Boolean).join(" · ")||"All Expense Analysis records";
 
-    const subTotals=Object.entries(analysisRows.reduce((a,r)=>{
-      const key=String(r.subCategory||"Unclassified").trim()||"Unclassified";
-      a[key]=(a[key]||0)+r.amount;return a;
-    },{})).sort((a,b)=>b[1]-a[1]);
+    const monthKey=value=>String(value||"").slice(0,7);
+    const monthLabel=key=>{
+      const [y,m]=String(key||"").split("-");
+      const idx=Number(m)-1;
+      return y&&MONTHS[idx]?`${MONTHS[idx]} ${y}`:key||"Unspecified";
+    };
+    const monthMap={};
+    const personMap={};
+    const grouped={};
+    for(const r of analysisRows){
+      const mk=monthKey(r.date)||"Unspecified";
+      if(!monthMap[mk])monthMap[mk]={amount:0,lines:0};
+      monthMap[mk].amount+=r.amount;monthMap[mk].lines+=1;
+      const person=String(r.person||"").trim()||"Unassigned";
+      if(!personMap[person])personMap[person]={amount:0,lines:0};
+      personMap[person].amount+=r.amount;personMap[person].lines+=1;
+      const cat=r.category||"Unclassified";
+      const sub=r.subCategory||"Unclassified";
+      if(!grouped[cat])grouped[cat]={};
+      if(!grouped[cat][sub])grouped[cat][sub]=[];
+      grouped[cat][sub].push(r);
+    }
+    const monthTotals=Object.entries(monthMap).sort((a,b)=>a[0].localeCompare(b[0]));
+    const personTotals=Object.entries(personMap).sort((a,b)=>b[1].amount-a[1].amount);
+    const catCountMap={};
+    const fundCountMap={};
+    for(const r of analysisRows){
+      catCountMap[r.category]=(catCountMap[r.category]||0)+1;
+      fundCountMap[r.funding]=(fundCountMap[r.funding]||0)+1;
+    }
 
-    const vendorTotals=Object.entries(analysisRows.reduce((a,r)=>{
-      const raw=r.rawPayable?.VendorName||r.rawExpense?.VendorOrPerson||r.rawBankRow?.LedgerName||r.rawBankRow?.Description||r.source||"Other";
-      const key=String(raw||"Other").trim()||"Other";
-      a[key]=(a[key]||0)+r.amount;return a;
-    },{})).sort((a,b)=>b[1]-a[1]);
+    const pairTable=(title,rows)=>`<section class="box"><h3>${escapeHtml(title)}</h3><table><thead><tr><th>${escapeHtml(title)}</th><th class="num">Amount</th><th class="num">Share</th><th class="num">Lines</th></tr></thead><tbody>${rows}</tbody></table></section>`;
 
-    const summaryTable=(title,pairs)=>`<section class="summary-section"><h2>${escapeHtml(title)}</h2><table class="summary-table"><thead><tr><th>${escapeHtml(title.replace(/ Summary$/,""))}</th><th class="num">Amount</th><th class="num">% of Total</th></tr></thead><tbody>${pairs.map(([name,amount])=>`<tr><td>${escapeHtml(name)}</td><td class="num">${escapeHtml(fmt(amount))}</td><td class="num">${escapeHtml(pct(amount))}</td></tr>`).join("")}</tbody></table></section>`;
+    const monthTable=pairTable("By Month",monthTotals.map(([k,g])=>`<tr><td>${escapeHtml(monthLabel(k))}</td><td class="num">${escapeHtml(fmt(g.amount))}</td><td class="num">${escapeHtml(pct(g.amount))}</td><td class="num">${g.lines}</td></tr>`).join(""));
+    const catTable=pairTable("By Category",analysisCategoryTotals.map(([name,amount])=>`<tr><td>${escapeHtml(name)}</td><td class="num">${escapeHtml(fmt(amount))}</td><td class="num">${escapeHtml(pct(amount))}</td><td class="num">${catCountMap[name]||0}</td></tr>`).join(""));
+    const personTable=pairTable("By Person",personTotals.map(([name,g])=>`<tr><td>${escapeHtml(name)}</td><td class="num">${escapeHtml(fmt(g.amount))}</td><td class="num">${escapeHtml(pct(g.amount))}</td><td class="num">${g.lines}</td></tr>`).join(""));
+    const fundTable=pairTable("By Who Paid",analysisFundingTotals.map(([name,amount])=>`<tr><td>${escapeHtml(name)}</td><td class="num">${escapeHtml(fmt(amount))}</td><td class="num">${escapeHtml(pct(amount))}</td><td class="num">${fundCountMap[name]||0}</td></tr>`).join(""));
 
-    const categoryDetail=analysisCategoryTotals.map(([category,total])=>{
-      const group=categoryDrillData[category]||{subs:{},rows:[]};
-      const subSections=sortedPairs(group.subs).map(([sub,subTotal])=>{
-        const subRows=(group.rows||[]).filter(r=>(r.subCategory||"Unclassified")===sub);
-        const vendors={};
-        for(const r of subRows){
-          const raw=r.rawPayable?.VendorName||r.rawExpense?.VendorOrPerson||r.rawBankRow?.LedgerName||r.rawBankRow?.Description||r.source||"Other";
-          const key=String(raw||"Other").trim()||"Other";
-          vendors[key]=(vendors[key]||0)+r.amount;
-        }
-        return `<div class="sub-block"><div class="sub-head"><strong>${escapeHtml(sub)}</strong><strong>${escapeHtml(fmt(subTotal))}</strong></div><table class="mini"><thead><tr><th>Vendor / Source</th><th class="num">Amount</th></tr></thead><tbody>${sortedPairs(vendors).map(([vendor,amount])=>`<tr><td>${escapeHtml(vendor)}</td><td class="num">${escapeHtml(fmt(amount))}</td></tr>`).join("")}</tbody></table></div>`;
+    const ledger=analysisCategoryTotals.map(([cat,catAmount])=>{
+      const subs=Object.entries(grouped[cat]||{}).sort((a,b)=>b[1].reduce((s,r)=>s+r.amount,0)-a[1].reduce((s,r)=>s+r.amount,0));
+      const blocks=subs.map(([sub,rows])=>{
+        const subTotal=rows.reduce((s,r)=>s+r.amount,0);
+        const lines=[...rows].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).map(r=>`<tr>
+          <td>${escapeHtml(exportDate(r.date))}</td>
+          <td>${escapeHtml(r.person||"—")}</td>
+          <td>${escapeHtml(r.scope||"—")}</td>
+          <td>${escapeHtml(r.funding||"—")}</td>
+          <td class="num">${escapeHtml(fmt(r.amount))}</td>
+          <td>${escapeHtml(r.source||"")}</td>
+          <td>${escapeHtml(r.description||"")}</td>
+        </tr>`).join("");
+        return `<div class="sub">
+          <div class="sub-h"><span>${escapeHtml(sub)}</span><span>${escapeHtml(fmt(subTotal))} · ${rows.length} lines</span></div>
+          <table class="lines"><thead><tr><th>Date</th><th>Expense For</th><th>Scope</th><th>Funding</th><th class="num">Amount</th><th>Source</th><th>Description</th></tr></thead><tbody>${lines}</tbody></table>
+        </div>`;
       }).join("");
-      return `<section class="category-block"><div class="category-head"><h2>${escapeHtml(category)}</h2><div><strong>${escapeHtml(fmt(total))}</strong> · ${escapeHtml(pct(total))}</div></div>${subSections}</section>`;
+      return `<section class="cat">
+        <div class="cat-h"><span>${escapeHtml(cat)}</span><span>${escapeHtml(fmt(catAmount))} · ${catCountMap[cat]||0} lines</span></div>
+        ${blocks}
+      </section>`;
     }).join("");
 
     const detailRows=analysisRows.map(r=>`<tr><td>${escapeHtml(exportDate(r.date))}</td><td>${escapeHtml(r.category)}</td><td>${escapeHtml(r.subCategory||"Unclassified")}</td><td>${escapeHtml(r.person||"—")}</td><td>${escapeHtml(r.scope||"—")}</td><td>${escapeHtml(r.funding)}</td><td class="num">${escapeHtml(fmt(r.amount))}</td><td>${escapeHtml(r.source)}</td><td>${escapeHtml(r.description)}</td></tr>`).join("");
 
-    w.document.write(`<!doctype html><html><head><title>Expense Analysis - Full View</title><style>
-      *{box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9.5px;color:#111;padding:16px;line-height:1.35}h1{font-size:19px;margin:0 0 3px}h2{font-size:12px;margin:0}.muted{color:#666}.filters{margin:4px 0 12px;color:#555;font-size:9.5px}.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:10px 0 14px}.metric{border:1px solid #bbb;border-radius:5px;padding:7px}.metric .k{font-size:7.5px;color:#666;font-weight:bold;text-transform:uppercase}.metric .v{font-size:12px;font-weight:bold;margin-top:2px}.overview{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}.summary-section{break-inside:avoid;margin:0 0 10px}.summary-section h2{margin:0 0 4px}.summary-table,.mini,.detail{width:100%;border-collapse:collapse}.summary-table th,.summary-table td,.mini th,.mini td,.detail th,.detail td{border:1px solid #aaa;padding:3.5px;vertical-align:top;overflow-wrap:anywhere}.summary-table th,.mini th,.detail th{background:#eee;text-align:left}.num{text-align:right!important;white-space:nowrap}.page-title{margin:14px 0 7px;padding-top:6px;border-top:2px solid #333;font-size:14px;font-weight:bold}.category-block{break-inside:avoid;margin-bottom:12px;border:1px solid #aaa;padding:7px}.category-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:5px}.sub-block{margin:6px 0 0 8px;break-inside:avoid}.sub-head{display:flex;justify-content:space-between;gap:12px;background:#f5f5f5;border:1px solid #bbb;border-bottom:0;padding:4px}.mini{margin:0}.detail thead{display:table-header-group}.detail tr{break-inside:avoid}.report-note{margin-top:8px;color:#555;font-size:8.5px}@page{size:A4 landscape;margin:8mm}@media print{body{padding:0}.overview{grid-template-columns:1fr 1fr}.category-block{page-break-inside:avoid}}
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Expense Analysis</title><style>
+      *{box-sizing:border-box}
+      body{font-family:Calibri,Arial,sans-serif;font-size:10px;color:#4A4458;padding:14px;background:#fff}
+      h1{font-size:20px;margin:0 0 3px;color:#6B5B7A}
+      h2{font-size:13px;margin:16px 0 8px;color:#6B5B7A;border-top:1px solid #E2D9E8;padding-top:10px}
+      h3{font-size:11px;margin:0 0 6px;color:#6B5B7A}
+      .muted{color:#8A8196;margin-bottom:10px}
+      .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:0 0 12px}
+      .card{background:#D8EFE4;border-radius:8px;padding:8px 10px}
+      .card .k{font-size:7.5px;font-weight:800;letter-spacing:.06em;color:#8A8196}
+      .card .v{font-size:13px;font-weight:800;color:#6B5B7A;margin-top:2px}
+      .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+      .box{border:1px solid #E2D9E8;border-radius:8px;padding:8px;background:#fff}
+      table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #E2D9E8;padding:4px 5px;vertical-align:top}
+      th{background:#E4D7F5;color:#6B5B7A;text-align:left}
+      tbody tr:nth-child(even){background:#F3EEF8}
+      .num{text-align:right;white-space:nowrap}
+      .cat{margin:0 0 12px;border:1px solid #E2D9E8;border-radius:8px;overflow:hidden;break-inside:avoid}
+      .cat-h{display:flex;justify-content:space-between;gap:12px;background:#DDD0F0;padding:7px 9px;font-weight:800;color:#6B5B7A}
+      .sub{border-top:1px solid #E2D9E8}
+      .sub-h{display:flex;justify-content:space-between;gap:12px;background:#D7E8F5;padding:5px 9px;font-weight:700;color:#3D5A6C}
+      .lines{margin:0}
+      .note{margin-top:10px;color:#8A8196;font-size:8.5px}
+      @page{size:A4 landscape;margin:8mm}
+      @media print{body{padding:0}.cat{page-break-inside:avoid}}
     </style></head><body>
-      <h1>Zivara Family Office LLP - Expense Analysis</h1>
-      <div class="muted">Full management-expense view</div>
-      <div class="filters">${escapeHtml(filterSummary)}</div>
+      <h1>Zivara Family Office LLP · Expense Analysis</h1>
+      <div class="muted">${escapeHtml(filterSummary)}</div>
       <div class="cards">
-        <div class="metric"><div class="k">Total Expense</div><div class="v">${escapeHtml(fmt(analysisTotal))}</div></div>
-        <div class="metric"><div class="k">Vendor Bills</div><div class="v">${escapeHtml(fmt(analysisSourceTotals.vendorBills))}</div></div>
-        <div class="metric"><div class="k">Personally Paid</div><div class="v">${escapeHtml(fmt(analysisSourceTotals.personal))}</div></div>
-        <div class="metric"><div class="k">Direct Zivara</div><div class="v">${escapeHtml(fmt(analysisSourceTotals.directZivara))}</div></div>
-        <div class="metric"><div class="k">Records</div><div class="v">${analysisRows.length}</div></div>
+        <div class="card"><div class="k">TOTAL</div><div class="v">${escapeHtml(fmt(analysisTotal))}</div></div>
+        <div class="card"><div class="k">VENDOR BILLS</div><div class="v">${escapeHtml(fmt(analysisSourceTotals.vendorBills))}</div></div>
+        <div class="card"><div class="k">PERSONALLY PAID</div><div class="v">${escapeHtml(fmt(analysisSourceTotals.personal))}</div></div>
+        <div class="card"><div class="k">DIRECT ZIVARA</div><div class="v">${escapeHtml(fmt(analysisSourceTotals.directZivara))}</div></div>
+        <div class="card"><div class="k">RECORDS</div><div class="v">${analysisRows.length}</div></div>
       </div>
-
-      <div class="page-title">Management Summary - Full List</div>
-      <div class="overview">
-        ${summaryTable("Category Summary",analysisCategoryTotals)}
-        ${summaryTable("Subcategory Summary",subTotals)}
-        ${summaryTable("Vendor / Source Summary",vendorTotals)}
-        ${summaryTable("Funding Source Summary",analysisFundingTotals)}
-      </div>
-
-      <div class="page-title">Category > Subcategory > Vendor / Source</div>
-      ${categoryDetail}
-
-      <div class="page-title">Detailed Expense Analysis - ${analysisRows.length} Records</div>
-      <table class="detail"><thead><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding Source</th><th class="num">Amount</th><th>Source</th><th>Description / Narration</th></tr></thead><tbody>${detailRows}</tbody></table>
-      <div class="report-note">Vendor Bills are recognised on bill date. Vendor settlements and reimbursements are not counted again as expenses. This PDF uses the same active Expense Analysis filters as the on-screen report.</div>
+      <h2>Summary</h2>
+      <div class="grid">${monthTable}${catTable}${personTable}${fundTable}</div>
+      <h2>By Category · transactions under each heading</h2>
+      ${ledger}
+      <h2>Detail · ${analysisRows.length} lines</h2>
+      <table><thead><tr><th>Date</th><th>Category</th><th>Subcategory</th><th>Expense For</th><th>Scope</th><th>Funding</th><th class="num">Amount</th><th>Source</th><th>Description</th></tr></thead><tbody>${detailRows}</tbody></table>
+      <div class="note">Vendor Bills counted on bill date. Settlements and reimbursements are not counted again. Same filters as the on-screen analysis.</div>
       <script>window.onload=()=>window.print()<\/script>
     </body></html>`);w.document.close();
   }
@@ -1947,3 +2269,5 @@ export default function Expenses(){
     </div>}
   </div>;
 }
+
+Expense Report Excel Presentation - Grok
