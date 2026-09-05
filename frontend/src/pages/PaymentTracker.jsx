@@ -128,6 +128,14 @@ function upsertMeta(notes,prefix,value){
 function roundOffOf(r){
   return num(r.RoundOffAmount ?? (Array.isArray(r.LineItems)?r.LineItems[0]?.RoundOffAmount:0));
 }
+function vendorLiabilityOf(r){
+  // Vendor ledger liability is reduced only by TDS explicitly marked paid/filed.
+  return Math.max(num(r.GrossAmount)+roundOffOf(r)-num(r.TDSDeductedAmount),0);
+}
+function batchMetaPaidOf(r){
+  const meta=readMeta(r.Notes,BATCH_META_PREFIX);
+  return meta?num(meta.bankAllocated):null;
+}
 
 export default function PaymentTracker(){
   const {currentLLP}=useLLP();
@@ -238,25 +246,57 @@ export default function PaymentTracker(){
   const snapshot=useMemo(()=>{
     const today=new Date().toISOString().slice(0,10);
     const live=filtered.filter(r=>norm(r.Status)!=="cancelled");
+    const txByRef={};
+    for(const tx of bankTransactions){
+      const ref=norm(tx.ReferenceID||tx.EntryID);
+      if(!ref)continue;
+      const key=`${tx.BankAccountID||""}|${ref}`;
+      txByRef[key]=tx;
+      txByRef[`|${ref}`]=tx;
+    }
+    const usedLegacyTx=new Set();
     const s=live.reduce((a,r)=>{
       a.bills+=1;
-      a.gross+=num(r.GrossAmount)+roundOffOf(r);
+      const gross=num(r.GrossAmount)+roundOffOf(r);
+      a.gross+=gross;
       a.net+=num(r.NetPayable);
-      a.paid+=num(r.PaidAmount);
-      a.balance+=num(r.BalanceAmount);
+      a.vendorLiability+=vendorLiabilityOf(r);
       a.tds+=num(r.TDSAmount);
       a.tdsPaid+=num(r.TDSDeductedAmount);
+
+      const metaPaid=batchMetaPaidOf(r);
+      if(metaPaid!==null){
+        a.paid+=metaPaid;
+      }else if(norm(r.PaymentMode)==="existing bank transaction"&&r.ReferenceNo){
+        // Legacy batches may store NetPayable in PaidAmount even though the
+        // bank actually paid the gross amount. Count the linked bank debit once.
+        const ref=norm(r.ReferenceNo);
+        const key=`${r.BankAccount||""}|${ref}`;
+        const tx=txByRef[key]||txByRef[`|${ref}`];
+        const unique=tx?.EntryID||key;
+        if(tx&&!usedLegacyTx.has(unique)){
+          a.paid+=num(tx.AmountOut);
+          usedLegacyTx.add(unique);
+        }else if(!tx){
+          a.paid+=num(r.PaidAmount);
+        }
+      }else{
+        a.paid+=num(r.PaidAmount);
+      }
+
       const due=String(r.DueDate||"").slice(0,10);
-      if(num(r.BalanceAmount)>0.005&&due&&due<today){
-        a.overdue+=num(r.BalanceAmount);
+      const rowBalance=Math.max(vendorLiabilityOf(r)-(metaPaid!==null?metaPaid:num(r.PaidAmount)),0);
+      if(rowBalance>0.005&&due&&due<today){
+        a.overdue+=rowBalance;
         a.overdueBills+=1;
       }
       return a;
-    },{bills:0,gross:0,net:0,paid:0,balance:0,tds:0,tdsPaid:0,overdue:0,overdueBills:0});
+    },{bills:0,gross:0,net:0,paid:0,vendorLiability:0,tds:0,tdsPaid:0,overdue:0,overdueBills:0});
+    s.balance=Math.max(s.vendorLiability-s.paid,0);
     s.tdsPending=Math.max(s.tds-s.tdsPaid,0);
     s.cancelled=filtered.filter(r=>norm(r.Status)==="cancelled").length;
     return s;
-  },[filtered]);
+  },[filtered,bankTransactions]);
 
   const batchHistory=useMemo(()=>{
     const groups={};
@@ -971,8 +1011,8 @@ export default function PaymentTracker(){
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>{filterVendor?"VENDOR":"FILTERED"} BILLS</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{snapshot.bills}</div></div>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TOTAL BILLED</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.gross)}</div></div>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>NET PAYABLE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.net)}</div></div>
-      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>PAID</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.paid)}</div></div>
-      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>PENDING</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.balance)}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>ACTUAL PAID / ALLOCATED</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.paid)}</div></div>
+      <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>VENDOR BALANCE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.balance)}</div></div>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>OVERDUE</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.overdue)}<div style={{fontSize:".7rem",fontWeight:600,color:"var(--muted)"}}>{snapshot.overdueBills} bill(s)</div></div></div>
       <div style={card}><div style={{fontSize:".68rem",color:"var(--muted)",fontWeight:700}}>TDS PENDING</div><div style={{fontSize:"1.15rem",fontWeight:800,marginTop:".2rem"}}>{fmt(snapshot.tdsPending)}</div></div>
     </div>
