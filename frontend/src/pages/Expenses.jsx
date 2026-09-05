@@ -1488,7 +1488,7 @@ export default function Expenses(){
 
   function exportCategorySummaryPDF(){
     if(!analysisRows.length)return alert("No category summary to export.");
-    const w=window.open("","_blank","width=900,height=1100");if(!w)return alert("Please allow pop-ups to export PDF.");
+    const w=window.open("","_blank","width=1400,height=900");if(!w)return alert("Please allow pop-ups to export PDF.");
 
     const reportRange=fromDate&&toDate
       ?`${exportDate(fromDate)} to ${exportDate(toDate)}`
@@ -1505,53 +1505,116 @@ export default function Expenses(){
       search?`Search: ${search}`:""
     ].filter(Boolean);
 
+    const fyYearOf=iso=>{
+      const y=Number(String(iso||"").slice(0,4));
+      const m=Number(String(iso||"").slice(5,7));
+      if(!y||!m)return null;
+      return m>=4?y:y-1;
+    };
+    const fyYear=fyYearOf(fromDate)||fyYearOf(fyStart)||fyYearOf((analysisRows.map(r=>String(r.date||"").slice(0,10)).filter(Boolean).sort()[0]||""))||2026;
+    const lastIso=[toDate,...analysisRows.map(r=>String(r.date||"").slice(0,10))].filter(Boolean).sort().at(-1)||"";
+    const lastFY=fyYearOf(lastIso);
+    const fyCount=Math.max(1,(lastFY&&lastFY>fyYear?lastFY-fyYear+1:1));
+    const monthKeys=[];
+    for(let f=0;f<fyCount;f++){
+      const y=fyYear+f;
+      for(let i=0;i<12;i++){
+        const d=new Date(y,3+i,1);
+        monthKeys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+      }
+    }
+    const monthHead=k=>{
+      const lab=MONTHS[Number(k.slice(5,7))-1]||k;
+      return fyCount>1?`${lab}-${k.slice(2,4)}`:lab;
+    };
+    const cellAmt=v=>v?escapeHtml(fmt(v)):"—";
+
+    const subMonth={};
+    const catMonth={};
+    const grandMonth={};
+    for(const r of analysisRows){
+      const mk=String(r.date||"").slice(0,7);
+      if(!/^\d{4}-\d{2}$/.test(mk))continue;
+      const cat=r.category||"Unclassified";
+      const sub=r.subCategory||"Unclassified";
+      if(!subMonth[cat])subMonth[cat]={};
+      if(!subMonth[cat][sub])subMonth[cat][sub]={};
+      subMonth[cat][sub][mk]=(subMonth[cat][sub][mk]||0)+Number(r.amount||0);
+      if(!catMonth[cat])catMonth[cat]={};
+      catMonth[cat][mk]=(catMonth[cat][mk]||0)+Number(r.amount||0);
+      grandMonth[mk]=(grandMonth[mk]||0)+Number(r.amount||0);
+    }
+
+    const cols=`minmax(46mm,1.45fr) repeat(${Math.max(monthKeys.length,1)},minmax(16mm,1fr)) minmax(28mm,0.95fr)`;
+    const monthCells=vals=>monthKeys.map(k=>`<div class="num">${cellAmt(vals[k]||0)}</div>`).join("");
+
     const categoryRows=analysisCategoryTotals.map(([category,total],index)=>{
       const g=categoryDrillData[category]||{subs:{}};
       const subs=sortedPairs(g.subs);
+      const cMonths=catMonth[category]||{};
       const subRows=subs.length
-        ?subs.map(([sub,amount])=>`<div class="sub-row"><div class="sub-name"><span class="dot"></span>${escapeHtml(sub||"Unclassified")}</div><div class="amount">${escapeHtml(fmt(amount))}</div></div>`).join("")
-        :`<div class="sub-row empty"><div class="sub-name"><span class="dot"></span>No subcategory</div><div class="amount">—</div></div>`;
+        ?subs.map(([sub,amount])=>{
+          const m=subMonth[category]?.[sub]||{};
+          return `<div class="sub-row">
+            <div class="sub-name"><span class="dot"></span>${escapeHtml(sub||"Unclassified")}</div>
+            ${monthCells(m)}
+            <div class="num amount">${escapeHtml(fmt(amount))}</div>
+          </div>`;
+        }).join("")
+        :`<div class="sub-row empty"><div class="sub-name"><span class="dot"></span>No subcategory</div>${monthKeys.map(()=>`<div class="num">—</div>`).join("")}<div class="num">—</div></div>`;
       return `<section class="category-block">
         <div class="category-row">
           <div class="category-name"><span class="category-no">${index+1}</span><span>${escapeHtml(category)}</span></div>
-          <div class="category-total">${escapeHtml(fmt(total))}</div>
+          ${monthCells(cMonths)}
+          <div class="num category-total">${escapeHtml(fmt(total))}</div>
         </div>
         <div class="sub-list">${subRows}</div>
       </section>`;
     }).join("");
 
+    const headMonths=monthKeys.map(k=>`<div>${escapeHtml(monthHead(k))}</div>`).join("");
+    const grandRow=`<div class="grand-row">
+      <div>Grand total</div>
+      ${monthCells(grandMonth)}
+      <div class="num">${escapeHtml(fmt(analysisTotal))}</div>
+    </div>`;
+
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Expense Category Summary</title><style>
       *{box-sizing:border-box}
       html,body{margin:0;padding:0;background:#fff;color:#172033}
-      body{font-family:"Segoe UI",Arial,Helvetica,sans-serif;font-size:10.2px;line-height:1.38;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      .page{padding:4mm 1mm 0}
-      .topline{height:3px;background:#102d5d;margin-bottom:9px}
-      .header{display:grid;grid-template-columns:minmax(0,1fr) 52mm;gap:10mm;align-items:start;margin-bottom:8px}
-      .brand{font-size:8px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#66748d;margin-bottom:5px}
-      h1{font-family:Georgia,"Times New Roman",serif;font-size:25px;line-height:1.08;color:#102d5d;margin:0 0 4px;font-weight:700}
-      .subtitle{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#67758c;font-weight:650}
-      .accent{width:28mm;height:2px;background:#102d5d;margin:8px 0 7px}
-      .period{font-size:9.5px;color:#516078;font-weight:600}
-      .total-card{border:1px solid #c8d1df;border-radius:7px;padding:9px 10px;text-align:right;background:#f8fafc}
-      .total-card .k{font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#68758a}
-      .total-card .v{font-family:Georgia,"Times New Roman",serif;font-size:19px;color:#102d5d;font-weight:700;margin-top:3px;white-space:nowrap}
-      .filters{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px}
-      .chip{border:1px solid #d5dbe5;border-radius:10px;padding:2px 6px;color:#536177;background:#fafbfc;font-size:7.8px}
-      .table-head{display:grid;grid-template-columns:1fr auto;gap:12px;background:#102d5d;color:#fff;padding:6px 9px;border-radius:5px 5px 0 0;font-size:8px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+      body{font-family:"Segoe UI",Arial,Helvetica,sans-serif;font-size:8.6px;line-height:1.28;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .page{padding:3mm 2mm 0}
+      .topline{height:3px;background:#102d5d;margin-bottom:8px}
+      .header{display:grid;grid-template-columns:minmax(0,1fr) 58mm;gap:10mm;align-items:start;margin-bottom:7px}
+      .brand{font-size:8px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#66748d;margin-bottom:4px}
+      h1{font-family:Georgia,"Times New Roman",serif;font-size:22px;line-height:1.08;color:#102d5d;margin:0 0 3px;font-weight:700}
+      .subtitle{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#67758c;font-weight:650}
+      .accent{width:28mm;height:2px;background:#102d5d;margin:6px 0 6px}
+      .period{font-size:9px;color:#516078;font-weight:600}
+      .total-card{border:1px solid #c8d1df;border-radius:7px;padding:8px 10px;text-align:right;background:#f8fafc}
+      .total-card .k{font-size:7.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#68758a}
+      .total-card .v{font-family:Georgia,"Times New Roman",serif;font-size:17px;color:#102d5d;font-weight:700;margin-top:2px;white-space:nowrap}
+      .filters{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 7px}
+      .chip{border:1px solid #d5dbe5;border-radius:10px;padding:2px 6px;color:#536177;background:#fafbfc;font-size:7.6px}
+      .table-head,.category-row,.sub-row,.grand-row{display:grid;grid-template-columns:${cols};gap:6px;align-items:center}
+      .table-head{background:#102d5d;color:#fff;padding:6px 9px;border-radius:5px 5px 0 0;font-size:7.6px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+      .table-head>div:not(:first-child){text-align:right}
       .category-block{border-left:1px solid #d8dee8;border-right:1px solid #d8dee8;border-bottom:1px solid #d8dee8;break-inside:avoid;page-break-inside:avoid}
-      .category-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;background:#f0f4f9;padding:5px 9px}
-      .category-name{display:flex;align-items:center;gap:7px;font-size:10.7px;font-weight:800;color:#102d5d}
-      .category-no{width:20px;height:20px;border:1px solid #c4d0df;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#fff;font-size:8px;flex:0 0 auto}
-      .category-total{font-size:10.6px;font-weight:800;color:#102d5d;white-space:nowrap}
-      .sub-list{padding-left:35px}
-      .sub-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:4px 9px 4px 0;border-top:1px dotted #d7dde6;align-items:start}
+      .category-row{background:#f0f4f9;padding:5px 9px}
+      .category-name{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:800;color:#102d5d}
+      .category-no{width:18px;height:18px;border:1px solid #c4d0df;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#fff;font-size:7.5px;flex:0 0 auto}
+      .category-total{font-size:10px;font-weight:800;color:#102d5d;white-space:nowrap}
+      .sub-row{padding:3.5px 9px 3.5px 28px;border-top:1px dotted #d7dde6}
       .sub-row:first-child{border-top:0}
       .sub-name{display:flex;align-items:flex-start;gap:7px;color:#39465a;overflow-wrap:anywhere}
       .dot{width:3px;height:3px;background:#6c7c94;border-radius:50%;margin-top:5px;flex:0 0 auto}
-      .amount{text-align:right;white-space:nowrap;color:#202b3d;font-weight:600}
+      .num{text-align:right;white-space:nowrap;color:#202b3d;font-variant-numeric:tabular-nums}
+      .amount{font-weight:650}
       .empty{color:#7a8597;font-style:italic}
-      .footer{display:flex;justify-content:space-between;gap:12px;border-top:1px solid #aeb8c7;margin-top:9px;padding-top:5px;font-size:7.5px;color:#7a8494;font-style:italic}
-      @page{size:A4 portrait;margin:11mm 12mm 12mm}
+      .grand-row{background:#102d5d;color:#fff;padding:6px 9px;font-weight:800}
+      .grand-row .num{color:#fff}
+      .footer{display:flex;justify-content:space-between;gap:12px;border-top:1px solid #aeb8c7;margin-top:8px;padding-top:5px;font-size:7.4px;color:#7a8494;font-style:italic}
+      @page{size:A4 landscape;margin:8mm 9mm 8mm}
       @media print{
         .page{padding:0}
         .category-block{break-inside:avoid;page-break-inside:avoid}
@@ -1565,7 +1628,7 @@ export default function Expenses(){
           <h1>Partner / Staff Expenses</h1>
           <div class="subtitle">Category and Subcategory Summary</div>
           <div class="accent"></div>
-          <div class="period">${escapeHtml(reportRange)} · ${analysisRows.length} expense records</div>
+          <div class="period">${escapeHtml(reportRange)} · ${analysisRows.length} expense records · FY Apr–Mar · A4 landscape</div>
         </div>
         <div class="total-card">
           <div class="k">Grand Total</div>
@@ -1573,13 +1636,15 @@ export default function Expenses(){
         </div>
       </header>
       ${activeFilters.length?`<div class="filters">${activeFilters.map(x=>`<span class="chip">${escapeHtml(x)}</span>`).join("")}</div>`:""}
-      <div class="table-head"><div>Category / Subcategory</div><div>Amount (₹)</div></div>
+      <div class="table-head"><div>Category / Subcategory</div>${headMonths}<div>Amount (₹)</div></div>
       ${categoryRows}
-      <footer class="footer"><span>All amounts are in Indian Rupees (₹).</span><span>System-generated expense summary.</span></footer>
-      <script>window.onload=()=>{setTimeout(()=>window.print(),150)}</script>
+      ${grandRow}
+      <footer class="footer"><span>All amounts are in Indian Rupees (₹). Columns are FY Apr–Mar. Months with no spend show —.</span><span>System-generated expense summary.</span></footer>
+      <script>window.onload=()=>{setTimeout(()=>window.print(),150)}<\/script>
     </main></body></html>`);
     w.document.close();
   }
+
   function exportAnalysisPDF(){
     if(!analysisRows.length)return alert("No analysis rows to export.");
     const w=window.open("","_blank","width=1300,height=900");if(!w)return alert("Please allow pop-ups to export PDF.");
