@@ -992,8 +992,10 @@ export default function Expenses(){
     if(!analysisRows.length)return alert("No analysis rows to export.");
 
     const xml=value=>escapeHtml(value);
-    const numberCell=value=>`<Cell ss:StyleID="Money"><Data ss:Type="Number">${Number(value||0).toFixed(2)}</Data></Cell>`;
-    const textCell=(value,style="Text")=>`<Cell ss:StyleID="${style}"><Data ss:Type="String">${xml(value)}</Data></Cell>`;
+    const num=value=>Number(value||0).toFixed(2);
+    const cell=(style,type,value)=>`<Cell ss:StyleID="${style}"><Data ss:Type="${type}">${type==="Number"?num(value):xml(value)}</Data></Cell>`;
+    const empty=(style="Text")=>`<Cell ss:StyleID="${style}"/>`;
+    const merge=(across,style,type,value)=>`<Cell ss:MergeAcross="${across}" ss:StyleID="${style}"><Data ss:Type="${type}">${type==="Number"?num(value):xml(value)}</Data></Cell>`;
 
     const filterSummary=[
       fromDate?`From ${exportDate(fromDate)}`:"",
@@ -1006,32 +1008,171 @@ export default function Expenses(){
       search?`Search: ${search}`:""
     ].filter(Boolean).join(" · ")||"All Expense Analysis records";
 
-    const detailRows=analysisRows.map(r=>`<Row>
-      ${textCell(exportDate(r.date))}
-      ${textCell(r.category)}
-      ${textCell(r.subCategory||"Unclassified")}
-      ${textCell(r.person||"")}
-      ${textCell(r.scope||"")}
-      ${textCell(r.funding||"")}
-      ${numberCell(r.amount)}
-      ${textCell(r.source||"")}
-      ${textCell(r.description||"")}
+    const monthKey=value=>{
+      const raw=String(value||"").slice(0,10);
+      if(!raw||raw.length<7)return "";
+      return raw.slice(0,7);
+    };
+    const monthLabel=key=>{
+      const [y,m]=String(key||"").split("-");
+      const idx=Number(m)-1;
+      return y&&MONTHS[idx]?`${MONTHS[idx]} ${y}`:key||"Unspecified";
+    };
+
+    const monthMap={};
+    const personMap={};
+    for(const r of analysisRows){
+      const mk=monthKey(r.date)||"Unspecified";
+      if(!monthMap[mk])monthMap[mk]={amount:0,lines:0};
+      monthMap[mk].amount+=r.amount;monthMap[mk].lines+=1;
+      const person=String(r.person||"").trim()||"Unassigned";
+      if(!personMap[person])personMap[person]={amount:0,lines:0};
+      personMap[person].amount+=r.amount;personMap[person].lines+=1;
+    }
+    const monthTotals=Object.entries(monthMap).sort((a,b)=>a[0].localeCompare(b[0]));
+    const personTotals=Object.entries(personMap).sort((a,b)=>b[1].amount-a[1].amount);
+    const avgLine=analysisRows.length?analysisTotal/analysisRows.length:0;
+    const largest=analysisRows.reduce((m,r)=>r.amount>m?r.amount:m,0);
+
+    const catCountMap={};
+    const fundCountMap={};
+    for(const r of analysisRows){
+      catCountMap[r.category]=(catCountMap[r.category]||0)+1;
+      fundCountMap[r.funding]=(fundCountMap[r.funding]||0)+1;
+    }
+
+    const share=value=>analysisTotal>0?((Number(value||0)/analysisTotal)).toFixed(6):"0";
+
+    const summaryMonthRows=monthTotals.map(([key,g])=>`<Row>
+      ${cell("Text","String",monthLabel(key))}
+      ${cell("Money","Number",g.amount)}
+      ${cell("Pct","Number",share(g.amount))}
+      ${cell("Count","Number",g.lines)}
     </Row>`).join("");
 
-    const categoryRows=analysisCategoryTotals.map(([category,total])=>{
-      const group=categoryDrillData[category]||{subs:{}};
-      const subs=sortedPairs(group.subs);
-      const categoryRow=`<Row>
-        ${textCell(category,"Category")}
-        ${textCell("Category Total","CategoryLabel")}
-        <Cell ss:StyleID="CategoryMoney"><Data ss:Type="Number">${Number(total||0).toFixed(2)}</Data></Cell>
+    const summaryCatRows=analysisCategoryTotals.map(([name,amount])=>`<Row>
+      ${cell("Text","String",name)}
+      ${cell("Money","Number",amount)}
+      ${cell("Pct","Number",share(amount))}
+      ${cell("Count","Number",catCountMap[name]||0)}
+    </Row>`).join("");
+
+    const summaryPersonRows=personTotals.map(([name,g])=>`<Row>
+      ${cell("Text","String",name)}
+      ${cell("Money","Number",g.amount)}
+      ${cell("Pct","Number",share(g.amount))}
+      ${cell("Count","Number",g.lines)}
+    </Row>`).join("");
+
+    const summaryFundRows=analysisFundingTotals.map(([name,amount])=>`<Row>
+      ${cell("Text","String",name)}
+      ${cell("Money","Number",amount)}
+      ${cell("Pct","Number",share(amount))}
+      ${cell("Count","Number",fundCountMap[name]||0)}
+    </Row>`).join("");
+
+    const grouped={};
+    for(const r of analysisRows){
+      const cat=r.category||"Unclassified";
+      const sub=r.subCategory||"Unclassified";
+      if(!grouped[cat])grouped[cat]={};
+      if(!grouped[cat][sub])grouped[cat][sub]=[];
+      grouped[cat][sub].push(r);
+    }
+    const catsSorted=analysisCategoryTotals.map(([name])=>name);
+    for(const cat of Object.keys(grouped)){
+      if(!catsSorted.includes(cat))catsSorted.push(cat);
+    }
+
+    const ledgerRows=[];
+    for(const cat of catsSorted){
+      const subs=grouped[cat]||{};
+      const catLines=Object.values(subs).reduce((n,rows)=>n+rows.length,0);
+      const catAmount=analysisCategoryTotals.find(([name])=>name===cat)?.[1]
+        ||Object.values(subs).reduce((s,rows)=>s+rows.reduce((a,r)=>a+r.amount,0),0);
+      ledgerRows.push(`<Row>
+        ${cell("CatBanner","String",cat)}
+        ${empty("CatBanner")}
+        ${empty("CatBanner")}
+        ${empty("CatBanner")}
+        ${empty("CatBanner")}
+        ${empty("CatBanner")}
+        ${cell("CatBannerMoney","Number",catAmount)}
+        ${cell("CatBanner","String",`${catLines} lines`)}
+        ${empty("CatBanner")}
+      </Row>`);
+      const subPairs=Object.entries(subs).sort((a,b)=>b[1].reduce((s,r)=>s+r.amount,0)-a[1].reduce((s,r)=>s+r.amount,0));
+      for(const [sub,rows] of subPairs){
+        const subTotal=rows.reduce((s,r)=>s+r.amount,0);
+        ledgerRows.push(`<Row>
+          ${cell("SubBannerMuted","String",cat)}
+          ${cell("SubBanner","String",sub)}
+          ${empty("SubBanner")}
+          ${empty("SubBanner")}
+          ${empty("SubBanner")}
+          ${empty("SubBanner")}
+          ${cell("SubBannerMoney","Number",subTotal)}
+          ${cell("SubBanner","String",`${rows.length} lines`)}
+          ${empty("SubBanner")}
+        </Row>`);
+        const ordered=[...rows].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
+        ordered.forEach((r,i)=>{
+          const zebra=i%2===0?"Text":"Alt";
+          const zebraMoney=i%2===0?"Money":"AltMoney";
+          ledgerRows.push(`<Row>
+            ${cell("Muted","String",cat)}
+            ${cell("Muted","String",sub)}
+            ${cell(zebra,"String",exportDate(r.date))}
+            ${cell(zebra,"String",r.person||"")}
+            ${cell(zebra,"String",r.scope||"")}
+            ${cell(zebra,"String",r.funding||"")}
+            ${cell(zebraMoney,"Number",r.amount)}
+            ${cell(zebra,"String",r.source||"")}
+            ${cell(zebra,"String",r.description||"")}
+          </Row>`);
+        });
+        ledgerRows.push(`<Row>
+          ${cell("Muted","String",cat)}
+          ${cell("SubTotal","String",`${sub}  ·  total`)}
+          ${empty("Kpi")}
+          ${empty("Kpi")}
+          ${empty("Kpi")}
+          ${empty("Kpi")}
+          ${cell("SubTotalMoney","Number",subTotal)}
+          ${cell("Kpi","String",String(rows.length))}
+          ${empty("Kpi")}
+        </Row>`);
+      }
+      ledgerRows.push(`<Row>
+        ${merge(5,"Tot","String",`${cat}  ·  CATEGORY TOTAL`)}
+        ${cell("TotMoney","Number",catAmount)}
+        ${cell("Tot","String","Matches summary")}
+        ${empty("Tot")}
+      </Row>`);
+      ledgerRows.push(`<Row>${Array.from({length:9},()=>empty()).join("")}</Row>`);
+    }
+    ledgerRows.push(`<Row>
+      ${merge(5,"HeaderText","String","GRAND TOTAL")}
+      ${cell("HeaderMoney","Number",analysisTotal)}
+      ${cell("HeaderText","String","Matches Summary + Detail")}
+      ${empty("HeaderText")}
+    </Row>`);
+
+    const detailRows=analysisRows.map((r,i)=>{
+      const zebra=i%2===0?"Text":"Alt";
+      const zebraMoney=i%2===0?"Money":"AltMoney";
+      return `<Row>
+        ${cell(zebra,"String",exportDate(r.date))}
+        ${cell(zebra,"String",monthKey(r.date))}
+        ${cell(zebra,"String",r.category||"")}
+        ${cell(zebra,"String",r.subCategory||"Unclassified")}
+        ${cell(zebra,"String",r.person||"")}
+        ${cell(zebra,"String",r.scope||"")}
+        ${cell(zebra,"String",r.funding||"")}
+        ${cell(zebraMoney,"Number",r.amount)}
+        ${cell(zebra,"String",r.source||"")}
+        ${cell(zebra,"String",r.description||"")}
       </Row>`;
-      const subRows=(subs.length?subs:[["Unclassified",total]]).map(([sub,amount])=>`<Row>
-        ${textCell(category,"SubCategoryParent")}
-        ${textCell(sub||"Unclassified","SubCategory")}
-        ${numberCell(amount)}
-      </Row>`).join("");
-      return categoryRow+subRows;
     }).join("");
 
     const workbook=`<?xml version="1.0" encoding="UTF-8"?>
@@ -1042,42 +1183,170 @@ export default function Expenses(){
  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
  xmlns:html="http://www.w3.org/TR/REC-html40">
  <Styles>
-  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Top"/><Font ss:FontName="Calibri" ss:Size="10"/></Style>
-  <Style ss:ID="Title"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="16" ss:Bold="1" ss:Color="#102D5D"/></Style>
-  <Style ss:ID="SubTitle"><Font ss:FontName="Calibri" ss:Size="9" ss:Color="#66748D"/></Style>
-  <Style ss:ID="Header"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Font ss:FontName="Calibri" ss:Size="9" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#102D5D" ss:Pattern="Solid"/></Style>
-  <Style ss:ID="Text"><Alignment ss:Vertical="Top" ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E3E7EE"/></Borders></Style>
-  <Style ss:ID="Money"><Alignment ss:Horizontal="Right" ss:Vertical="Top"/><NumberFormat ss:Format="₹#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E3E7EE"/></Borders></Style>
-  <Style ss:ID="SummaryLabel"><Font ss:Bold="1" ss:Color="#526178"/></Style>
-  <Style ss:ID="SummaryMoney"><Alignment ss:Horizontal="Right"/><Font ss:Bold="1" ss:Size="12" ss:Color="#102D5D"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
-  <Style ss:ID="Category"><Font ss:Bold="1" ss:Color="#102D5D"/><Interior ss:Color="#EDF3F9" ss:Pattern="Solid"/></Style>
-  <Style ss:ID="CategoryLabel"><Font ss:Bold="1" ss:Color="#617089"/><Interior ss:Color="#EDF3F9" ss:Pattern="Solid"/></Style>
-  <Style ss:ID="CategoryMoney"><Alignment ss:Horizontal="Right"/><Font ss:Bold="1" ss:Color="#102D5D"/><Interior ss:Color="#EDF3F9" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
-  <Style ss:ID="SubCategoryParent"><Font ss:Color="#9AA4B3"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E8ED"/></Borders></Style>
-  <Style ss:ID="SubCategory"><Alignment ss:Indent="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E8ED"/></Borders></Style>
+  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#4A4458"/></Style>
+  <Style ss:ID="Title"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="18" ss:Bold="1" ss:Color="#6B5B7A"/></Style>
+  <Style ss:ID="SubTitle"><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#8A8196"/></Style>
+  <Style ss:ID="Header"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Font ss:FontName="Calibri" ss:Size="9" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#E4D7F5" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="HeaderText"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#E4D7F5" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="HeaderMoney"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#E4D7F5" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="KpiLabel"><Font ss:FontName="Calibri" ss:Size="8" ss:Bold="1" ss:Color="#8A8196"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="KpiValue"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="14" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="KpiCount"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="14" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/><NumberFormat ss:Format="#,##0"/></Style>
+  <Style ss:ID="Section"><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#6B5B7A"/></Style>
+  <Style ss:ID="Text"><Alignment ss:Vertical="Center" ss:WrapText="1"/><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#4A4458"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="Alt"><Alignment ss:Vertical="Center" ss:WrapText="1"/><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#4A4458"/><Interior ss:Color="#F3EEF8" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="Muted"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="9" ss:Color="#8A8196"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="Money"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#6B5B7A"/><NumberFormat ss:Format="₹#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="AltMoney"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#F3EEF8" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="Pct"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><NumberFormat ss:Format="0.0%"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="Count"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><NumberFormat ss:Format="#,##0"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="Kpi"><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#4A4458"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="CatBanner"><Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#DDD0F0" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="CatBannerMoney"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#DDD0F0" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="SubBanner"><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#3D5A6C"/><Interior ss:Color="#D7E8F5" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="SubBannerMuted"><Font ss:FontName="Calibri" ss:Size="9" ss:Color="#8A8196"/><Interior ss:Color="#D7E8F5" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="SubBannerMoney"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#3D5A6C"/><Interior ss:Color="#D7E8F5" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="SubTotal"><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#3D5A6C"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="SubTotalMoney"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#3D5A6C"/><Interior ss:Color="#D8EFE4" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
+  <Style ss:ID="Tot"><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#FDE4D4" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2D9E8"/></Borders></Style>
+  <Style ss:ID="TotMoney"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#6B5B7A"/><Interior ss:Color="#FDE4D4" ss:Pattern="Solid"/><NumberFormat ss:Format="₹#,##0.00"/></Style>
  </Styles>
- <Worksheet ss:Name="Expense Detail">
+ <Worksheet ss:Name="Summary">
   <Table>
-   <Column ss:Width="78"/><Column ss:Width="105"/><Column ss:Width="125"/><Column ss:Width="115"/><Column ss:Width="85"/><Column ss:Width="105"/><Column ss:Width="85"/><Column ss:Width="120"/><Column ss:Width="260"/>
-   <Row ss:Height="24"><Cell ss:MergeAcross="8" ss:StyleID="Title"><Data ss:Type="String">Expense Analysis - Detail</Data></Cell></Row>
-   <Row><Cell ss:MergeAcross="8" ss:StyleID="SubTitle"><Data ss:Type="String">${xml(filterSummary)}</Data></Cell></Row>
-   <Row><Cell ss:StyleID="SummaryLabel"><Data ss:Type="String">Total Expense</Data></Cell><Cell ss:StyleID="SummaryMoney"><Data ss:Type="Number">${Number(analysisTotal||0).toFixed(2)}</Data></Cell><Cell ss:StyleID="SummaryLabel"><Data ss:Type="String">Records</Data></Cell><Cell><Data ss:Type="Number">${analysisRows.length}</Data></Cell></Row>
-   <Row ss:Height="21">${["Date","Category","Subcategory","Expense For","Scope","Funding Source","Amount","Source","Description"].map(h=>textCell(h,"Header")).join("")}</Row>
-   ${detailRows}
+   <Column ss:Width="22"/><Column ss:Width="150"/><Column ss:Width="110"/><Column ss:Width="70"/><Column ss:Width="70"/><Column ss:Width="22"/><Column ss:Width="160"/><Column ss:Width="110"/><Column ss:Width="70"/><Column ss:Width="70"/>
+   <Row ss:Height="8"/>
+   <Row ss:Height="26"><Cell ss:Index="2" ss:MergeAcross="8" ss:StyleID="Title"><Data ss:Type="String">Zivara Family Office LLP  ·  Expenses</Data></Cell></Row>
+   <Row><Cell ss:Index="2" ss:MergeAcross="8" ss:StyleID="SubTitle"><Data ss:Type="String">${xml(filterSummary)}</Data></Cell></Row>
+   <Row ss:Height="8"/>
+   <Row>
+    <Cell ss:Index="2" ss:MergeAcross="1" ss:StyleID="KpiLabel"><Data ss:Type="String">TOTAL</Data></Cell>
+    <Cell ss:MergeAcross="1" ss:StyleID="KpiLabel"><Data ss:Type="String">LINES</Data></Cell>
+    <Cell ss:Index="7" ss:MergeAcross="1" ss:StyleID="KpiLabel"><Data ss:Type="String">AVG LINE</Data></Cell>
+    <Cell ss:MergeAcross="1" ss:StyleID="KpiLabel"><Data ss:Type="String">LARGEST</Data></Cell>
+   </Row>
+   <Row ss:Height="24">
+    <Cell ss:Index="2" ss:MergeAcross="1" ss:StyleID="KpiValue"><Data ss:Type="Number">${num(analysisTotal)}</Data></Cell>
+    <Cell ss:MergeAcross="1" ss:StyleID="KpiCount"><Data ss:Type="Number">${analysisRows.length}</Data></Cell>
+    <Cell ss:Index="7" ss:MergeAcross="1" ss:StyleID="KpiValue"><Data ss:Type="Number">${num(avgLine)}</Data></Cell>
+    <Cell ss:MergeAcross="1" ss:StyleID="KpiValue"><Data ss:Type="Number">${num(largest)}</Data></Cell>
+   </Row>
+   <Row ss:Height="8"/>
+   <Row><Cell ss:Index="2" ss:StyleID="Section"><Data ss:Type="String">BY MONTH</Data></Cell><Cell ss:Index="7" ss:StyleID="Section"><Data ss:Type="String">BY CATEGORY</Data></Cell></Row>
+   <Row ss:Height="20">
+    <Cell ss:Index="2" ss:StyleID="Header"><Data ss:Type="String">Month</Data></Cell>
+    ${cell("Header","String","Amount")}
+    ${cell("Header","String","Share")}
+    ${cell("Header","String","Lines")}
+    <Cell ss:Index="7" ss:StyleID="Header"><Data ss:Type="String">Category</Data></Cell>
+    ${cell("Header","String","Amount")}
+    ${cell("Header","String","Share")}
+    ${cell("Header","String","Lines")}
+   </Row>
+   ${(()=>{
+     const rows=[];
+     const n=Math.max(monthTotals.length,analysisCategoryTotals.length);
+     for(let i=0;i<n;i++){
+       const m=monthTotals[i];
+       const c=analysisCategoryTotals[i];
+       rows.push(`<Row>
+        <Cell ss:Index="2" ss:StyleID="Text"><Data ss:Type="String">${m?xml(monthLabel(m[0])):""}</Data></Cell>
+        ${m?cell("Money","Number",m[1].amount):empty()}
+        ${m?cell("Pct","Number",share(m[1].amount)):empty()}
+        ${m?cell("Count","Number",m[1].lines):empty()}
+        <Cell ss:Index="7" ss:StyleID="Text"><Data ss:Type="String">${c?xml(c[0]):""}</Data></Cell>
+        ${c?cell("Money","Number",c[1]):empty()}
+        ${c?cell("Pct","Number",share(c[1])):empty()}
+        ${c?cell("Count","Number",catCountMap[c[0]]||0):empty()}
+       </Row>`);
+     }
+     return rows.join("");
+   })()}
+   <Row>
+    <Cell ss:Index="2" ss:StyleID="Tot"><Data ss:Type="String">Total</Data></Cell>
+    ${cell("TotMoney","Number",analysisTotal)}
+    ${cell("Tot","String","100.0%")}
+    ${cell("Tot","String",String(analysisRows.length))}
+    <Cell ss:Index="7" ss:StyleID="Tot"><Data ss:Type="String">Total</Data></Cell>
+    ${cell("TotMoney","Number",analysisTotal)}
+    ${cell("Tot","String","100.0%")}
+    ${cell("Tot","String",String(analysisRows.length))}
+   </Row>
+   <Row ss:Height="10"/>
+   <Row><Cell ss:Index="2" ss:StyleID="Section"><Data ss:Type="String">BY PERSON</Data></Cell><Cell ss:Index="7" ss:StyleID="Section"><Data ss:Type="String">BY WHO PAID</Data></Cell></Row>
+   <Row ss:Height="20">
+    <Cell ss:Index="2" ss:StyleID="Header"><Data ss:Type="String">Expense For</Data></Cell>
+    ${cell("Header","String","Amount")}
+    ${cell("Header","String","Share")}
+    ${cell("Header","String","Lines")}
+    <Cell ss:Index="7" ss:StyleID="Header"><Data ss:Type="String">Funding Source</Data></Cell>
+    ${cell("Header","String","Amount")}
+    ${cell("Header","String","Share")}
+    ${cell("Header","String","Lines")}
+   </Row>
+   ${(()=>{
+     const rows=[];
+     const n=Math.max(personTotals.length,analysisFundingTotals.length);
+     for(let i=0;i<n;i++){
+       const p=personTotals[i];
+       const f=analysisFundingTotals[i];
+       rows.push(`<Row>
+        <Cell ss:Index="2" ss:StyleID="Text"><Data ss:Type="String">${p?xml(p[0]):""}</Data></Cell>
+        ${p?cell("Money","Number",p[1].amount):empty()}
+        ${p?cell("Pct","Number",share(p[1].amount)):empty()}
+        ${p?cell("Count","Number",p[1].lines):empty()}
+        <Cell ss:Index="7" ss:StyleID="Text"><Data ss:Type="String">${f?xml(f[0]):""}</Data></Cell>
+        ${f?cell("Money","Number",f[1]):empty()}
+        ${f?cell("Pct","Number",share(f[1])):empty()}
+        ${f?cell("Count","Number",fundCountMap[f[0]]||0):empty()}
+       </Row>`);
+     }
+     return rows.join("");
+   })()}
+   <Row>
+    <Cell ss:Index="2" ss:StyleID="Tot"><Data ss:Type="String">Total</Data></Cell>
+    ${cell("TotMoney","Number",analysisTotal)}
+    ${cell("Tot","String","100.0%")}
+    ${cell("Tot","String",String(analysisRows.length))}
+    <Cell ss:Index="7" ss:StyleID="Tot"><Data ss:Type="String">Total</Data></Cell>
+    ${cell("TotMoney","Number",analysisTotal)}
+    ${cell("Tot","String","100.0%")}
+    ${cell("Tot","String",String(analysisRows.length))}
+   </Row>
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><Selected/></WorksheetOptions>
+ </Worksheet>
+ <Worksheet ss:Name="By Category">
+  <Table>
+   <Column ss:Width="150"/><Column ss:Width="170"/><Column ss:Width="85"/><Column ss:Width="120"/><Column ss:Width="90"/><Column ss:Width="140"/><Column ss:Width="100"/><Column ss:Width="160"/><Column ss:Width="280"/>
+   <Row ss:Height="26">${merge(8,"Title","String","Category ledger  ·  every transaction under its heading")}</Row>
+   <Row>${merge(8,"SubTitle","String",filterSummary)}</Row>
+   <Row ss:Height="8"/>
+   <Row ss:Height="20">${["Category","Subcategory","Date","Expense For","Scope","Funding Source","Amount (₹)","Source","Description"].map(h=>cell("Header","String",h)).join("")}</Row>
+   ${ledgerRows.join("")}
   </Table>
   <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>4</SplitHorizontal><TopRowBottomPane>4</TopRowBottomPane></WorksheetOptions>
  </Worksheet>
- <Worksheet ss:Name="Category Summary">
+ <Worksheet ss:Name="Detail">
   <Table>
-   <Column ss:Width="150"/><Column ss:Width="210"/><Column ss:Width="105"/>
-   <Row ss:Height="26"><Cell ss:MergeAcross="2" ss:StyleID="Title"><Data ss:Type="String">Category-wise Expense Summary</Data></Cell></Row>
-   <Row><Cell ss:MergeAcross="2" ss:StyleID="SubTitle"><Data ss:Type="String">${xml(filterSummary)}</Data></Cell></Row>
-   <Row><Cell ss:StyleID="SummaryLabel"><Data ss:Type="String">Grand Total</Data></Cell><Cell/><Cell ss:StyleID="SummaryMoney"><Data ss:Type="Number">${Number(analysisTotal||0).toFixed(2)}</Data></Cell></Row>
-   <Row><Cell ss:StyleID="SummaryLabel"><Data ss:Type="String">Categories</Data></Cell><Cell/><Cell><Data ss:Type="Number">${analysisCategoryTotals.length}</Data></Cell></Row>
-   <Row ss:Height="21">${textCell("Category","Header")}${textCell("Subcategory","Header")}${textCell("Amount","Header")}</Row>
-   ${categoryRows}
+   <Column ss:Width="85"/><Column ss:Width="70"/><Column ss:Width="140"/><Column ss:Width="140"/><Column ss:Width="120"/><Column ss:Width="90"/><Column ss:Width="140"/><Column ss:Width="100"/><Column ss:Width="160"/><Column ss:Width="280"/>
+   <Row ss:Height="26">${merge(9,"Title","String","Expense Detail")}</Row>
+   <Row>${merge(9,"SubTitle","String",filterSummary)}</Row>
+   <Row>
+    ${cell("KpiLabel","String","Total Expense")}
+    ${cell("KpiValue","Number",analysisTotal)}
+    ${cell("KpiLabel","String","Records")}
+    ${cell("KpiCount","Number",analysisRows.length)}
+   </Row>
+   <Row ss:Height="20">${["Date","Month","Category","Subcategory","Expense For","Scope","Funding Source","Amount (₹)","Source","Description"].map(h=>cell("Header","String",h)).join("")}</Row>
+   ${detailRows}
+   <Row>
+    ${cell("Tot","String","TOTAL")}
+    ${empty("Tot")}${empty("Tot")}${empty("Tot")}${empty("Tot")}${empty("Tot")}${empty("Tot")}
+    ${cell("TotMoney","Number",analysisTotal)}
+    ${empty("Tot")}${empty("Tot")}
+   </Row>
   </Table>
-  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>5</SplitHorizontal><TopRowBottomPane>5</TopRowBottomPane></WorksheetOptions>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>4</SplitHorizontal><TopRowBottomPane>4</TopRowBottomPane></WorksheetOptions>
  </Worksheet>
 </Workbook>`;
 
