@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { apiGet } from "../api/client";
 import { useLLP } from "../context/LLPContext";
 import { formatDate } from "../utils/format";
+import UniversalSearch from "../components/UniversalSearch";
 
 const fmt=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
 const card={background:"var(--card)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:"1rem 1.1rem"};
@@ -224,6 +225,8 @@ export default function Dashboard(){
    <div><h2 style={{margin:0,fontSize:"1.25rem",fontWeight:800}}>Accounts Dashboard</h2><p style={{margin:".2rem 0 0",color:"var(--muted)",fontSize:".8rem"}}>Key balances and items needing attention</p></div>
    <button onClick={load} style={btn(false)}>Refresh</button>
   </div>
+
+  <UniversalSearch/>
 
   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))",gap:".8rem"}}>
    {kpis.map(([name,val,color,to])=><button key={name} onClick={()=>navigate(to)} style={{...card,textAlign:"left",cursor:"pointer",minHeight:88}}><div style={label}>{name}</div><div style={{fontSize:"1.3rem",fontWeight:800,marginTop:".35rem",color}}>{val}</div></button>)}
