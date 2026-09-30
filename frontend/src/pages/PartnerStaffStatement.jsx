@@ -46,6 +46,40 @@ function bucket(expense){
   return "Misc / Other";
 }
 
+const normalizePersonName=value=>String(value||"")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g," ")
+  .replace(/\s+/g," ")
+  .trim();
+
+function isPersonLedger(ledger){
+  const group=String(ledger?.GroupName||"").toLowerCase();
+  const systemKey=String(ledger?.SystemKey||"").toLowerCase();
+  return group.includes("partner")||
+    group.includes("staff")||
+    group.includes("other current liabilities")||
+    systemKey.startsWith("partner:")||
+    systemKey.startsWith("person:");
+}
+
+function resolvePersonLedger(personLedgers,value){
+  const q=normalizePersonName(value);
+  if(!q)return null;
+
+  const exact=(personLedgers||[]).find(
+    l=>normalizePersonName(l.LedgerName)===q
+  );
+  if(exact)return exact;
+
+  const matches=(personLedgers||[]).filter(l=>{
+    const n=normalizePersonName(l.LedgerName);
+    return n.startsWith(q+" ")||q.startsWith(n+" ");
+  });
+
+  return matches.length===1?matches[0]:null;
+}
+
 export default function PartnerStaffStatement(){
   const {currentLLP}=useLLP();
   const[expenses,setExpenses]=useState([]);
@@ -79,26 +113,96 @@ export default function PartnerStaffStatement(){
 
   useEffect(()=>{load()},[currentLLP?.llpId,currentLLP?.LLPID,currentLLP?.global]);
 
-  const people=useMemo(()=>[...new Set([
-    ...partners.map(x=>x.PartnerName),
-    ...users.map(x=>x.Name||x.FullName||x.Username),
-    ...expenses.map(x=>x.PaidBy),
-    ...expenses.map(x=>x.ReimburseTo)
-  ].map(x=>String(x||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[partners,users,expenses]);
+  const personLedgers=useMemo(()=>ledgers.filter(isPersonLedger),[ledgers]);
 
-  useEffect(()=>{if(!person&&people.length)setPerson(people[0])},[people,person]);
+  const personProfiles=useMemo(()=>{
+    const profiles=new Map();
 
-  const personLedger=useMemo(()=>{
-    const n=String(person||"").trim().toLowerCase();
-    if(!n)return null;
-    const exact=ledgers.find(l=>String(l.LedgerName||"").trim().toLowerCase()===n);
-    if(exact)return exact;
-    return ledgers.find(l=>{
-      const name=String(l.LedgerName||"").trim().toLowerCase();
-      const group=String(l.GroupName||"").toLowerCase();
-      return name.includes(n)&&(group.includes("partner")||group.includes("staff")||group.includes("current liabilities"));
-    })||null;
-  },[ledgers,person]);
+    const ensureLedger=ledger=>{
+      const key=`ledger:${ledger.LedgerID}`;
+      if(!profiles.has(key)){
+        const canonical=String(ledger.LedgerName||"").trim();
+        profiles.set(key,{
+          key,
+          name:canonical,
+          ledger,
+          aliases:new Set(canonical?[canonical]:[])
+        });
+      }
+      return profiles.get(key);
+    };
+
+    personLedgers.forEach(ensureLedger);
+
+    const rawNames=[
+      ...partners.map(x=>x.PartnerName),
+      ...users.map(x=>x.Name||x.FullName||x.Username),
+      ...expenses.map(x=>x.PaidBy),
+      ...expenses.map(x=>x.ReimburseTo)
+    ].map(x=>String(x||"").trim()).filter(Boolean);
+
+    rawNames.forEach(raw=>{
+      const ledger=resolvePersonLedger(personLedgers,raw);
+      if(ledger){
+        ensureLedger(ledger).aliases.add(raw);
+        return;
+      }
+
+      const key=`raw:${normalizePersonName(raw)}`;
+      if(!profiles.has(key)){
+        profiles.set(key,{key,name:raw,ledger:null,aliases:new Set([raw])});
+      }else{
+        profiles.get(key).aliases.add(raw);
+      }
+    });
+
+    return [...profiles.values()]
+      .map(p=>({...p,aliases:[...p.aliases].filter(Boolean)}))
+      .filter(p=>p.name)
+      .sort((a,b)=>a.name.localeCompare(b.name));
+  },[personLedgers,partners,users,expenses]);
+
+  const people=useMemo(()=>personProfiles.map(p=>p.name),[personProfiles]);
+
+  useEffect(()=>{
+    if(!people.length){
+      if(person)setPerson("");
+      return;
+    }
+    if(!person){
+      setPerson(people[0]);
+      return;
+    }
+    if(people.includes(person))return;
+
+    const current=normalizePersonName(person);
+    const profile=personProfiles.find(
+      p=>p.aliases.some(a=>normalizePersonName(a)===current)
+    );
+    setPerson(profile?.name||people[0]);
+  },[people,person,personProfiles]);
+
+  const personProfile=useMemo(
+    ()=>personProfiles.find(p=>p.name===person)||null,
+    [personProfiles,person]
+  );
+
+  const personLedger=personProfile?.ledger||resolvePersonLedger(personLedgers,person);
+
+  const personAliases=useMemo(()=>{
+    const aliases=[
+      person,
+      ...(personProfile?.aliases||[])
+    ].map(normalizePersonName).filter(Boolean);
+    return new Set(aliases);
+  },[person,personProfile]);
+
+  const mergedAliases=useMemo(
+    ()=>(personProfile?.aliases||[]).filter(
+      a=>normalizePersonName(a)!==normalizePersonName(person)
+    ),
+    [personProfile,person]
+  );
 
   useEffect(()=>{
     let cancelled=false;
@@ -115,13 +219,13 @@ export default function PartnerStaffStatement(){
 
   const personExpenses=useMemo(()=>expenses.filter(e=>{
     const d=String(e.Date||"").slice(0,10);
-    if(String(e.PaidBy||"").trim()!==person)return false;
+    if(!personAliases.has(normalizePersonName(e.PaidBy)))return false;
     if(from&&d<from)return false;
     if(to&&d>to)return false;
     if(category&&bucket(e)!==category)return false;
     if(status&&String(e.Status||"")!==status)return false;
     return true;
-  }).sort((a,b)=>String(b.Date||"").localeCompare(String(a.Date||""))),[expenses,person,from,to,category,status]);
+  }).sort((a,b)=>String(b.Date||"").localeCompare(String(a.Date||""))),[expenses,personAliases,from,to,category,status]);
 
   const repayments=useMemo(()=>statement.filter(r=>{
     const d=String(r.Date||"").slice(0,10);
@@ -142,8 +246,8 @@ export default function PartnerStaffStatement(){
 
   const managementJournals=useMemo(()=>statement.filter(r=>{
     const d=String(r.Date||"").slice(0,10);
-    const source=String(r.SourceType||"").toLowerCase();
-    if(source!=="manual")return false;
+    const source=String(r.SourceType||"").toLowerCase(),voucher=String(r.VoucherType||"").toLowerCase();
+    if(!(source==="manual"||voucher==="journal"))return false;
     if(from&&d<from)return false;if(to&&d>to)return false;
     return true;
   }).map(r=>{
@@ -166,20 +270,9 @@ export default function PartnerStaffStatement(){
   const reimbursementRows=useMemo(()=>repayments.filter(r=>r._purpose==="Expense Reimbursement"),[repayments]);
   const otherTransferRows=useMemo(()=>repayments.filter(r=>r._purpose!=="Expense Reimbursement"),[repayments]);
 
-  const personalVendorBillRows=useMemo(()=>statement.filter(r=>{
-    const d=String(r.Date||"").slice(0,10);
-    if(String(r.SourceType||"").toLowerCase()!=="payable_payment_personal")return false;
-    if(Number(r.Credit||0)<=0)return false;
-    if(from&&d<from)return false;
-    if(to&&d>to)return false;
-    return true;
-  }).sort((a,b)=>String(b.Date||"").localeCompare(String(a.Date||""))),[statement,from,to]);
-
-  const personalVendorBillTotal=useMemo(()=>personalVendorBillRows.reduce((s,r)=>s+Number(r.Credit||0),0),[personalVendorBillRows]);
-
   const expenseTotal=useMemo(()=>personExpenses.reduce((s,x)=>s+Number(x.Amount||0),0),[personExpenses]);
   const reimbursedTotal=useMemo(()=>reimbursementRows.reduce((s,x)=>s+Number(x.Debit||0),0),[reimbursementRows]);
-  const ownClaimAfterRefunds=expenseTotal+personalVendorBillTotal-refundTotal-receivedFromPersonTotal+otherAdjustmentNet;
+  const ownClaimAfterRefunds=expenseTotal-refundTotal-receivedFromPersonTotal+otherAdjustmentNet;
   const totalClaimBeforeZivara=ownClaimAfterRefunds+paidToPersonTotal;
   const managementBalance=totalClaimBeforeZivara-reimbursedTotal;
   const reimbursementBalance=Math.max(0,managementBalance);
@@ -226,7 +319,6 @@ export default function PartnerStaffStatement(){
     <table><tr><td class="title" colspan="2">${esc(person)} — Partner / Staff Settlement Statement</td></tr><tr><td>From</td><td>${esc(dmy(from)||"Start")}</td></tr><tr><td>To</td><td>${esc(dmy(to)||"Latest")}</td></tr></table>
     <table><tr><td class="section" colspan="2">Settlement Summary</td></tr>
       <tr><td>Own Expenses Paid Personally</td><td class="amt">${n(expenseTotal)}</td></tr>
-      ${personalVendorBillTotal>0?`<tr><td>Add: Vendor Bills Paid Personally</td><td class="amt">${n(personalVendorBillTotal)}</td></tr>`:""}
       <tr><td>Less: Refunds / Cancellations</td><td class="amt">${n(refundTotal)}</td></tr>
       <tr><td>Less: Received from Another Person</td><td class="amt">${n(receivedFromPersonTotal)}</td></tr>
       <tr><td>Add: Paid to Another Person on behalf of Zivara</td><td class="amt">${n(paidToPersonTotal)}</td></tr>
@@ -237,7 +329,6 @@ export default function PartnerStaffStatement(){
     </table>
     <table><tr><td class="section" colspan="2">Expense Mix</td></tr><tr><td>Travel</td><td class="amt">${n(byCategory.Travel)}</td></tr><tr><td>Hotel</td><td class="amt">${n(byCategory.Hotel)}</td></tr><tr><td>Food</td><td class="amt">${n(byCategory.Food)}</td></tr><tr><td>Misc / Other</td><td class="amt">${n(byCategory["Misc / Other"])}</td></tr>${otherTransferTotal>0?`<tr><td>Other Transfers / Advances</td><td class="amt">${n(otherTransferTotal)}</td></tr>`:""}</table>
     <table><tr><td class="section" colspan="6">Expense Transactions</td></tr><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Status</th></tr>${personExpenses.map(e=>`<tr><td>${esc(dmy(e.Date))}</td><td>${esc(bucket(e))}</td><td>${esc(e.Description||e.VendorOrPerson||"")}</td><td class="amt">${n(e.Amount)}</td><td>${esc(e.PaidBy||"")}</td><td>${esc(e.Status||"")}</td></tr>`).join("")}</table>
-    ${personalVendorBillRows.length?`<table><tr><td class="section" colspan="4">Vendor Bills Paid Personally</td></tr><tr><th>Date Paid</th><th>Voucher / Reference</th><th>Narration</th><th>Amount</th></tr>${personalVendorBillRows.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r.VoucherNo||r.SourceID||"")}</td><td>${esc(r.Narration||r.Particulars||"")}</td><td class="amt">${n(r.Credit)}</td></tr>`).join("")}</table>`:""}
     <table><tr><td class="section" colspan="7">Refund / Inter-person / Adjustment Transactions</td></tr><tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th>Narration</th><th>Debit</th><th>Credit</th></tr>${managementJournals.length?managementJournals.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r._journalType)}</td><td>${esc(r._from||"")}</td><td>${esc(r._to||"")}</td><td>${esc(r._clean||"")}</td><td class="amt">${Number(r.Debit||0)>0?n(r.Debit):""}</td><td class="amt">${Number(r.Credit||0)>0?n(r.Credit):""}</td></tr>`).join(""):`<tr><td colspan="7">No journal settlement transactions</td></tr>`}</table>
     <table><tr><td class="section" colspan="5">Zivara Payment / Transfer Transactions</td></tr><tr><th>Date</th><th>Reference / UTR</th><th>Narration</th><th>Purpose</th><th>Amount</th></tr>${repayments.length?repayments.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r._bank?.ReferenceID||r.VoucherNo||r.SourceID||"")}</td><td>${esc(r._narration||"")}</td><td>${esc(r._purpose)}</td><td class="amt">${n(r.Debit)}</td></tr>`).join(""):`<tr><td colspan="5">No Zivara payment / transfer transactions</td></tr>`}</table>
     </body></html>`;
@@ -249,7 +340,6 @@ export default function PartnerStaffStatement(){
     if(!person)return;
     const w=window.open("","_blank","width=1200,height=850");if(!w)return alert("Please allow pop-ups to export PDF.");
     const expenseRows=personExpenses.map(e=>`<tr><td>${esc(dmy(e.Date))}</td><td>${esc(bucket(e))}</td><td>${esc(e.Description||e.VendorOrPerson||"")}</td><td class="num">${esc(fmt(e.Amount))}</td><td>${esc(e.Status||"")}</td></tr>`).join("");
-    const personalVendorBillPdfRows=personalVendorBillRows.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r.VoucherNo||r.SourceID||"")}</td><td>${esc(r.Narration||r.Particulars||"")}</td><td class="num">${esc(fmt(r.Credit))}</td></tr>`).join("");
     const journalRows=managementJournals.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r._journalType)}</td><td>${esc(r._from||"—")}</td><td>${esc(r._to||"—")}</td><td>${esc(r._clean||"—")}</td><td class="num">${Number(r.Debit||0)>0?esc(fmt(r.Debit)):"—"}</td><td class="num">${Number(r.Credit||0)>0?esc(fmt(r.Credit)):"—"}</td></tr>`).join("");
     const paymentRows=repayments.map(r=>`<tr><td>${esc(dmy(r.Date))}</td><td>${esc(r._bank?.ReferenceID||r.VoucherNo||r.SourceID||"")}</td><td>${esc(r._narration||"")}</td><td>${esc(r._purpose)}</td><td class="num">${esc(fmt(r.Debit))}</td></tr>`).join("");
     w.document.write(`<!doctype html><html><head><title>${esc(person)} Settlement Statement</title><style>
@@ -259,12 +349,11 @@ export default function PartnerStaffStatement(){
     </style></head><body>
       <h1>Zivara Family Office LLP — Partner / Staff Settlement Statement</h1><div><strong>${esc(person)}</strong> · ${esc(dmy(from)||"Start")} to ${esc(dmy(to)||"Latest")}</div>
       <h2>Settlement Summary</h2><table class="summary">
-        <tr><td>Own Expenses Paid Personally</td><td>${esc(fmt(expenseTotal))}</td></tr>${personalVendorBillTotal>0?`<tr><td>Add: Vendor Bills Paid Personally</td><td>${esc(fmt(personalVendorBillTotal))}</td></tr>`:""}<tr><td>Less: Refunds / Cancellations</td><td>${esc(fmt(refundTotal))}</td></tr><tr><td>Less: Received from Another Person</td><td>${esc(fmt(receivedFromPersonTotal))}</td></tr><tr><td>Add: Paid to Another Person on behalf of Zivara</td><td>${esc(fmt(paidToPersonTotal))}</td></tr>
+        <tr><td>Own Expenses Paid Personally</td><td>${esc(fmt(expenseTotal))}</td></tr><tr><td>Less: Refunds / Cancellations</td><td>${esc(fmt(refundTotal))}</td></tr><tr><td>Less: Received from Another Person</td><td>${esc(fmt(receivedFromPersonTotal))}</td></tr><tr><td>Add: Paid to Another Person on behalf of Zivara</td><td>${esc(fmt(paidToPersonTotal))}</td></tr>
         ${Math.abs(otherAdjustmentNet)>0.005?`<tr><td>Other Adjustments Net</td><td>${esc(fmt(otherAdjustmentNet))}</td></tr>`:""}<tr class="total"><td>Total Claim Before Zivara Payment</td><td>${esc(fmt(totalClaimBeforeZivara))}</td></tr><tr><td>Less: Paid Directly by Zivara</td><td>${esc(fmt(reimbursedTotal))}</td></tr><tr class="net"><td>NET AMOUNT DUE</td><td>${esc(fmt(reimbursementBalance))}</td></tr>
       </table>
       <div class="mix"><strong>Expense Mix:</strong> <span>Travel ${esc(fmt(byCategory.Travel))}</span><span>Hotel ${esc(fmt(byCategory.Hotel))}</span><span>Food ${esc(fmt(byCategory.Food))}</span><span>Misc / Other ${esc(fmt(byCategory["Misc / Other"]))}</span>${otherTransferTotal>0?`<span>Other Transfers / Advances ${esc(fmt(otherTransferTotal))}</span>`:""}</div>
       <h2>Expense Transactions</h2><table class="txn"><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead><tbody>${expenseRows||'<tr><td colspan="5">No expense transactions</td></tr>'}</tbody></table>
-      ${personalVendorBillPdfRows?`<h2>Vendor Bills Paid Personally</h2><table class="txn"><thead><tr><th>Date Paid</th><th>Voucher / Reference</th><th>Narration</th><th>Amount</th></tr></thead><tbody>${personalVendorBillPdfRows}</tbody></table>`:""}
       <h2>Refund / Inter-person / Adjustment Transactions</h2><table class="txn"><thead><tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th>Narration</th><th>Debit</th><th>Credit</th></tr></thead><tbody>${journalRows||'<tr><td colspan="7">No journal settlement transactions</td></tr>'}</tbody></table>
       <h2>Zivara Payment / Transfer Transactions</h2><table class="txn"><thead><tr><th>Date</th><th>Reference / UTR</th><th>Narration</th><th>Purpose</th><th>Amount</th></tr></thead><tbody>${paymentRows||'<tr><td colspan="5">No Zivara payment / transfer transactions</td></tr>'}</tbody></table>
       <script>window.onload=()=>window.print()</script></body></html>`);w.document.close();
@@ -279,7 +368,7 @@ export default function PartnerStaffStatement(){
     {error&&<div style={{...card,color:"var(--danger)"}}>{error}</div>}
 
     <div style={{...card,...grid12,alignItems:"end"}}>
-      <div style={{gridColumn:"span 2"}}><label style={{fontSize:".72rem",color:"var(--muted)"}}>Person</label><select style={inp} value={person} onChange={e=>setPerson(e.target.value)}><option value="">— Select —</option>{people.map(x=><option key={x}>{x}</option>)}</select></div>
+      <div style={{gridColumn:"span 2"}}><label style={{fontSize:".72rem",color:"var(--muted)"}}>Person</label><select style={inp} value={person} onChange={e=>setPerson(e.target.value)}><option value="">— Select —</option>{people.map(x=><option key={x}>{x}</option>)}</select>{mergedAliases.length>0&&<div style={{fontSize:".62rem",color:"var(--muted)",marginTop:".25rem",lineHeight:1.3}}>Also includes: {mergedAliases.join(", ")}</div>}</div>
       <div style={{gridColumn:"span 2"}}><label style={{fontSize:".72rem",color:"var(--muted)"}}>From Date</label><input style={inp} type="date" value={from} onChange={e=>setFrom(e.target.value)}/></div>
       <div style={{gridColumn:"span 2"}}><label style={{fontSize:".72rem",color:"var(--muted)"}}>To Date</label><input style={inp} type="date" value={to} onChange={e=>setTo(e.target.value)}/></div>
       <div style={{gridColumn:"span 2"}}><label style={{fontSize:".72rem",color:"var(--muted)"}}>Category</label><select style={inp} value={category} onChange={e=>setCategory(e.target.value)}><option value="">All</option>{["Travel","Hotel","Food","Misc / Other"].map(x=><option key={x}>{x}</option>)}</select></div>
@@ -293,7 +382,6 @@ export default function PartnerStaffStatement(){
           <div style={{fontWeight:800,fontSize:".92rem",marginBottom:".8rem",whiteSpace:"normal",overflowWrap:"anywhere"}}>{person} · Settlement Summary</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:".8rem"}}>
             <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>OWN EXPENSES PAID PERSONALLY</div><div style={{fontSize:".95rem",fontWeight:800,marginTop:".15rem"}}>{fmt(expenseTotal)}</div></div>
-            {personalVendorBillTotal>0&&<div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>ADD: VENDOR BILLS PAID PERSONALLY</div><div style={{fontSize:".95rem",fontWeight:800,marginTop:".15rem",color:"#fbbf24"}}>{fmt(personalVendorBillTotal)}</div></div>}
             <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>LESS: REFUNDS / CANCELLATIONS</div><div style={{fontSize:".95rem",fontWeight:800,marginTop:".15rem",color:"#4ade80"}}>{fmt(refundTotal)}</div></div>
             {receivedFromPersonTotal>0&&<div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>LESS: RECEIVED FROM ANOTHER PERSON</div><div style={{fontSize:".95rem",fontWeight:800,marginTop:".15rem",color:"#4ade80"}}>{fmt(receivedFromPersonTotal)}</div></div>}
             {paidToPersonTotal>0&&<div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:700,lineHeight:1.3}}>ADD: PAID TO ANOTHER PERSON ON BEHALF OF ZIVARA</div><div style={{fontSize:".95rem",fontWeight:800,marginTop:".15rem",color:"#fbbf24"}}>{fmt(paidToPersonTotal)}</div></div>}
@@ -315,11 +403,6 @@ export default function PartnerStaffStatement(){
       </div>
 
       <div style={{...card,padding:0}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Expense History · {personExpenses.length} records</div><div style={tableWrap}><table style={tableStyle}><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Status</th></tr></thead><tbody>{personExpenses.length?personExpenses.map(e=><tr key={e.ExpenseID}><td>{dmy(e.Date)}</td><td>{bucket(e)}</td><td style={{whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word",lineHeight:1.35}}>{e.Description||e.VendorOrPerson||"—"}</td><td style={{fontWeight:700}}>{fmt(e.Amount)}</td><td>{e.PaidBy||"—"}</td><td>{e.Status||"—"}</td></tr>):<tr><td colSpan="6" style={{padding:"1.5rem",textAlign:"center"}}>No expenses for the selected filters.</td></tr>}</tbody></table></div></div>
-
-      {personalVendorBillRows.length>0&&<div style={{...card,padding:0}}>
-        <div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Vendor Bills Paid Personally · {personalVendorBillRows.length} records · {fmt(personalVendorBillTotal)}</div>
-        <div style={tableWrap}><table style={tableStyle}><thead><tr><th>Date Paid</th><th>Voucher / Reference</th><th>Narration</th><th>Amount</th></tr></thead><tbody>{personalVendorBillRows.map((r,i)=><tr key={`${r.JournalID}-${r.SourceID}-${i}`}><td>{dmy(r.Date)}</td><td>{r.VoucherNo||r.SourceID||"—"}</td><td style={{whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word",lineHeight:1.35}}>{r.Narration||r.Particulars||"—"}</td><td style={{fontWeight:700}}>{fmt(r.Credit)}</td></tr>)}</tbody></table></div>
-      </div>}
 
       <div style={{...card,padding:0}}><div style={{padding:".85rem 1rem",fontWeight:750,borderBottom:"1px solid var(--border)"}}>Refund / Inter-person / Adjustment History · {managementJournals.length} records</div><div style={tableWrap}><table style={tableStyle}><thead><tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th>Narration</th><th>Debit</th><th>Credit</th></tr></thead><tbody>{managementJournals.length?managementJournals.map((r,i)=><tr key={`${r.JournalID}-${i}`}><td>{dmy(r.Date)}</td><td>{r._journalType}</td><td>{r._from||"—"}</td><td>{r._to||"—"}</td><td style={{whiteSpace:"normal",overflowWrap:"anywhere",wordBreak:"break-word",lineHeight:1.35}}>{r._clean||"—"}</td><td>{Number(r.Debit||0)>0?fmt(r.Debit):"—"}</td><td>{Number(r.Credit||0)>0?fmt(r.Credit):"—"}</td></tr>):<tr><td colSpan="7" style={{padding:"1.5rem",textAlign:"center"}}>No refund or inter-person journal entries in the selected period.</td></tr>}</tbody></table></div></div>
 
