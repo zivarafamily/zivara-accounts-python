@@ -12,6 +12,11 @@ const btn=(p=false)=>({padding:".55rem .9rem",borderRadius:"6px",cursor:"pointer
 const toneCard=(tone="neutral")=>({...card,borderColor:tone==="green"?"#22c55e66":tone==="amber"?"#f59e0b66":tone==="blue"?"#38bdf866":"var(--border)",background:tone==="green"?"#22c55e12":tone==="amber"?"#f59e0b12":tone==="blue"?"#38bdf812":"var(--card)"});
 const toneValue=tone=>({fontSize:"1.12rem",fontWeight:800,marginTop:".2rem",color:tone==="green"?"#4ade80":tone==="amber"?"#fbbf24":tone==="blue"?"#38bdf8":"var(--text)"});
 const fmt=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtSigned=n=>{
+  const value=Number(n||0);
+  const amount=Math.abs(value).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+  return value<0?`-₹${amount}`:`₹${amount}`;
+};
 const fyStart="2026-04-01";
 const esc=s=>String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
 const dmy=v=>{const s=String(v||"").slice(0,10),p=s.split("-");return p.length===3?`${p[2]}-${p[1]}-${p[0]}`:s};
@@ -275,7 +280,11 @@ export default function PartnerStaffStatement(){
   const ownClaimAfterRefunds=expenseTotal-refundTotal-receivedFromPersonTotal+otherAdjustmentNet;
   const totalClaimBeforeZivara=ownClaimAfterRefunds+paidToPersonTotal;
   const managementBalance=totalClaimBeforeZivara-reimbursedTotal;
-  const reimbursementBalance=Math.max(0,managementBalance);
+  const settlementStatus=managementBalance>0.005
+    ?"Amount Due to Person"
+    :managementBalance<-0.005
+      ?"Overpaid / Advance Recoverable"
+      :"Settled";
   const otherTransferTotal=useMemo(()=>otherTransferRows.reduce((s,x)=>s+Number(x.Debit||0),0),[otherTransferRows]);
   const byCategory=useMemo(()=>{
     const x={"Travel":0,"Hotel":0,"Food":0,"Misc / Other":0};
@@ -325,7 +334,8 @@ export default function PartnerStaffStatement(){
       ${Math.abs(otherAdjustmentNet)>0.005?`<tr><td>Other Adjustments Net</td><td class="amt">${n(otherAdjustmentNet)}</td></tr>`:""}
       <tr class="total"><td>Total Claim Before Zivara Payment</td><td class="amt">${n(totalClaimBeforeZivara)}</td></tr>
       <tr><td>Less: Paid Directly by Zivara</td><td class="amt">${n(reimbursedTotal)}</td></tr>
-      <tr class="net"><td>NET AMOUNT DUE</td><td class="amt">${n(reimbursementBalance)}</td></tr>
+      <tr class="net"><td>NET SETTLEMENT BALANCE</td><td class="amt">${n(managementBalance)}</td></tr>
+      <tr><td>Settlement Status</td><td>${esc(settlementStatus)}</td></tr>
     </table>
     <table><tr><td class="section" colspan="2">Expense Mix</td></tr><tr><td>Travel</td><td class="amt">${n(byCategory.Travel)}</td></tr><tr><td>Hotel</td><td class="amt">${n(byCategory.Hotel)}</td></tr><tr><td>Food</td><td class="amt">${n(byCategory.Food)}</td></tr><tr><td>Misc / Other</td><td class="amt">${n(byCategory["Misc / Other"])}</td></tr>${otherTransferTotal>0?`<tr><td>Other Transfers / Advances</td><td class="amt">${n(otherTransferTotal)}</td></tr>`:""}</table>
     <table><tr><td class="section" colspan="6">Expense Transactions</td></tr><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Status</th></tr>${personExpenses.map(e=>`<tr><td>${esc(dmy(e.Date))}</td><td>${esc(bucket(e))}</td><td>${esc(e.Description||e.VendorOrPerson||"")}</td><td class="amt">${n(e.Amount)}</td><td>${esc(e.PaidBy||"")}</td><td>${esc(e.Status||"")}</td></tr>`).join("")}</table>
@@ -350,7 +360,7 @@ export default function PartnerStaffStatement(){
       <h1>Zivara Family Office LLP — Partner / Staff Settlement Statement</h1><div><strong>${esc(person)}</strong> · ${esc(dmy(from)||"Start")} to ${esc(dmy(to)||"Latest")}</div>
       <h2>Settlement Summary</h2><table class="summary">
         <tr><td>Own Expenses Paid Personally</td><td>${esc(fmt(expenseTotal))}</td></tr><tr><td>Less: Refunds / Cancellations</td><td>${esc(fmt(refundTotal))}</td></tr><tr><td>Less: Received from Another Person</td><td>${esc(fmt(receivedFromPersonTotal))}</td></tr><tr><td>Add: Paid to Another Person on behalf of Zivara</td><td>${esc(fmt(paidToPersonTotal))}</td></tr>
-        ${Math.abs(otherAdjustmentNet)>0.005?`<tr><td>Other Adjustments Net</td><td>${esc(fmt(otherAdjustmentNet))}</td></tr>`:""}<tr class="total"><td>Total Claim Before Zivara Payment</td><td>${esc(fmt(totalClaimBeforeZivara))}</td></tr><tr><td>Less: Paid Directly by Zivara</td><td>${esc(fmt(reimbursedTotal))}</td></tr><tr class="net"><td>NET AMOUNT DUE</td><td>${esc(fmt(reimbursementBalance))}</td></tr>
+        ${Math.abs(otherAdjustmentNet)>0.005?`<tr><td>Other Adjustments Net</td><td>${esc(fmt(otherAdjustmentNet))}</td></tr>`:""}<tr class="total"><td>Total Claim Before Zivara Payment</td><td>${esc(fmt(totalClaimBeforeZivara))}</td></tr><tr><td>Less: Paid Directly by Zivara</td><td>${esc(fmt(reimbursedTotal))}</td></tr><tr class="net"><td>NET SETTLEMENT BALANCE</td><td>${esc(fmtSigned(managementBalance))}</td></tr><tr><td>Settlement Status</td><td>${esc(settlementStatus)}</td></tr>
       </table>
       <div class="mix"><strong>Expense Mix:</strong> <span>Travel ${esc(fmt(byCategory.Travel))}</span><span>Hotel ${esc(fmt(byCategory.Hotel))}</span><span>Food ${esc(fmt(byCategory.Food))}</span><span>Misc / Other ${esc(fmt(byCategory["Misc / Other"]))}</span>${otherTransferTotal>0?`<span>Other Transfers / Advances ${esc(fmt(otherTransferTotal))}</span>`:""}</div>
       <h2>Expense Transactions</h2><table class="txn"><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead><tbody>${expenseRows||'<tr><td colspan="5">No expense transactions</td></tr>'}</tbody></table>
@@ -390,7 +400,11 @@ export default function PartnerStaffStatement(){
           <div style={{marginTop:".85rem",padding:".75rem",border:"1px solid var(--border)",borderRadius:"8px",display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:".75rem"}}>
             <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3}}>TOTAL CLAIM BEFORE ZIVARA PAYMENT</div><div style={{fontSize:"1rem",fontWeight:850,marginTop:".15rem"}}>{fmt(Math.max(0,totalClaimBeforeZivara))}</div></div>
             <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3}}>LESS: PAID DIRECTLY BY ZIVARA</div><div style={{fontSize:"1rem",fontWeight:850,marginTop:".15rem",color:"#4ade80"}}>{fmt(reimbursedTotal)}</div></div>
-            <div><div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3}}>NET AMOUNT DUE</div><div style={{fontSize:"1.12rem",fontWeight:900,marginTop:".12rem",color:reimbursementBalance>0?"#fbbf24":"#4ade80"}}>{fmt(reimbursementBalance)}</div></div>
+            <div>
+              <div style={{fontSize:".62rem",color:"var(--muted)",fontWeight:800,lineHeight:1.3}}>NET SETTLEMENT BALANCE</div>
+              <div style={{fontSize:"1.12rem",fontWeight:900,marginTop:".12rem",color:managementBalance>0.005?"#fbbf24":managementBalance<-0.005?"#fb7185":"#4ade80"}}>{fmtSigned(managementBalance)}</div>
+              <div style={{fontSize:".64rem",fontWeight:750,marginTop:".2rem",color:managementBalance>0.005?"#fbbf24":managementBalance<-0.005?"#fb7185":"#4ade80"}}>{settlementStatus}</div>
+            </div>
           </div>
         </div>
         <div style={{...card,gridColumn:"span 4",padding:"1rem 1.1rem"}}>
