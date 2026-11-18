@@ -47,6 +47,14 @@ const NAV_ALL = [
   { key:"partners",       to:"/partners",         icon:"🤝", label:"Partners",                  group:"Setup",    baselineRoles:["admin","managing_partner"] },
 ];
 
+// Group only the already-authorized links; routing and access checks stay unchanged.
+const NAV_GROUPS = [
+  { key: "accounting", label: "Accounting", icon: "📒", items: ["paymenttracker", "vendors", "expenses", "transactions", "journalentries", "bankaccounts", "cashbook"] },
+  { key: "revenue", label: "Revenue", icon: "📊", items: ["clients", "neoinvoices", "neorevenue"] },
+  { key: "reports", label: "Reports", icon: "📚", items: ["ledgers", "partnerstaffstatement", "reconciliation", "vendorledger", "catdsreport"] },
+  { key: "setup", label: "Setup", icon: "⚙️", items: ["users", "llps", "partners", "imports"] },
+];
+
 function normalizeModules(value) {
   if (Array.isArray(value)) return value.map(v => String(v || "").trim().toLowerCase()).filter(Boolean);
   if (!value) return [];
@@ -108,6 +116,9 @@ function getStoredAuth() {
 
 function Sidebar({ open, onClose, user, role, designation, allowedModules, onLogout }) {
   const nav = NAV_ALL.filter(n => canAccessModule(n.key, role, allowedModules));
+  const [expandedGroup, setExpandedGroup] = useState(null);
+  const location = useLocation();
+  const dashboard = nav.find(n => n.key === "dashboard");
   const { currentLLP, clearLLP } = useLLP();
   return (
     <>
@@ -122,30 +133,49 @@ function Sidebar({ open, onClose, user, role, designation, allowedModules, onLog
           <button onClick={onClose} className="sidebar-close-btn" style={{ background:"none", border:"none", color:"var(--muted)", fontSize:"1.2rem", cursor:"pointer", padding:".2rem" }}>×</button>
         </div>
 
-        <nav style={{ marginTop:".75rem", flex:1, overflowY:"auto" }}>
-          {(() => {
-            const seen = new Set();
-            return nav.map(({ to, icon, label, group }, idx) => {
-              const showHeader = group && !seen.has(group) && seen.add(group);
-              const prevGroup = idx > 0 ? nav[idx - 1].group : null;
-              const addDivider = showHeader && prevGroup && prevGroup !== group;
-              return (
-                <React.Fragment key={to}>
-                  {addDivider && <div style={{ height:"1px", background:"var(--border)", margin:".35rem .75rem" }} />}
-                  {showHeader && <div style={{ padding:".45rem 1.35rem .15rem", fontSize:".62rem", fontWeight:700, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".08em", opacity:.7 }}>{group}</div>}
-                  <NavLink to={to} onClick={onClose} style={({ isActive }) => ({
-                    ...linkBase,
-                    paddingLeft: group ? "1.6rem" : "1.25rem",
-                    background:isActive ? "rgba(99,102,241,.18)" : "transparent",
-                    color:isActive ? "var(--accent)" : "var(--muted)",
-                    fontWeight:isActive ? 600 : 400,
-                  })}>
-                    <span style={{ fontSize:"1rem" }}>{icon}</span>{label}
-                  </NavLink>
-                </React.Fragment>
-              );
-            });
-          })()}
+        <nav aria-label="Main navigation" style={{ marginTop:".75rem", flex:1, overflowY:"auto" }}>
+          {dashboard && <NavLink to={dashboard.to} onClick={onClose} style={({ isActive }) => ({
+            ...linkBase, background: isActive ? "rgba(99,102,241,.18)" : "transparent",
+            color: isActive ? "var(--accent)" : "var(--muted)", fontWeight: isActive ? 600 : 400,
+          })}><span aria-hidden="true">{dashboard.icon}</span>{dashboard.label}</NavLink>}
+          {NAV_GROUPS.map(group => {
+            const items = group.items.map(key => nav.find(item => item.key === key)).filter(Boolean);
+            if (!items.length) return null;
+            const expanded = expandedGroup === group.key;
+            const active = items.some(item => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`));
+            return <div key={group.key}>
+              <button
+                type="button"
+                id={`nav-group-${group.key}`}
+                aria-expanded={expanded}
+                aria-controls={`nav-panel-${group.key}`}
+                aria-label={`${group.label}${active ? ", current section" : ""}`}
+                onClick={() => setExpandedGroup(expanded ? null : group.key)}
+                style={{ ...linkBase, width:"calc(100% - 1rem)", boxSizing:"border-box", border:"none", cursor:"pointer", textAlign:"left", fontFamily:"inherit",
+                  background:active ? "rgba(99,102,241,.18)" : "transparent",
+                  color:active ? "var(--accent)" : "var(--muted)", fontWeight:active ? 600 : 500,
+                }}
+              >
+                <span aria-hidden="true">{group.icon}</span>
+                <span style={{ flex:1 }}>{group.label}</span>
+                <span aria-hidden="true" style={{ fontSize:".8rem" }}>{expanded ? "▾" : "▸"}</span>
+              </button>
+              <div id={`nav-panel-${group.key}`} aria-labelledby={`nav-group-${group.key}`} hidden={!expanded}
+                onKeyDown={event => {
+                  if (event.key === "Escape") {
+                    setExpandedGroup(null);
+                    event.currentTarget.previousElementSibling.focus();
+                  }
+                }}
+              >
+                {items.map(({ to, icon, label }) => <NavLink key={to} to={to} onClick={onClose} style={({ isActive }) => ({
+                  ...linkBase, padding:".55rem .65rem .55rem 1.2rem", marginLeft:"1rem", fontSize:".8rem", whiteSpace:"normal",
+                  background:isActive ? "rgba(99,102,241,.12)" : "transparent",
+                  color:isActive ? "var(--accent)" : "var(--muted)", fontWeight:isActive ? 600 : 400,
+                })}><span aria-hidden="true" style={{ flexShrink:0 }}>{icon}</span>{label}</NavLink>)}
+              </div>
+            </div>;
+          })}
         </nav>
 
         <div style={{ padding:".75rem 1.25rem", borderTop:"1px solid var(--border)" }}>
