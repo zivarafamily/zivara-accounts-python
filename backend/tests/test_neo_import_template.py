@@ -112,3 +112,52 @@ def test_multiple_statement_tabs_rejected_before_writes(client, auth_headers):
     assert 'one Neo statement worksheet' in res.json()['detail']
     with SessionLocal() as db:
         assert db.query(NeoRevenue).count() == 0
+
+
+@pytest.mark.parametrize('client_header', ['ClientName', 'Client Name'])
+def test_partial_canonical_update_preserves_absent_optional_fields(client, auth_headers, client_header):
+    payload = {
+        'ClientName': 'Synthetic Partial Client', 'PAN': 'TESTPAN99',
+        'RevenueMonth': 'Aug-2026', 'RevenueAmount': '100.00',
+        'TransactionDate': '2026-06-30', 'Product': 'AIF',
+        'TransactionType': 'Purchase', 'SchemeName': 'Synthetic Fund',
+        'InvestmentAmount': '50000.25', 'CommissionPercent': '1.78',
+        'RMName': 'Synthetic RM', 'PartnerName': 'Synthetic Partner',
+        'Notes': 'Keep this note', 'IncomeType': 'Transactional',
+        'StatementRef': 'Original statement', 'YTDValue': '700.50',
+    }
+    created = client.post('/neo-revenue', headers=auth_headers, json=payload)
+    assert created.status_code == 200, created.text
+    before = created.json()['data']
+    wb = Workbook()
+    wb.active.title = 'NeoRevenue'
+    wb.active.append(['RevenueID', client_header, 'RevenueAmount', 'RevenueMonth'])
+    wb.active.append([before['RevenueID'], before['ClientName'], 125.75, 'Aug-2025'])
+    parsed = list(_neo_revenue_import_rows(wb, 'Aug-2026'))[0][1]
+    for field in payload.keys() - {'ClientName', 'RevenueAmount', 'RevenueMonth'}:
+        assert field not in parsed
+    res = upload(client, auth_headers, wb)
+    assert res.status_code == 200, res.text
+    assert res.json()['summary']['NeoRevenue']['imported'] == 1
+    rows = client.get('/neo-revenue', headers=auth_headers).json()['data']
+    assert len(rows) == 1
+    after = rows[0]
+    assert after['RevenueAmount'] == 125.75
+    assert after['RevenueMonth'] == 'Aug-2026'
+    for field in payload.keys() - {'RevenueAmount'}:
+        assert after[field] == before[field], field
+
+
+def test_minimal_canonical_new_row_uses_service_defaults(client, auth_headers):
+    wb = Workbook()
+    wb.active.title = 'NeoRevenue'
+    wb.active.append(['ClientName', 'RevenueAmount', 'RevenueMonth'])
+    wb.active.append(['Synthetic Minimal Client', 12.5, 'Aug-2026'])
+    res = upload(client, auth_headers, wb)
+    assert res.status_code == 200, res.text
+    assert res.json()['summary']['NeoRevenue']['imported'] == 1
+    row = client.get('/neo-revenue', headers=auth_headers).json()['data'][0]
+    assert row['RevenueAmount'] == 12.5
+    assert row['IncomeType'] == ''
+    assert row['StatementRef'] == ''
+    assert row['Product'] == ''

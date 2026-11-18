@@ -280,11 +280,18 @@ def _neo_revenue_import_rows(workbook, revenue_month_filter=""):
                     continue
                 row = dict(source)
                 for target, keys in aliases.items():
-                    row[target] = _row_value(source, *keys)
+                    # Canonical workbooks may be partial updates. Missing columns
+                    # must remain absent so the service keeps existing values.
+                    if not canonical_amount or any(
+                        _compact_key(header) in {_compact_key(key) for key in keys}
+                        for header in source
+                    ):
+                        row[target] = _row_value(source, *keys)
                 row["RevenueMonth"] = revenue_month_filter or _row_value(source, "RevenueMonth") or header_month
                 row["RevenueAmount"] = source.get(gross_header)
-                row["IncomeType"] = row.get("IncomeType") or "ARR"
-                row["StatementRef"] = _row_value(source, "StatementRef") or sheet.title
+                if not canonical_amount:
+                    row["IncomeType"] = row.get("IncomeType") or "ARR"
+                    row["StatementRef"] = _row_value(source, "StatementRef") or sheet.title
                 # Canonical numbers are already percentage points. Excel-formatted
                 # human percentages store a ratio; text percentages carry a % sign.
                 for header, cell in zip(headers, cells):
