@@ -151,17 +151,27 @@ def _is_total_row(row):
     )
 
 
+def _neo_gross_headers(headers, revenue_month_filter=""):
+    headers = [h for h in headers if _compact_key(h).startswith(("grossrevenue", "grossrev"))]
+    # A single statement column can have an incorrect year: the UI selection wins.
+    # With multiple columns, never relabel all periods as the selected month.
+    if revenue_month_filter and len(headers) > 1:
+        matches = [h for h in headers if _revenue_month_from_header(h) == revenue_month_filter]
+        if not matches:
+            matches = [h for h in headers if _revenue_month_from_header(h).split("-")[0] == revenue_month_filter.split("-")[0]]
+        if len(matches) != 1:
+            raise HTTPException(status_code=400, detail="Select a single matching gross revenue column for the selected month")
+        return matches
+    return headers
+
+
 def _neo_revenue_total_checks(workbook, revenue_month_filter=""):
     checks = []
 
     for sheet in workbook.worksheets:
         headers = [_text(cell.value) for cell in sheet[1]]
 
-        gross_headers = [
-            header
-            for header in headers
-            if "gross" in _compact_key(header) and "revenue" in _compact_key(header)
-        ]
+        gross_headers = _neo_gross_headers(headers, revenue_month_filter)
 
         for gross_header in gross_headers:
             header_month = _revenue_month_from_header(gross_header)
@@ -241,85 +251,55 @@ def _validate_neo_revenue_totals(workbook, revenue_month_filter=""):
 
 
 def _neo_revenue_import_rows(workbook, revenue_month_filter=""):
-    explicit = _rows(workbook, "NeoRevenue")
-
-    if explicit:
-        for index, row in enumerate(explicit, start=2):
-            if _is_total_row(row):
-                continue
-            if revenue_month_filter:
-                row["RevenueMonth"] = revenue_month_filter
-            if not _text(row.get("RevenueMonth")):
-                continue
-            yield index, row
-        return
-
-    for sheet in workbook.worksheets:
+    # Normalize both the app template and native statements, including a sheet
+    # explicitly named NeoRevenue. Preserve extra canonical fields (IDs, LLP, etc.).
+    sheets = [workbook["NeoRevenue"]] if _rows(workbook, "NeoRevenue") else workbook.worksheets
+    aliases = {
+        "PAN": ("PAN",),
+        "ClientName": ("ClientName", "Client Name"),
+        "RMName": ("RMName", "RM Name", "Partner"),
+        "PartnerName": ("PartnerName", "Partner Name", "Partner"),
+        "TransactionDate": ("TransactionDate", "Transaction Date", "Date"),
+        "Product": ("Product",),
+        "TransactionType": ("TransactionType", "Transaction Type", "Tnx Type", "Txn Type", "Trn Type"),
+        "SchemeName": ("SchemeName", "Scheme Name"),
+        "InvestmentAmount": ("InvestmentAmount", "Investment Amount", "Amount"),
+        "CommissionPercent": ("CommissionPercent", "Commission %", "Commission"),
+        "Notes": ("Notes", "Remarks"),
+        "IncomeType": ("IncomeType", "Income Type"),
+    }
+    for sheet in sheets:
         headers = [_text(cell.value) for cell in sheet[1]]
-
-        gross_headers = [
-            header
-            for header in headers
-            if "gross" in _compact_key(header) and "revenue" in _compact_key(header)
-        ]
-
-        for gross_header in gross_headers:
+        canonical_amount = next((h for h in headers if _compact_key(h) == "revenueamount"), None)
+        amount_headers = [canonical_amount] if canonical_amount else _neo_gross_headers(headers, revenue_month_filter)
+        for gross_header in amount_headers:
             header_month = _revenue_month_from_header(gross_header)
-            revenue_month = revenue_month_filter or header_month
-
-            if not revenue_month:
-                continue
-
-            for index, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
-                source = {
-                    header: value
-                    for header, value in zip(headers, values)
-                    if header
-                }
-
-                if not any(_text(v) for v in source.values()):
+            for index, cells in enumerate(sheet.iter_rows(min_row=2), start=2):
+                source = {header: cell.value for header, cell in zip(headers, cells) if header}
+                if not any(_text(v) for v in source.values()) or _is_total_row(source):
                     continue
-
-                # Neo file has final Total row.
-                # Use Total row for validation only, not import.
-                if _is_total_row(source):
-                    continue
-
-                pan = _row_value(source, "PAN")
-                client_name = _row_value(source, "ClientName", "Client Name")
-                revenue_amount = source.get(gross_header)
-
-                if not _text(pan) and not _text(client_name):
-                    continue
-
-                if _money(revenue_amount) == Decimal("0.00"):
-                    continue
-
-                row = {
-                    "PAN": pan,
-                    "ClientName": client_name,
-                    "RMName": _row_value(source, "RMName", "RM Name", "Partner"),
-                    "PartnerName": _row_value(source, "PartnerName", "Partner Name", "Partner"),
-                    "TransactionDate": _row_value(source, "TransactionDate", "Transaction Date", "Date"),
-                    "Product": _row_value(source, "Product"),
-                    "TransactionType": _row_value(
-                        source,
-                        "TransactionType",
-                        "Transaction Type",
-                        "Tnx Type",
-                        "Txn Type",
-                        "Trn Type",
-                    ),
-                    "SchemeName": _row_value(source, "SchemeName", "Scheme Name"),
-                    "InvestmentAmount": _row_value(source, "InvestmentAmount", "Investment Amount", "Amount"),
-                    "CommissionPercent": _row_value(source, "CommissionPercent", "Commission %", "Commission"),
-                    "Notes": _row_value(source, "Notes", "Remarks"),
-                    "IncomeType": _row_value(source, "IncomeType", "Income Type") or "ARR",
-                    "RevenueMonth": revenue_month,
-                    "RevenueAmount": revenue_amount,
-                    "StatementRef": sheet.title,
-                }
-
+                row = dict(source)
+                for target, keys in aliases.items():
+                    row[target] = _row_value(source, *keys)
+                row["RevenueMonth"] = revenue_month_filter or _row_value(source, "RevenueMonth") or header_month
+                row["RevenueAmount"] = source.get(gross_header)
+                row["IncomeType"] = row.get("IncomeType") or "ARR"
+                row["StatementRef"] = _row_value(source, "StatementRef") or sheet.title
+                # Canonical numbers are already percentage points. Excel-formatted
+                # human percentages store a ratio; text percentages carry a % sign.
+                for header, cell in zip(headers, cells):
+                    if _compact_key(header) in {"commissionpercent", "commission"}:
+                        value = cell.value
+                        if isinstance(value, str) and value.strip().endswith("%"):
+                            row["CommissionPercent"] = value.strip()[:-1].strip()
+                        elif _compact_key(header) != "commissionpercent" and isinstance(value, (int, float)) and "%" in cell.number_format:
+                            row["CommissionPercent"] = Decimal(str(value)) * 100
+                        break
+                if not canonical_amount:
+                    if not _text(row.get("PAN")) and not _text(row.get("ClientName")):
+                        continue
+                    if _money(row["RevenueAmount"]) == Decimal("0.00"):
+                        continue
                 yield index, row
 
 
@@ -466,6 +446,14 @@ async def import_neo_revenue_workbook(
 
     content = await file.read()
     workbook = load_workbook(BytesIO(content), data_only=True)
+    if not _rows(workbook, "NeoRevenue"):
+        statement_sheets = [
+            sheet for sheet in workbook.worksheets
+            if _neo_gross_headers([_text(cell.value) for cell in sheet[1]])
+            and _rows(workbook, sheet.title)
+        ]
+        if len(statement_sheets) > 1:
+            raise HTTPException(status_code=400, detail="Upload one Neo statement worksheet at a time to avoid mixing revenue months")
     _validate_neo_revenue_totals(workbook, selected_month)
 
     summary = _summary()

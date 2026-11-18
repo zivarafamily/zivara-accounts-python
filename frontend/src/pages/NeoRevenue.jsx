@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState, useMemo } from "react";
 import { apiGet, apiPost } from "../api/client";
 import { billingMonthOptions } from "../utils/format";
+import { revenueMonthSortValue, fyFromRevenueMonth, monthLabel, keepMonthInFY, periodParams } from "../utils/revenuePeriod";
 import { useLLP } from "../context/LLPContext";
 
 const initial = {
@@ -54,6 +55,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   const [overview,     setOverview]     = useState(null);
   const [report,       setReport]       = useState(null);
   const [reportLoading,setReportLoading]= useState(false);
+  const [periodMode, setPeriodMode] = useState("month");
   const [reportMonth,  setReportMonth]  = useState("");
   const [reportFromMonth, setReportFromMonth] = useState("");
   const [reportToMonth, setReportToMonth] = useState("");
@@ -251,12 +253,9 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     const revenueType = overrides.revenueType !== undefined ? overrides.revenueType : reportRevenueType;
     const llpName = currentScopeLLPName();
     return {
-      ...(month ? { month } : {}),
-      ...(fromMonth ? { fromMonth } : {}),
-      ...(toMonth ? { toMonth } : {}),
+      ...periodParams(overrides.periodMode || periodMode, { month, fromMonth, toMonth, fromDate, toDate }),
       ...(financialYear ? { financialYear } : {}),
-      ...(fromDate ? { fromDate } : {}),
-      ...(toDate ? { toDate } : {}),
+
       ...(llpName ? { llpName } : {}),
       ...(partner ? { partnerName: partner } : {}),
       ...(superFamilyName ? { superFamilyName } : {}),
@@ -287,9 +286,14 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   }
 
   async function refreshReport(overrides = {}) {
+    const params = reportParams(overrides);
+    if (params.fromDate && params.toDate && params.fromDate > params.toDate) {
+      alert("Choose an end date on or after the start date.");
+      return;
+    }
     setReportLoading(true);
     try {
-      const r = await apiGet("getNeoRevenueReport", reportParams(overrides));
+      const r = await apiGet("getNeoRevenueReport", params);
       if (r.ok) setReport(r);
     } catch (err) {
       if (import.meta.env.DEV) console.warn("Unable to load Neo Revenue report", err);
@@ -302,8 +306,8 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     if (!val || val === "—") return;
     const overrides = {};
     if (field === "revenueType") { setReportRevenueType(val); overrides.revenueType = val; }
-    if (field === "month") { setReportMonth(val); overrides.month = val; overrides.fromMonth = ""; overrides.toMonth = ""; setReportFromMonth(""); setReportToMonth(""); }
-    if (field === "date") { setReportFromDate(val); setReportToDate(val); overrides.fromDate = val; overrides.toDate = val; }
+    if (field === "month") { setPeriodMode("month"); setReportFromDate(""); setReportToDate(""); overrides.periodMode = "month"; setReportMonth(val); overrides.month = val; overrides.fromMonth = ""; overrides.toMonth = ""; setReportFromMonth(""); setReportToMonth(""); }
+    if (field === "date") { setPeriodMode("dates"); setReportMonth(""); setReportFromMonth(""); setReportToMonth(""); overrides.periodMode = "dates"; setReportFromDate(val); setReportToDate(val); overrides.fromDate = val; overrides.toDate = val; }
     if (field === "partner" && !isPartnerRole) { setReportPartner(val); overrides.partner = val; }
     if (field === "superFamily") { setReportSuperFamily(val); overrides.superFamilyName = val; }
     if (field === "family") { setReportFamily(val); overrides.familyName = val; }
@@ -348,29 +352,15 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
   // Unique months for filter dropdown, sorted by calendar month (Jan -> Dec).
   // Use metadata because rows only contains the current paginated data page.
   const months = useMemo(() => {
-    const MONTH_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const moSort = mo => {
-      if (!mo) return 99999;
-      const [m, y] = mo.split("-");
-      const mi = MONTH_ORDER.indexOf(m);
-      const yr = parseInt(y, 10) || 0;
-      return yr * 100 + (mi === -1 ? 99 : mi);
-    };
     const set = new Set([
       ...(revenueMeta.months || []),
       ...rows.map(r => r.RevenueMonth),
     ].filter(Boolean));
-    return Array.from(set).sort((a, b) => moSort(a) - moSort(b));
+    return Array.from(set).sort((a, b) => revenueMonthSortValue(a) - revenueMonthSortValue(b));
   }, [revenueMeta.months, rows]);
 
   const fyOptions = useMemo(() => Array.from(new Set(months.map(fyFromRevenueMonth).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b)), [months]);
-
-  // Do not auto-select FY.
-  // Auto FY filter can hide imported old Sheet data.
-  useEffect(() => {
-    return;
-  }, [fyOptions, reportFY]);
 
   const monthsInSelectedFY = useMemo(() => (
     reportFY ? months.filter(m => fyFromRevenueMonth(m) === reportFY) : months
@@ -391,16 +381,23 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
     }
   }, [reportFY, monthFilter, reportMonth, reportFromMonth, reportToMonth]);
 
+  function changeFY(nextFY) {
+    const nextMonth = keepMonthInFY(reportMonth, nextFY);
+    const fromMonth = keepMonthInFY(reportFromMonth, nextFY);
+    const toMonth = keepMonthInFY(reportToMonth, nextFY);
+    setReportFY(nextFY); setMonthFilter(keepMonthInFY(monthFilter, nextFY));
+    setReportMonth(nextMonth); setReportFromMonth(fromMonth); setReportToMonth(toMonth);
+    setReportFromDate(""); setReportToDate(""); setDataPage(1); setReport(null);
+    if (activeTab === "reports") refreshReport({ financialYear: nextFY, month: nextMonth, fromMonth, toMonth, fromDate: "", toDate: "" });
+  }
+
+  function changePeriodMode(mode) {
+    setPeriodMode(mode); setReportMonth(""); setReportFromMonth(""); setReportToMonth("");
+    setReportFromDate(""); setReportToDate(""); setReport(null);
+    refreshReport({ periodMode: mode, month: "", fromMonth: "", toMonth: "", fromDate: "", toDate: "" });
+  }
+
   const filtered = useMemo(() => {
-    const MONTH_ORDER = ["Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar"];
-    function moSort(mo) {
-      if (!mo) return 99999;
-      const [m, y] = mo.split("-");
-      const mi = MONTH_ORDER.indexOf(m);
-      const yr = parseInt(y, 10) || 0;
-      // Apr-2025 = FY start; Jan onwards belongs to next calendar year but same FY
-      return yr * 100 + (mi === -1 ? 99 : mi);
-    }
     return rows
       .filter(r => {
         const s = search.toLowerCase();
@@ -414,7 +411,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
           String(r.PartnerName || r.RMName || "").trim().toLowerCase() === String(activePartner).trim().toLowerCase();
         return matchSearch && matchMonth && matchFY && matchPartner;
       })
-      .sort((a, b) => moSort(a.RevenueMonth) - moSort(b.RevenueMonth));
+      .sort((a, b) => revenueMonthSortValue(a.RevenueMonth) - revenueMonthSortValue(b.RevenueMonth));
   }, [rows, search, monthFilter, reportFY, partnerFilter, isPartnerRole, ownPartnerName]);
 
   const pageSummaryRows = useMemo(() => rows.filter(r => {
@@ -490,36 +487,59 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
           </p>
         </div>
         <div style={{ display: "flex", gap: ".6rem", flexWrap: "wrap", alignItems: "center" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: ".45rem", color: "var(--muted)", fontSize: ".78rem", fontWeight: 600 }}>
-            FY
-            <select
-              style={{ ...inp, width: "auto", minWidth: "125px", padding: ".55rem .75rem" }}
-              value={reportFY}
-              onChange={e => {
-                const nextFY = e.target.value;
-                const nextMonth = nextFY && fyFromRevenueMonth(reportMonth) !== nextFY ? "" : reportMonth;
-                const nextFromMonth = nextFY && fyFromRevenueMonth(reportFromMonth) !== nextFY ? "" : reportFromMonth;
-                const nextToMonth = nextFY && fyFromRevenueMonth(reportToMonth) !== nextFY ? "" : reportToMonth;
-                setReportFY(nextFY);
-                setReportMonth(nextMonth);
-                setReportFromMonth(nextFromMonth);
-                setReportToMonth(nextToMonth);
-                setReport(null);
-                if (activeTab === "reports") {
-                  refreshReport({
-                    financialYear: nextFY,
-                    month: nextMonth,
-                    fromMonth: nextFromMonth,
-                    toMonth: nextToMonth,
-                  });
-                }
-              }}
-            >
-              <option value="">All FYs</option>
-              {fyOptions.map(fy => <option key={fy} value={fy}>{fy}</option>)}
+          {canManageRevenue && <button style={btn("primary")} onClick={openAdd}>+ New Revenue Entry</button>}
+        </div>
+      </div>
+
+      <div style={{ ...card, padding: "1rem", display: "flex", gap: ".8rem", flexWrap: "wrap", alignItems: "end" }}>
+        <label style={{ ...label, margin: 0, flex: "1 1 180px" }}>
+          Financial year
+          <select aria-label="Financial year" style={{ ...inp, marginTop: ".35rem" }} value={reportFY} onChange={e => changeFY(e.target.value)}>
+            <option value="">All years</option>
+            {fyOptions.map(fy => <option key={fy} value={fy}>{fy} · Apr–Mar</option>)}
+          </select>
+        </label>
+        {activeTab === "reports" && <label style={{ ...label, margin: 0, flex: "1 1 180px" }}>
+          Period
+          <select aria-label="Report period" style={{ ...inp, marginTop: ".35rem" }} value={periodMode} onChange={e => changePeriodMode(e.target.value)}>
+            <option value="month">Month</option><option value="range">Month range</option><option value="dates">Transaction dates</option>
+          </select>
+        </label>}
+        {(activeTab === "data" || periodMode === "month") && <label style={{ ...label, margin: 0, flex: "1 1 180px" }}>
+          Revenue month
+          <select aria-label="Revenue month" style={{ ...inp, marginTop: ".35rem" }} value={activeTab === "data" ? monthFilter : reportMonth} onChange={e => {
+            if (activeTab === "data") setMonthFilter(e.target.value);
+            else { setReportMonth(e.target.value); setReport(null); refreshReport({ month: e.target.value }); }
+          }}>
+            <option value="">{reportFY ? "All months in this year" : "All months"}</option>
+            {monthsInSelectedFY.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+        </label>}
+        {activeTab === "reports" && periodMode === "range" && <>
+          <label style={{ ...label, margin: 0, flex: "1 1 180px" }}>From month
+            <select aria-label="From month" style={{ ...inp, marginTop: ".35rem" }} value={reportFromMonth} onChange={e => {
+              const value = e.target.value; setReportFromMonth(value);
+              if (reportToMonth && value && revenueMonthSortValue(value) > revenueMonthSortValue(reportToMonth)) setReportToMonth("");
+              setReport(null);
+            }}><option value="">Start of period</option>{monthsInSelectedFY.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select>
+          </label>
+          <label style={{ ...label, margin: 0, flex: "1 1 180px" }}>To month
+            <select aria-label="To month" style={{ ...inp, marginTop: ".35rem" }} value={reportToMonth} onChange={e => { setReportToMonth(e.target.value); setReport(null); }}>
+              <option value="">End of period</option>{monthsInSelectedFY.filter(m => !reportFromMonth || revenueMonthSortValue(m) >= revenueMonthSortValue(reportFromMonth)).map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
             </select>
           </label>
-          {canManageRevenue && <button style={btn("primary")} onClick={openAdd}>+ New Revenue Entry</button>}
+        </>}
+        {activeTab === "reports" && periodMode === "dates" && <>
+          <label style={{ ...label, margin: 0, flex: "1 1 180px" }}>From date
+            <input aria-label="From date" type="date" style={{ ...inp, marginTop: ".35rem" }} value={reportFromDate} onChange={e => { const value = e.target.value; setReportFromDate(value); if (reportToDate && value > reportToDate) setReportToDate(""); setReport(null); }} />
+          </label>
+          <label style={{ ...label, margin: 0, flex: "1 1 180px" }}>To date
+            <input aria-label="To date" type="date" min={reportFromDate || undefined} style={{ ...inp, marginTop: ".35rem" }} value={reportToDate} onChange={e => { setReportToDate(e.target.value); setReport(null); }} />
+          </label>
+        </>}
+        {activeTab === "reports" && periodMode !== "month" && <button style={btn()} disabled={!!(reportFromDate && reportToDate && reportFromDate > reportToDate)} onClick={() => refreshReport()}>Apply period</button>}
+        <div style={{ flexBasis: "100%", color: "var(--muted)", fontSize: ".72rem" }}>
+          {activeTab === "reports" && periodMode === "dates" ? "Dates filter transaction dates; financial year still filters the revenue period." : "Financial years run from April to March. Month labels always include the calendar year."}
         </div>
       </div>
 
@@ -528,7 +548,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: ".75rem" }}>
           <div style={{ ...card, textAlign: "center" }}>
             <div style={{ fontSize: ".72rem", color: "var(--muted)", marginBottom: ".3rem" }}>
-              {latestRevenueMonth ? `${latestRevenueMonth} Revenue` : "Latest Month Revenue"}
+              {latestRevenueMonth ? `${monthLabel(latestRevenueMonth)} revenue` : "Latest Month Revenue"}
             </div>
             <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--accent)" }}>{fmt(totalRevenue)}</div>
           </div>
@@ -603,7 +623,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: ".75rem", marginTop: ".75rem" }}>
                   <div><label style={label}>Investment Amount</label>
-                    <input type="number" min="0" style={inp} value={form.InvestmentAmount} onChange={e => set("InvestmentAmount", e.target.value)} /></div>
+                    <input type="number" min="0" step="0.01" style={inp} value={form.InvestmentAmount} onChange={e => set("InvestmentAmount", e.target.value)} /></div>
                   <div><label style={label}>Commission %</label>
                     <input type="number" min="0" max="100" step="0.01" style={inp} value={form.CommissionPercent} onChange={e => set("CommissionPercent", e.target.value)} /></div>
                 </div>
@@ -636,7 +656,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
                   <div><label style={label}>Invoice Month</label>
                     <select style={inp} value={form.InvoiceMonth} onChange={e => set("InvoiceMonth", e.target.value)}>
                       <option value="">— Select —</option>
-                      {billingMonthOptions().map(m => <option key={m}>{m}</option>)}
+                      {billingMonthOptions().map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
                     </select></div>
                   <div><label style={label}>Invoice Status</label>
                     <select style={inp} value={form.InvoiceStatus} onChange={e => set("InvoiceStatus", e.target.value)}>
@@ -665,12 +685,12 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
                   <div><label style={label}>Revenue Month <span style={{ color: "var(--accent)" }}>*</span></label>
                     <select style={inp} value={form.RevenueMonth} onChange={e => set("RevenueMonth", e.target.value)} required>
                       <option value="">— Select month —</option>
-                      {billingMonthOptions().map(m => <option key={m}>{m}</option>)}
+                      {billingMonthOptions().map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
                     </select></div>
                   <div><label style={label}>Revenue Amount</label>
-                    <input type="number" min="0" style={inp} value={form.RevenueAmount} onChange={e => set("RevenueAmount", e.target.value)} /></div>
+                    <input type="number" step="0.01" style={inp} value={form.RevenueAmount} onChange={e => set("RevenueAmount", e.target.value)} /></div>
                   <div><label style={label}>YTD Value</label>
-                    <input type="number" min="0" style={inp} value={form.YTDValue} onChange={e => set("YTDValue", e.target.value)} /></div>
+                    <input type="number" min="0" step="0.01" style={inp} value={form.YTDValue} onChange={e => set("YTDValue", e.target.value)} /></div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: ".75rem", marginTop: ".75rem" }}>
                   <div><label style={label}>Statement Ref</label>
@@ -719,21 +739,16 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
         <ReportsPanel
           report={report} loading={reportLoading} reportView={reportView}
           setReportView={setReportView} reportMonth={reportMonth}
-          reportFromMonth={reportFromMonth} setReportFromMonth={setReportFromMonth}
-          reportToMonth={reportToMonth} setReportToMonth={setReportToMonth}
-          reportFromDate={reportFromDate} setReportFromDate={setReportFromDate}
-          reportToDate={reportToDate} setReportToDate={setReportToDate}
+          reportFromMonth={reportFromMonth}
+          reportToMonth={reportToMonth}
+          reportFromDate={reportFromDate}
+          reportToDate={reportToDate}
           reportSuperFamily={reportSuperFamily} setReportSuperFamily={setReportSuperFamily}
           reportFamily={reportFamily} setReportFamily={setReportFamily}
           reportScheme={reportScheme} setReportScheme={setReportScheme}
           reportPAN={reportPAN} setReportPAN={setReportPAN}
           reportRevenueType={reportRevenueType} setReportRevenueType={setReportRevenueType}
           reportPartner={effectiveReportPartner}
-          onMonthChange={m => {
-            setReportMonth(m);
-            setReport(null);
-            refreshReport({ month: m });
-          }}
           onPartnerChange={p => {
             if (isPartnerRole) return;
             setReportPartner(p);
@@ -747,6 +762,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
           canFilterPartner={!isPartnerRole}
           onApply={() => { setReport(null); refreshReport(); }}
           onClear={() => {
+            setPeriodMode("month");
             setReportMonth("");
             setReportFromMonth("");
             setReportToMonth("");
@@ -759,9 +775,9 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
             setReportRevenueType("");
             if (!isPartnerRole) setReportPartner("");
             setReport(null);
-            refreshReport({ month: "", fromMonth: "", toMonth: "", financialYear: reportFY, fromDate: "", toDate: "", superFamilyName: "", familyName: "", schemeName: "", pan: "", revenueType: "", partner: isPartnerRole ? ownPartnerName : "" });
+            refreshReport({ periodMode: "month", month: "", fromMonth: "", toMonth: "", financialYear: reportFY, fromDate: "", toDate: "", superFamilyName: "", familyName: "", schemeName: "", pan: "", revenueType: "", partner: isPartnerRole ? ownPartnerName : "" });
           }}
-          months={monthsInSelectedFY}
+          reportFY={reportFY}
           onDrill={drillNeoRevenueReport}
         />
       )}
@@ -774,14 +790,6 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <select
-          style={{ ...inp, maxWidth: "180px" }}
-          value={monthFilter}
-          onChange={e => setMonthFilter(e.target.value)}
-        >
-          <option value="">All Months</option>
-          {monthsInSelectedFY.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
         {!isPartnerRole && (
           <select
             style={{ ...inp, maxWidth: "220px" }}
@@ -838,7 +846,7 @@ export default function NeoRevenue({ role = "admin", employeeRef = "", fullName 
               <tbody>
                 {filtered.map(row => (
                   <tr key={row.RevenueID} style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td style={{ padding: ".5rem .65rem", fontWeight: 600, whiteSpace: "nowrap" }}>{row.RevenueMonth || "—"}</td>
+                    <td style={{ padding: ".5rem .65rem", fontWeight: 600, whiteSpace: "nowrap" }}>{monthLabel(row.RevenueMonth) || "—"}</td>
                     <td style={{ padding: ".5rem .65rem", color: "var(--muted)", fontSize: ".78rem" }}>{row.PAN || "—"}</td>
                     <td style={{ padding: ".5rem .65rem" }}>{row.ClientName || "—"}</td>
                     <td style={{ padding: ".5rem .65rem", color: "var(--muted)" }}>{row.PartnerName || row.RMName || "—"}</td>
@@ -907,25 +915,11 @@ const fmt2 = n => (n != null && n !== "" && Number(n) !== 0)
 
 const card2 = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "1.25rem" };
 const inp2  = { boxSizing: "border-box", padding: ".5rem .65rem", background: "var(--input,#1e293b)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text)", fontSize: ".875rem" };
-function revenueMonthSortValue(value) {
-  const match = String(value || "").match(/^([A-Za-z]{3})-(\d{4})$/);
-  if (!match) return Number.MAX_SAFE_INTEGER;
-  const months = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
-  const month = months[match[1][0].toUpperCase() + match[1].slice(1, 3).toLowerCase()];
-  return Number(match[2]) * 12 + (month ?? 99);
-}
-function fyFromRevenueMonth(value) {
-  const n = revenueMonthSortValue(value);
-  if (n === Number.MAX_SAFE_INTEGER) return "";
-  const year = Math.floor(n / 12);
-  const start = n % 12 >= 3 ? year : year - 1;
-  return `${start}-${String((start + 1) % 100).padStart(2, "0")}`;
-}
 
 function ReportsPanel({
-  report, loading, reportView, setReportView, reportMonth, onMonthChange, months,
-  reportFromMonth, setReportFromMonth, reportToMonth, setReportToMonth,
-  reportFromDate, setReportFromDate, reportToDate, setReportToDate,
+  report, loading, reportView, setReportView, reportMonth, reportFY,
+  reportFromMonth, reportToMonth,
+  reportFromDate, reportToDate,
   reportSuperFamily, setReportSuperFamily, reportFamily, setReportFamily, reportScheme, setReportScheme, reportPAN, setReportPAN,
   reportRevenueType, setReportRevenueType,
   reportPartner, onPartnerChange, partnerOptions, superFamilyOptions, familyOptions, schemeOptions, canFilterPartner, onApply, onClear, onDrill,
@@ -956,7 +950,7 @@ function ReportsPanel({
   };
 
   const data = useMemo(() => {
-    if (!sortCol) return rawData;
+    if (!sortCol) return reportView === "month" ? [...rawData].sort((a, b) => revenueMonthSortValue(a.RevenueMonth) - revenueMonthSortValue(b.RevenueMonth)) : rawData;
     const field = (sortKey[reportView] || {})[sortCol];
     if (!field) return rawData;
     return [...rawData].sort((a, b) => {
@@ -969,9 +963,10 @@ function ReportsPanel({
   }, [rawData, sortCol, sortDir, reportView]);
 
   const appliedFilters = [
+    reportFY ? { key: "Financial year", value: reportFY } : null,
     reportRevenueType ? { key: "Revenue Type", value: reportRevenueType } : null,
-    reportMonth ? { key: "Revenue Month", value: reportMonth } : null,
-    !reportMonth && (reportFromMonth || reportToMonth) ? { key: "Revenue Period", value: `${reportFromMonth || "Start"} to ${reportToMonth || "End"}` } : null,
+    reportMonth ? { key: "Revenue Month", value: monthLabel(reportMonth) } : null,
+    !reportMonth && (reportFromMonth || reportToMonth) ? { key: "Revenue Period", value: `${monthLabel(reportFromMonth) || "Start"} to ${monthLabel(reportToMonth) || "End"}` } : null,
     reportFromDate || reportToDate ? { key: "Transaction Period", value: `${reportFromDate || "Start"} to ${reportToDate || "End"}` } : null,
     canFilterPartner && reportPartner ? { key: "Partner", value: reportPartner } : null,
     reportSuperFamily ? { key: "Super Family", value: reportSuperFamily } : null,
@@ -1042,9 +1037,9 @@ function ReportsPanel({
       "Scheme": () => td(row.SchemeName, { ...drillStyle, maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis" }, () => onDrill?.("scheme", row.SchemeName, "client")),
       "Product": () => td(row.Product, { color: "var(--muted)" }),
       "Income Type": () => td(row.IncomeType, { color: "var(--muted)" }),
-      "Month": () => td(row.RevenueMonth, drillStyle, () => onDrill?.("month", row.RevenueMonth, "client")),
+      "Month": () => td(monthLabel(row.RevenueMonth), drillStyle, () => onDrill?.("month", row.RevenueMonth, "client")),
       "Invoice No": () => td(row.InvoiceNo, { fontFamily: "monospace", fontSize: ".8rem" }),
-      "Invoice Month": () => td(row.InvoiceMonth),
+      "Invoice Month": () => td(monthLabel(row.InvoiceMonth)),
       "Invoice Status": () => td(row.InvoiceStatus, { color: row.InvoiceStatus === "Paid" ? "#22c55e" : row.InvoiceStatus === "Sent" ? "#6366f1" : "var(--muted)" }),
       "Receipt Status": () => td(row.ReceiptStatus, { color: row.ReceiptStatus === "Received" ? "#22c55e" : row.ReceiptStatus === "Partial" ? "#f59e0b" : "var(--muted)" }),
       "Gross Revenue": () => td(fmt2(row.GrossRevenue)),
@@ -1083,9 +1078,9 @@ function ReportsPanel({
             Month Revenue
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: ".6rem" }}>
-            {report.monthWise.map(m => (
+            {[...report.monthWise].sort((a, b) => revenueMonthSortValue(a.RevenueMonth) - revenueMonthSortValue(b.RevenueMonth)).map(m => (
               <div key={m.RevenueMonth} style={{ ...card2, padding: ".85rem", textAlign: "center" }}>
-                <div style={{ fontSize: ".72rem", color: "var(--muted)", marginBottom: ".25rem" }}>{m.RevenueMonth}</div>
+                <div style={{ fontSize: ".72rem", color: "var(--muted)", marginBottom: ".25rem" }}>{monthLabel(m.RevenueMonth)}</div>
                 <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--accent)" }}>{fmt2(m.TotalRevenue)}</div>
               </div>
             ))}
@@ -1102,39 +1097,6 @@ function ReportsPanel({
             <option value="ARR">ARR</option>
             <option value="TRB">TRB</option>
           </select>
-        </label>
-        <label style={{ display:"grid", gap:".25rem", fontSize:".72rem", color:"var(--muted)" }}>
-          Revenue Month
-        <select
-          style={{ ...inp2, minWidth: "145px" }}
-          value={reportMonth}
-          onChange={e => onMonthChange(e.target.value)}
-        >
-          <option value="">All Months</option>
-          {months.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
-        </label>
-        <label style={{ display:"grid", gap:".25rem", fontSize:".72rem", color:"var(--muted)" }}>
-          From Month
-          <select style={{ ...inp2, minWidth: "145px" }} value={reportFromMonth} onChange={e => setReportFromMonth(e.target.value)}>
-            <option value="">Any</option>
-            {months.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </label>
-        <label style={{ display:"grid", gap:".25rem", fontSize:".72rem", color:"var(--muted)" }}>
-          To Month
-          <select style={{ ...inp2, minWidth: "145px" }} value={reportToMonth} onChange={e => setReportToMonth(e.target.value)}>
-            <option value="">Any</option>
-            {months.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </label>
-        <label style={{ display:"grid", gap:".25rem", fontSize:".72rem", color:"var(--muted)" }}>
-          Transaction From
-          <input type="date" style={inp2} value={reportFromDate} onChange={e => setReportFromDate(e.target.value)} />
-        </label>
-        <label style={{ display:"grid", gap:".25rem", fontSize:".72rem", color:"var(--muted)" }}>
-          Transaction To
-          <input type="date" style={inp2} value={reportToDate} onChange={e => setReportToDate(e.target.value)} />
         </label>
         {canFilterPartner && (
           <label style={{ display:"grid", gap:".25rem", fontSize:".72rem", color:"var(--muted)" }}>
@@ -1181,7 +1143,7 @@ function ReportsPanel({
         display: "flex", gap: ".5rem", flexWrap: "wrap", alignItems: "center"
       }}>
         <span style={{ fontSize: ".72rem", color: "var(--muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em" }}>
-          Applied
+          Filters
         </span>
         {appliedFilters.length === 0 ? (
           <span style={{ fontSize: ".8rem", color: "var(--muted)" }}>All Neo Revenue</span>
@@ -1213,7 +1175,7 @@ function ReportsPanel({
         {loading ? (
           <p style={{ color: "var(--muted)", textAlign: "center", padding: "2rem 0" }}>Loading report…</p>
         ) : !report ? (
-          <p style={{ color: "var(--muted)", textAlign: "center", padding: "2rem 0" }}>No report data. Add revenue entries first.</p>
+          <p style={{ color: "var(--muted)", textAlign: "center", padding: "2rem 0" }}>Choose your filters and select Apply to view the report.</p>
         ) : data.length === 0 ? (
           <p style={{ color: "var(--muted)", textAlign: "center", padding: "2rem 0" }}>No data for this view / filter.</p>
         ) : (
